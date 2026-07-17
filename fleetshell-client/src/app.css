@@ -1,0 +1,53 @@
+/* ── Gruvbox Dark palette ──────────────────────────────────────────────────── */
+:root {
+  --bg-hard:  #1d2021;
+  --bg:       #282828;
+  --bg-soft:  #32302f;
+  --bg1:      #3c3836;
+  --bg2:      #504945;
+  --bg3:      #665c54;
+  --bg4:      #7c6f64;
+
+  --fg:       #ebdbb2;
+  --fg2:      #d5c4a1;
+  --fg3:      #bdae93;
+  --fg4:      #a89984;
+
+  --red:      #fb4934;
+  --green:    #b8bb26;
+  --yellow:   #fabd2f;
+  --blue:     #83a598;
+  --purple:   #d3869b;
+  --aqua:     #8ec07c;
+  --orange:   #fe8019;
+  --gray:     #928374;
+}
+
+/* ── Reset ────────────────────────────────────────────────────────────────── */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+/* ── Base ─────────────────────────────────────────────────────────────────── */
+html, body {
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', ui-monospace,
+               'Courier New', monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Scrollbar ────────────────────────────────────────────────────────────── */
+::-webkit-scrollbar            { width: 8px; height: 8px; }
+::-webkit-scrollbar-track      { background: var(--bg1); }
+::-webkit-scrollbar-thumb      { background: var(--bg3); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover{ background: var(--bg4); }
+
+/* ── Selections ───────────────────────────────────────────────────────────── */
+::selection { background: var(--bg3); color: var(--fg); }
