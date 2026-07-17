@@ -1,3 +1,7 @@
+mod server;
+mod tunnel;
+
+use std::sync::Arc;
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
@@ -39,6 +43,26 @@ pub fn run() {
         .setup(|app| {
             log::info!("FleetShell client starting up");
 
+            // ── Axum API server ───────────────────────────────────────────
+            let api_state = server::ApiState {
+                app:          app.handle().clone(),
+                gateway_path: Arc::new(server::DEFAULT_GATEWAY_PATH.to_string()),
+            };
+            let router = server::build_router(api_state);
+
+            tauri::async_runtime::spawn(async move {
+                let listener = tokio::net::TcpListener::bind(("127.0.0.1", server::API_PORT))
+                    .await
+                    .expect("Failed to bind API server");
+                log::info!(
+                    "API server listening on http://127.0.0.1:{}",
+                    server::API_PORT
+                );
+                axum::serve(listener, router)
+                    .await
+                    .expect("API server crashed");
+            });
+
             // ── Tray icon ─────────────────────────────────────────────────
             let open_item = MenuItem::with_id(app, "open", "Open FleetShell", true, None::<&str>)?;
             let sep       = PredefinedMenuItem::separator(app)?;
@@ -50,7 +74,6 @@ pub fn run() {
                 .tooltip("FleetShell")
                 .menu(&menu)
                 .show_menu_on_left_click(false)
-                // Context-menu actions
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "open" => {
                         if let Some(w) = app.get_webview_window("main") {
@@ -64,7 +87,6 @@ pub fn run() {
                     }
                     _ => {}
                 })
-                // Left-click: toggle window visibility
                 .on_tray_icon_event(|tray, event| {
                     if let TrayIconEvent::Click {
                         button: MouseButton::Left,
@@ -83,12 +105,10 @@ pub fn run() {
                 })
                 .build(app)?;
 
-            // Keep the tray icon alive for the duration of the app.
             app.manage(tray);
 
             // ── Close button → hide to tray ───────────────────────────────
-            let window = app.get_webview_window("main")
-                .expect("main window not found");
+            let window = app.get_webview_window("main").expect("main window not found");
             let w = window.clone();
             window.on_window_event(move |event| {
                 if let WindowEvent::CloseRequested { api, .. } = event {

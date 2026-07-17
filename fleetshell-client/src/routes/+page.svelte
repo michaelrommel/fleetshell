@@ -1,8 +1,27 @@
 <script lang="ts">
-  import LogView from '$lib/components/LogView.svelte';
+  import { onMount, onDestroy } from 'svelte';
+  import { listen }             from '@tauri-apps/api/event';
+  import LogView                from '$lib/components/LogView.svelte';
+  import FunctionsView          from '$lib/components/FunctionsView.svelte';
 
   type Tab = 'functions' | 'settings' | 'logging';
-  let activeTab: Tab = $state('logging');
+
+  let activeTab:  Tab          = $state('logging');
+  let servicekey: string | null = $state(null);
+
+  let unlisten: (() => void) | null = null;
+
+  onMount(async () => {
+    // The Rust server emits "navigate" to switch tabs and optionally pass a servicekey.
+    unlisten = await listen<{ tab: Tab; servicekey?: string }>('navigate', ({ payload }) => {
+      activeTab = payload.tab;
+      if (payload.servicekey) {
+        servicekey = payload.servicekey;
+      }
+    });
+  });
+
+  onDestroy(() => unlisten?.());
 </script>
 
 <div class="page">
@@ -24,15 +43,15 @@
   <!-- Tab panels -->
   <div class="tab-content">
     {#if activeTab === 'functions'}
-      <div class="empty-panel" role="tabpanel" aria-label="Functions">
-        <span class="empty-label">Functions — coming soon</span>
+      <div class="fill-panel" role="tabpanel" aria-label="Functions">
+        <FunctionsView {servicekey} />
       </div>
     {:else if activeTab === 'settings'}
       <div class="empty-panel" role="tabpanel" aria-label="Settings">
         <span class="empty-label">Settings — coming soon</span>
       </div>
     {:else if activeTab === 'logging'}
-      <div class="log-panel" role="tabpanel" aria-label="Logging">
+      <div class="fill-panel" role="tabpanel" aria-label="Logging">
         <LogView />
       </div>
     {/if}
@@ -51,7 +70,6 @@
   /* ── Tab bar ── */
   .tab-bar {
     display: flex;
-    gap: 0;
     background: var(--bg-hard);
     border-bottom: 2px solid var(--bg2);
     flex-shrink: 0;
@@ -62,7 +80,7 @@
     color: var(--fg4);
     border: none;
     border-bottom: 2px solid transparent;
-    margin-bottom: -2px;          /* overlap the bar's border */
+    margin-bottom: -2px;
     padding: 9px 22px;
     cursor: pointer;
     font-family: inherit;
@@ -71,18 +89,10 @@
     transition: color 0.12s, border-color 0.12s, background 0.12s;
   }
 
-  .tab-btn:hover {
-    color: var(--fg2);
-    background: var(--bg1);
-  }
+  .tab-btn:hover       { color: var(--fg2); background: var(--bg1); }
+  .tab-btn.active      { color: var(--yellow); border-bottom-color: var(--yellow); background: var(--bg); }
 
-  .tab-btn.active {
-    color: var(--yellow);
-    border-bottom-color: var(--yellow);
-    background: var(--bg);
-  }
-
-  /* ── Panel container ── */
+  /* ── Panel containers ── */
   .tab-content {
     flex: 1;
     overflow: hidden;
@@ -90,15 +100,15 @@
     flex-direction: column;
   }
 
-  /* Logging tab fills all available space */
-  .log-panel {
+  /* Panels that fill all available height (Logging, Functions) */
+  .fill-panel {
     flex: 1;
     overflow: hidden;
     display: flex;
     flex-direction: column;
   }
 
-  /* Placeholder for empty tabs */
+  /* Placeholder panels */
   .empty-panel {
     flex: 1;
     display: flex;
