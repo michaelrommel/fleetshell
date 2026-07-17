@@ -1,0 +1,16 @@
+# Workspace-level Cargo configuration
+
+# ── Cross-compilation: x86_64 Windows (MinGW-w64, POSIX threads) ──────────────
+#
+# Uses the system mingw-w64 toolchain installed via apt.
+# The *-posix variant is required – the win32-threads default breaks std::thread.
+#
+# To build a portable .exe (no installer needed on Win10/11):
+#   cd fleetshell-client
+#   cargo tauri build --target x86_64-pc-windows-gnu --no-bundle
+# Or use the convenience script (--installer is opt-in):
+#   ./scripts/build-windows-x64.sh
+
+[target.x86_64-pc-windows-gnu]
+linker = "x86_64-w64-mingw32-gcc-posix"
+ar     = "x86_64-w64-mingw32-ar"
