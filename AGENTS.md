@@ -48,7 +48,7 @@ Accepts `Content-Type: application/json`:
 ```json
 {
     "target":     "192.168.13.133",
-    "protocol":   "https",
+    "application": "https",
     "ports":      "443,3000-3020",
     "token":      "jsonwebtoken-hashbased",
     "servicekey": "abcde-fghij-klmno-pqrst-vwxyz-12345-67890",
@@ -59,18 +59,27 @@ Accepts `Content-Type: application/json`:
 | Field        | Type            | Notes                                              |
 |--------------|-----------------|----------------------------------------------------|
 | `target`     | string          | Final destination host the gateway must reach      |
-| `protocol`   | `"https"\|"http"\|"wss"\|"ws"` | Determines TLS and default port   |
+| `application`| string | What is being tunnelled: `"http"`, `"https"`, `"rdp"`, `"vnc"` |
 | `ports`      | string          | Comma-separated ports/ranges: `"443,3000-3020"`    |
 | `token`      | string          | JWT used for gateway authentication                |
 | `servicekey` | string (optional) | If present, displayed in the client UI           |
-| `gateway`    | string          | Gateway hostname (e.g. `"atlanta-01"`)             |
+| `gateway`    | string          | `"host"` or `"host:port"` — port defaults to 443   |
 
-**Response:** `202 Accepted`
+The handler returns **200 OK** once all ports are bound and local applications are launched.
 ```json
-{ "status": "accepted", "spawned_ports": [443, 3000, 3001, ..., 3020] }
+{ "status": "connected", "ports": [443, 7000, 7001], "urls": ["http://127.0.0.1:7000"] }
 ```
 
 The handler returns immediately. All tunnel work happens asynchronously.
+
+### What the client does per `application` type
+
+| `application` | Local action | URLs returned |
+|---|---|---|
+| `"http"` | none | `http://127.0.0.1:{port}` |
+| `"https"` | none | `https://127.0.0.1:{port}` |
+| `"rdp"` | writes `%TEMP%\fleetshell_rdp_{port}.rdp`, launches `mstsc.exe` | none |
+| `"vnc"` | writes `%TEMP%\fleetshell_vnc_{port}.vnc`, tries `tvnviewer.exe`, `vncviewer64.exe`, `vncviewer.exe` | none |
 
 ### Tunnel lifecycle (one per port)
 
@@ -79,8 +88,7 @@ For every port `P` in the parsed port list the client:
 1. **Binds** `TcpListener` on `0.0.0.0:P`.
 2. **Loops** accepting local TCP connections.
 3. For **each accepted connection** spawns a task that:
-   a. Connects TCP to `{gateway}:{443 for https/wss, 80 for http/ws}`.
-   b. If `protocol` is `https`/`wss` upgrades to TLS (rustls + Mozilla root CAs).
+   a. Connects TCP to `{gateway}:{port}` — always via TLS (rustls + OS native CA store).
    c. Sends the **handshake payload** (see below) and waits for one response line.
    d. On `"200 CONNECTED"` → enters **bidirectional forwarding** via
       `tokio::io::copy_bidirectional` between the local socket and the gateway socket.
@@ -94,7 +102,7 @@ A single UTF-8 JSON object followed by a newline (`\n`):
 ```json
 {
     "target":     "192.168.13.133",
-    "protocol":   "https",
+    "application": "https",
     "port":       443,
     "token":      "jsonwebtoken-hashbased",
     "servicekey": "abcde-fghij-klmno-pqrst-vwxyz-12345-67890",
@@ -209,7 +217,7 @@ Create `fleetshell-gateway/Cargo.toml` with `[[bin]] name = "fleetshell-gateway"
 
 ## What is NOT yet implemented (future work)
 
-- Gateway TLS certificate management (ACME / Let's Encrypt)
+- Gateway TLS certificate management (ACME / Let's Encrypt) — self-signed cert used for now
 - JWT signing key distribution between client and gateway
 - Session tracking / active tunnel dashboard in the client UI
 - Graceful shutdown of tunnel listeners when the client closes

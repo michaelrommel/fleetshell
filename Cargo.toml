@@ -3,4 +3,5 @@ resolver = "2"
 
 members = [
     "fleetshell-client/src-tauri",
+    "fleetshell-gateway",
 ]
