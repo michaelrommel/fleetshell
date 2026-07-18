@@ -1,0 +1,39 @@
+[package]
+name = "fleetshell-gateway"
+version = "0.1.0"
+edition = "2021"
+description = "FleetShell tunnel gateway — TLS TCP proxy with JWT authentication"
+
+[[bin]]
+name = "fleetshell-gateway"
+path = "src/main.rs"
+
+[dependencies]
+# ── Async runtime ────────────────────────────────────────────────────────────
+tokio         = { version = "1",    features = ["full"] }
+
+# ── TLS server ───────────────────────────────────────────────────────────────
+# Both tokio-rustls and rustls default to aws_lc_rs; adding ring on top
+# gives two providers → runtime panic.  Opt out of defaults, pick ring only.
+tokio-rustls  = { version = "0.26", default-features = false, features = ["ring", "logging", "tls12"] }
+rustls        = { version = "0.23", default-features = false, features = ["ring", "logging", "std", "tls12"] }
+rustls-pemfile = "2"
+
+# ── Self-signed certificate generation ──────────────────────────────────────
+rcgen         = "0.14"
+
+# ── JWT authentication ───────────────────────────────────────────────────────
+# jwt requires an explicit crypto backend; rust_crypto (pure-Rust hmac/sha2)
+# is consistent with our ring-only policy and avoids aws-lc-rs.
+jsonwebtoken  = { version = "10", features = ["rust_crypto"] }
+
+# ── Serialisation ────────────────────────────────────────────────────────────
+serde         = { version = "1",    features = ["derive"] }
+serde_json    = "1"
+
+# ── Logging / tracing ────────────────────────────────────────────────────────
+tracing             = "0.1"
+tracing-subscriber  = { version = "0.3", features = ["env-filter", "fmt"] }
+
+# ── Error handling ───────────────────────────────────────────────────────────
+thiserror     = "1"
