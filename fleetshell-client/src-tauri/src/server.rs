@@ -15,20 +15,26 @@ pub const DEFAULT_GATEWAY_PATH: &str = "/service/tunnel/";
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct TunnelRequest {
-    pub target:     String,
-    pub protocol:   String,
-    /// Comma-separated ports / ranges, e.g. "443,3000-3020"
-    pub ports:      String,
-    pub token:      String,
-    pub servicekey: Option<String>,
-    pub gateway:    String,
+    pub target:      String,
+    /// What is being tunnelled: "http", "https", "rdp", "vnc", …
+    /// This is distinct from the client↔gateway transport, which is always TLS.
+    pub application: String,
+    /// Comma-separated ports / ranges, e.g. "443,7000-7010"
+    pub ports:       String,
+    pub token:       String,
+    pub servicekey:  Option<String>,
+    /// Gateway address as "host" or "host:port"; port defaults to 443.
+    pub gateway:     String,
 }
 
 #[derive(Debug, Serialize)]
 struct TunnelResponse {
     status: &'static str,
-    /// Flat list of ports that tunnel listeners were spawned for.
-    spawned_ports: Vec<u16>,
+    /// Ports that tunnel listeners were spawned for.
+    ports:  Vec<u16>,
+    /// For http/https applications: URLs the caller can open directly.
+    /// Empty for rdp/vnc (the local app is launched automatically).
+    urls:   Vec<String>,
 }
 
 // ── Shared state injected into every handler ──────────────────────────────────
@@ -44,27 +50,67 @@ pub struct ApiState {
 pub fn build_router(state: ApiState) -> Router {
     Router::new()
         .route("/api/tunnel", post(tunnel_handler))
-        // Allow the Tauri WebView and any local tool to call this API.
         .layer(CorsLayer::permissive())
         .with_state(state)
 }
 
 // ── Handlers ──────────────────────────────────────────────────────────────────
 
+type HandlerResult = Result<
+    (StatusCode, Json<TunnelResponse>),
+    (StatusCode, Json<serde_json::Value>),
+>;
+
 async fn tunnel_handler(
     State(state): State<ApiState>,
     Json(req): Json<TunnelRequest>,
-) -> (StatusCode, Json<TunnelResponse>) {
+) -> HandlerResult {
     let ports = crate::tunnel::parse_ports(&req.ports);
+    let (gw_host, gw_port) = crate::tunnel::parse_gateway(&req.gateway);
 
     log::info!(
-        "Tunnel request received: gateway={} target={} protocol={} ports={:?}",
-        req.gateway, req.target, req.protocol, ports
+        "Tunnel request: gateway={}:{} target={} application={} ports={:?}",
+        gw_host, gw_port, req.target, req.application, ports
     );
 
-    // If a service key is present, switch the UI to the Functions tab immediately.
+    // ── Phase 1: pre-bind ALL listeners ──────────────────────────────────
+    //
+    // Every port must bind successfully before any task is spawned.
+    // If one fails the Vec<TcpListener> drops (RAII), releasing the others.
+    let mut listeners: Vec<(u16, tokio::net::TcpListener)> = Vec::with_capacity(ports.len());
+
+    for &port in &ports {
+        match tokio::net::TcpListener::bind(("0.0.0.0", port)).await {
+            Ok(l) => {
+                log::info!("port {} — bound", port);
+                listeners.push((port, l));
+            }
+            Err(e) => {
+                let msg = format!("Failed to bind port {}: {}", port, e);
+                log::error!("{}", msg);
+                crate::util::navigate(&state.app, "logging");
+                return Err((
+                    StatusCode::CONFLICT,
+                    Json(serde_json::json!({ "error": msg })),
+                ));
+            }
+        }
+    }
+
+    // ── Phase 2: launch local applications and collect URLs ───────────────
+    //
+    // Read config fresh so the user's latest settings are always used.
+    let cfg = crate::config::load(&state.app);
+    let mut urls: Vec<String> = Vec::new();
+    for &port in &ports {
+        let port_urls = crate::tunnel::launch_application(&req.application, port, &cfg);
+        urls.extend(port_urls);
+    }
+
+    // ── Phase 3: surface the window if needed ─────────────────────────────
     if let Some(ref sk) = req.servicekey {
-        log::info!("Service key present — navigating to Functions tab");
+        log::info!("Service key present — opening Functions tab");
+        crate::util::show_window(&state.app);
         state
             .app
             .emit(
@@ -74,18 +120,21 @@ async fn tunnel_handler(
             .ok();
     }
 
-    // Spawn one long-running listener task per requested port.
-    for &port in &ports {
+    // ── Phase 4: spawn one accept-loop task per port ──────────────────────
+    let bound_ports: Vec<u16> = listeners.iter().map(|(p, _)| *p).collect();
+
+    for (port, listener) in listeners {
         let req_c   = req.clone();
         let state_c = state.clone();
-        tokio::spawn(crate::tunnel::run_port_listener(port, req_c, state_c));
+        tokio::spawn(crate::tunnel::run_accept_loop(listener, port, req_c, state_c));
     }
 
-    (
-        StatusCode::ACCEPTED,
+    Ok((
+        StatusCode::OK,
         Json(TunnelResponse {
-            status:        "accepted",
-            spawned_ports: ports,
+            status: "connected",
+            ports:  bound_ports,
+            urls,
         }),
-    )
+    ))
 }

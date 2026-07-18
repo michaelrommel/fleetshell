@@ -1,8 +1,9 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { listen }             from '@tauri-apps/api/event';
-  import LogView                from '$lib/components/LogView.svelte';
-  import FunctionsView          from '$lib/components/FunctionsView.svelte';
+  import LogView       from '$lib/components/LogView.svelte';
+  import FunctionsView from '$lib/components/FunctionsView.svelte';
+  import SettingsView  from '$lib/components/SettingsView.svelte';
 
   type Tab = 'functions' | 'settings' | 'logging';
 
@@ -47,8 +48,8 @@
         <FunctionsView {servicekey} />
       </div>
     {:else if activeTab === 'settings'}
-      <div class="empty-panel" role="tabpanel" aria-label="Settings">
-        <span class="empty-label">Settings — coming soon</span>
+      <div class="fill-panel" role="tabpanel" aria-label="Settings">
+        <SettingsView />
       </div>
     {:else if activeTab === 'logging'}
       <div class="fill-panel" role="tabpanel" aria-label="Logging">
@@ -84,7 +85,7 @@
     padding: 9px 22px;
     cursor: pointer;
     font-family: inherit;
-    font-size: 13px;
+    font-size: 1rem;
     letter-spacing: 0.02em;
     transition: color 0.12s, border-color 0.12s, background 0.12s;
   }
@@ -108,17 +109,4 @@
     flex-direction: column;
   }
 
-  /* Placeholder panels */
-  .empty-panel {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-
-  .empty-label {
-    color: var(--bg4);
-    font-size: 14px;
-    letter-spacing: 0.05em;
-  }
 </style>

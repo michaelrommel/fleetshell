@@ -32,7 +32,14 @@ axum          = { version = "0.8", features = ["json", "macros"] }
 tokio         = { version = "1",   features = ["full"] }
 tower-http    = { version = "0.6", features = ["cors"] }
 
+# ── Config persistence
+toml          = "0.8"
+
 # ── TLS for gateway connections ─────────────────────────────────────────────
-tokio-rustls  = "0.26"
-rustls        = { version = "0.23", features = ["ring"] }
-webpki-roots  = "1.0"
+# Both tokio-rustls and rustls default to aws_lc_rs; adding ring on top
+# gives two providers → runtime panic.  Opt out of defaults, pick ring only.
+tokio-rustls  = { version = "0.26", default-features = false, features = ["ring", "logging", "tls12"] }
+rustls        = { version = "0.23", default-features = false, features = ["ring", "logging", "std", "tls12"] }
+# System trust store so enterprise CAs (e.g. zScaler) are automatically trusted.
+# webpki-roots (Mozilla static bundle) is intentionally NOT used here.
+rustls-native-certs = "0.8"

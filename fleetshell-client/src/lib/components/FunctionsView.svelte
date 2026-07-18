@@ -60,7 +60,7 @@
   }
 
   .sk-label {
-    font-size: 11px;
+    font-size: 0.85rem;
     text-transform: uppercase;
     letter-spacing: 0.08em;
     color: var(--fg4);
@@ -68,7 +68,7 @@
 
   .sk-value {
     font-family: inherit;
-    font-size: 13px;
+    font-size: 1rem;
     color: var(--aqua);
     background: var(--bg-hard);
     border: 1px solid var(--bg2);
@@ -87,7 +87,7 @@
     padding: 5px 16px;
     cursor: pointer;
     font-family: inherit;
-    font-size: 12px;
+    font-size: 0.9rem;
     transition: background 0.1s, color 0.1s, border-color 0.1s;
     min-width: 140px;
   }
@@ -111,7 +111,7 @@
   }
 
   .hint {
-    font-size: 11px;
+    font-size: 0.85rem;
     color: var(--bg3);
   }
 

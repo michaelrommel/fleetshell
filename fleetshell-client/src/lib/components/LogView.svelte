@@ -146,7 +146,7 @@
   }
 
   .log-count {
-    font-size: 11px;
+    font-size: 0.85rem;
     color: var(--fg4);
     margin-right: auto;
   }
@@ -158,7 +158,7 @@
     border-radius: 3px;
     padding: 2px 10px;
     cursor: pointer;
-    font-size: 11px;
+    font-size: 0.85rem;
     font-family: inherit;
     transition: background 0.1s;
   }
@@ -168,7 +168,7 @@
     display: flex;
     align-items: center;
     gap: 5px;
-    font-size: 11px;
+    font-size: 0.85rem;
     color: var(--fg4);
     cursor: pointer;
     user-select: none;
@@ -187,7 +187,7 @@
   .log-line {
     white-space: pre;
     line-height: 1.55;
-    font-size: 12px;
+    font-size: 0.9rem;
   }
 
   /* ── Level colours ── */

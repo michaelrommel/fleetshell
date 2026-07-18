@@ -38,7 +38,8 @@ html, body {
   color: var(--fg);
   font-family: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', ui-monospace,
                'Courier New', monospace;
-  font-size: 13px;
+  /* --font-size is set by JS from the persisted config (default 15px). */
+  font-size: var(--font-size, 15px);
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
 }

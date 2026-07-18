@@ -1,5 +1,7 @@
+mod config;
 mod server;
 mod tunnel;
+mod util;
 
 use std::sync::Arc;
 use tauri::{
@@ -8,6 +10,16 @@ use tauri::{
     Manager, WindowEvent,
 };
 use tauri_plugin_log::{Target, TargetKind};
+
+#[tauri::command]
+fn get_config(app: tauri::AppHandle) -> config::AppConfig {
+    config::load(&app)
+}
+
+#[tauri::command]
+fn save_config(app: tauri::AppHandle, config: config::AppConfig) -> Result<(), String> {
+    config::save(&app, &config)
+}
 
 #[tauri::command]
 fn get_log_history(app: tauri::AppHandle, lines: usize) -> Result<Vec<String>, String> {
@@ -39,7 +51,7 @@ pub fn run() {
                 .level(log::LevelFilter::Debug)
                 .build(),
         )
-        .invoke_handler(tauri::generate_handler![get_log_history])
+        .invoke_handler(tauri::generate_handler![get_config, save_config, get_log_history])
         .setup(|app| {
             log::info!("FleetShell client starting up");
 
