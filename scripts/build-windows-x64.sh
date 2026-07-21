@@ -3,16 +3,21 @@
 #
 # Cross-compile fleetshell-client for Windows 10/11 x64 from Linux.
 #
-# Default output (--no-bundle): a single portable .exe
-#   fleetshell-client/src-tauri/target/x86_64-pc-windows-gnu/release/fleetshell-client.exe
+# Default output (--no-bundle): a portable directory with .exe + required DLLs
+#   dist/fleetshell-client-portable/
+#     fleetshell-client.exe
+#     WebView2Loader.dll        ← required when using the GNU toolchain
 #
 # Pass --installer to also produce an NSIS .exe installer:
-#   fleetshell-client/src-tauri/target/x86_64-pc-windows-gnu/release/bundle/nsis/
+#   dist/fleetshell-client-<version>-x64-setup.exe
 #
-# The installer is only needed if you want Start-menu shortcuts, an
-# Add/Remove Programs entry, or to ship WebView2 to machines that somehow
-# don't have it yet.  On Windows 10 (post-2021) and all of Windows 11,
-# WebView2 ships in-box, so the bare .exe runs without any installer.
+# The NSIS installer:
+#   - Runs without administrator rights (currentUser mode).
+#   - Installs to %LOCALAPPDATA%\Programs\fleetshell-client by default.
+#   - Writes uninstall info to HKCU (no HKLM touch).
+#   - Automatically bundles WebView2Loader.dll (GNU toolchain requirement).
+#   - Registers the fleetshell:// URL scheme in HKCU on first launch
+#     (handled by tauri-plugin-deep-link, no elevation needed).
 #
 # Prerequisites (all checked below):
 #   - rustup target add x86_64-pc-windows-gnu
@@ -26,6 +31,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 CLIENT_DIR="$REPO_ROOT/fleetshell-client"
 TARGET="x86_64-pc-windows-gnu"
 BUNDLE=false
+DIST="$REPO_ROOT/dist"
 
 for arg in "$@"; do
   case "$arg" in
@@ -64,18 +70,51 @@ echo "→ Building frontend…"
 cd "$CLIENT_DIR"
 npm run build
 
+mkdir -p "$DIST"
+
 if $BUNDLE; then
   echo "→ Running cargo tauri build (target: $TARGET, bundle: nsis)…"
   cargo tauri build --target "$TARGET" --bundles nsis
-  echo ""
-  echo "✓ Installer:"
-  find "$REPO_ROOT/target/$TARGET/release/bundle" \
-       -name "*.exe" 2>/dev/null | sort
+
+  # Copy the installer into dist/
+  INSTALLER=$(find "$REPO_ROOT/target/$TARGET/release/bundle/nsis" \
+                   -name "*-setup.exe" 2>/dev/null | sort | tail -1)
+  if [[ -n "$INSTALLER" ]]; then
+    cp "$INSTALLER" "$DIST/"
+    echo ""
+    echo "✓ Installer: $DIST/$(basename "$INSTALLER")"
+    echo "  No administrator rights required — installs to %LOCALAPPDATA%\\Programs"
+    ls -lh "$DIST/$(basename "$INSTALLER")"
+  fi
 else
   echo "→ Running cargo tauri build (target: $TARGET, no-bundle)…"
   cargo tauri build --target "$TARGET" --no-bundle
-  EXE="$REPO_ROOT/target/$TARGET/release/fleetshell-client.exe"
-  echo ""
-  echo "✓ Portable executable: $EXE"
-  ls -lh "$EXE"
+
+  RELEASE_DIR="$REPO_ROOT/target/$TARGET/release"
+  EXE="$RELEASE_DIR/fleetshell-client.exe"
+
+  # WebView2Loader.dll is placed next to the exe by the webview2-com-sys build
+  # script whenever the GNU toolchain is used.  Both files must be distributed
+  # together — the exe will fail to start without the DLL on the target machine.
+  DLL="$RELEASE_DIR/WebView2Loader.dll"
+
+  PORTABLE_DIR="$DIST/fleetshell-client-portable"
+  mkdir -p "$PORTABLE_DIR"
+  cp "$EXE" "$PORTABLE_DIR/"
+
+  if [[ -f "$DLL" ]]; then
+    cp "$DLL" "$PORTABLE_DIR/"
+    echo ""
+    echo "✓ Portable build: $PORTABLE_DIR"
+    ls -lh "$PORTABLE_DIR"
+  else
+    echo ""
+    echo "⚠ WebView2Loader.dll not found in $RELEASE_DIR"
+    echo "  The exe was copied, but the DLL is missing."
+    echo "  Try a full 'cargo tauri build' (not --no-bundle) once to populate it,"
+    echo "  or copy x64/WebView2Loader.dll from the webview2-com-sys crate manually."
+    echo ""
+    echo "✓ Portable exe only: $PORTABLE_DIR/fleetshell-client.exe"
+    ls -lh "$PORTABLE_DIR/fleetshell-client.exe"
+  fi
 fi

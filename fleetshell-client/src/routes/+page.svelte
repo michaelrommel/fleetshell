@@ -1,11 +1,12 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { listen }             from '@tauri-apps/api/event';
-  import LogView       from '$lib/components/LogView.svelte';
-  import FunctionsView from '$lib/components/FunctionsView.svelte';
-  import SettingsView  from '$lib/components/SettingsView.svelte';
+  import LogView        from '$lib/components/LogView.svelte';
+  import FunctionsView  from '$lib/components/FunctionsView.svelte';
+  import SettingsView   from '$lib/components/SettingsView.svelte';
+  import EnrollmentView from '$lib/components/EnrollmentView.svelte';
 
-  type Tab = 'functions' | 'settings' | 'logging';
+  type Tab = 'functions' | 'settings' | 'logging' | 'enrollment';
 
   let activeTab:  Tab          = $state('logging');
   let servicekey: string | null = $state(null);
@@ -28,7 +29,7 @@
 <div class="page">
   <!-- Tab bar -->
   <div class="tab-bar" role="tablist" aria-label="Main navigation">
-    {#each (['functions', 'settings', 'logging'] as Tab[]) as tab}
+    {#each (['functions', 'settings', 'logging', 'enrollment'] as Tab[]) as tab}
       <button
         class="tab-btn"
         class:active={activeTab === tab}
@@ -54,6 +55,10 @@
     {:else if activeTab === 'logging'}
       <div class="fill-panel" role="tabpanel" aria-label="Logging">
         <LogView />
+      </div>
+    {:else if activeTab === 'enrollment'}
+      <div class="fill-panel" role="tabpanel" aria-label="Enrollment">
+        <EnrollmentView />
       </div>
     {/if}
   </div>

@@ -17,13 +17,26 @@ pub struct AppConfig {
     /// Empty string = search the well-known names from PATH.
     #[serde(default)]
     pub vnc_viewer: String,
+
+    /// Base URL of the FleetShell portal (no trailing slash).
+    /// All API paths are constructed relative to this:
+    ///   /api/login            ← enrollment
+    ///   /api/client/probe/<id> ← deep-link probe
+    /// Set to e.g. http://localhost:5173 during development.
+    #[serde(default = "default_portal_base_url")]
+    pub portal_base_url: String,
+}
+
+fn default_portal_base_url() -> String {
+	"https://portal.fleetshell.com".to_string()
 }
 
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
-            font_size:  15,
-            vnc_viewer: String::new(),
+            font_size:       15,
+            vnc_viewer:      String::new(),
+            portal_base_url: default_portal_base_url(),
         }
     }
 }

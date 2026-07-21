@@ -39,8 +39,17 @@
     },
     "windows": {
       "nsis": {
+        "installMode": "currentUser",
+        "template": "nsis/installer.nsi",
         "displayLanguageSelector": false,
         "languages": ["English"]
+      }
+    }
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["fleetshell"]
       }
     }
   }

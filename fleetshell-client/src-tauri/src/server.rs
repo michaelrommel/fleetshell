@@ -13,6 +13,11 @@ pub const DEFAULT_GATEWAY_PATH: &str = "/service/tunnel/";
 
 // ── Request / Response types ──────────────────────────────────────────────────
 
+#[derive(Debug, Deserialize)]
+pub struct DeepLinkForwardRequest {
+    pub url: String,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct TunnelRequest {
     pub target:      String,
@@ -55,7 +60,8 @@ pub struct ApiState {
 
 pub fn build_router(state: ApiState) -> Router {
     Router::new()
-        .route("/api/tunnel", post(tunnel_handler))
+        .route("/api/tunnel",     post(tunnel_handler))
+        .route("/api/deep-link",  post(deep_link_forward_handler))
         .layer(CorsLayer::permissive())
         .with_state(state)
 }
@@ -143,4 +149,26 @@ async fn tunnel_handler(
             urls,
         }),
     ))
+}
+
+/// Receives a `fleetshell://` URL forwarded from a second instance that found
+/// this server already running.  Dispatches it into the normal deep-link flow.
+async fn deep_link_forward_handler(
+    State(state): State<ApiState>,
+    Json(req): Json<DeepLinkForwardRequest>,
+) -> StatusCode {
+    log::info!("Deep-link forwarded from second instance: {}", req.url);
+    match req.url.parse::<url::Url>() {
+        Ok(url) => {
+            let app = state.app.clone();
+            tauri::async_runtime::spawn(async move {
+                crate::portal::handle_deep_link(&app, url).await;
+            });
+            StatusCode::OK
+        }
+        Err(e) => {
+            log::error!("Deep-link forward: invalid URL '{}': {}", req.url, e);
+            StatusCode::BAD_REQUEST
+        }
+    }
 }

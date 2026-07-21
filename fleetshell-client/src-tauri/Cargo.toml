@@ -25,7 +25,8 @@ serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
 tauri = { version = "2.11.3", features = ["tray-icon", "image-png"] }
-tauri-plugin-log = "2"
+tauri-plugin-log       = "2"
+tauri-plugin-deep-link = "2"
 
 # ── Async web server ────────────────────────────────────────────────────────
 axum          = { version = "0.8", features = ["json", "macros"] }
@@ -34,6 +35,13 @@ tower-http    = { version = "0.6", features = ["cors"] }
 
 # ── Config persistence
 toml          = "0.8"
+
+# ── HTTP client (enrollment portal)
+# default-features = false avoids bundling a second TLS provider alongside
+# the tokio-rustls already in scope.
+reqwest       = { version = "0.12", default-features = false, features = ["json", "rustls-tls-native-roots", "blocking"] }
+base64        = "0.22"
+url           = "2"
 
 # ── TLS for gateway connections ─────────────────────────────────────────────
 # Both tokio-rustls and rustls default to aws_lc_rs; adding ring on top

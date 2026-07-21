@@ -7,6 +7,7 @@
   ],
   "permissions": [
     "core:default",
-    "log:default"
+    "log:default",
+    "deep-link:default"
   ]
 }
