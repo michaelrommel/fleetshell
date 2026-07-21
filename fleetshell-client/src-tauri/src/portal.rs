@@ -35,6 +35,7 @@
 ///    fully enrolled.
 
 use serde::{Deserialize, Serialize};
+use tauri::Manager as _;  // for AppHandle::state()
 
 // ── Deep-link payload types ───────────────────────────────────────────────────
 
@@ -104,19 +105,23 @@ struct KeyGetResponse {
 
 /// Decode and dispatch a `fleetshell://` deep-link URL.
 ///
-/// Extracts the base64url payload, parses it, and calls the appropriate
-/// handler.  On any outcome the logging tab is surfaced so the user can see
-/// what happened.
+/// Extracts the base64url payload, parses it, and calls the appropriate handler.
+///
+/// On **success** the window is left wherever it is — the user is watching the
+/// portal page and an uninvited pop-up is disruptive.
+///
+/// On **failure** the logging tab is surfaced so the user can read the error.
 pub async fn handle_deep_link(app: &tauri::AppHandle, url: url::Url) {
 	log::info!("Handling deep link: {}", url);
 
 	let result = dispatch(app, &url).await;
 	match result {
 		Ok(msg) => {
-			log::info!("Deep link handled: {}", msg);
-			crate::util::navigate(app, "logging");
+			// Enrollment completed — stay out of the user's way.
+			log::info!("Deep link handled successfully: {}", msg);
 		}
 		Err(e) => {
+			// Surface the logging tab so the user can see what went wrong.
 			log::error!("Deep link error: {}", e);
 			crate::util::navigate(app, "logging");
 		}
@@ -209,6 +214,26 @@ async fn handle_enroll(
 	// ── Step 7: confirm receipt ───────────────────────────────────────────────
 	confirm_cert(base, id, token).await?;
 	log::info!("Enrollment [7/7]: confirmed");
+
+	// ── Hot-reload TLS ────────────────────────────────────────────────────────────────────────────
+	// Now that the cert and key are on disk, promote the API server from plain
+	// HTTP to HTTPS without requiring a restart.  Any subsequent connection
+	// (including the portal's Connect form) will benefit immediately.
+	if let (Some(cert_pem), Some(key_pem)) = (
+		crate::config::load_cert(app, id),
+		crate::config::load_key(app, id),
+	) {
+		match crate::server::build_tls_acceptor(&cert_pem, &key_pem) {
+			Ok(acceptor) => {
+				let tls = app.state::<crate::server::TlsState>();
+				*tls.0.write().await = Some(acceptor);
+				log::info!("Enrollment: API server promoted to HTTPS (id={id})");
+			}
+			Err(e) => log::warn!(
+				"Enrollment: TLS hot-reload failed ({e}); restart to activate HTTPS"
+			),
+		}
+	}
 
 	Ok(format!(
 		"Enrollment complete — id={id}, cert {} bytes",

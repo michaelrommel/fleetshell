@@ -18,6 +18,24 @@ pub const API_HOST: &str = "127-0-0-1.client.fleetshell.com";
 /// Default path sent to the gateway when establishing a tunnel session.
 pub const DEFAULT_GATEWAY_PATH: &str = "/service/tunnel/";
 
+/// Shared, hot-swappable TLS acceptor for the local API server.
+///
+/// Wrapped in `Arc<RwLock<Option<...>>>` so that enrollment (which runs in a
+/// separate tokio task) can atomically promote the server from plain HTTP to
+/// HTTPS without restarting it.  Stored as Tauri managed state so `portal.rs`
+/// can reach it after `handle_enroll` completes.
+///
+/// Each new TCP connection reads the current acceptor: if `Some`, the
+/// connection is wrapped in TLS; if `None`, it is served as plain HTTP.  The
+/// transition takes effect for the very next accepted connection — no restart
+/// needed.
+///
+/// Also used by `tunnel.rs` to terminate the browser's TLS connection when
+/// operating in HTTPS + transform mode.
+pub struct TlsState(
+    pub Arc<tokio::sync::RwLock<Option<tokio_rustls::TlsAcceptor>>>,
+);
+
 // ── Request / Response types ──────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -276,52 +294,75 @@ pub fn build_tls_acceptor(
     Ok(tokio_rustls::TlsAcceptor::from(Arc::new(server_config)))
 }
 
-/// Accept TLS connections on `listener` and serve the Axum `router` over HTTPS.
+/// Accept connections on `listener` and serve `router`, upgrading each new
+/// connection to TLS if `tls` currently holds an acceptor, or serving plain
+/// HTTP otherwise.
 ///
-/// This is the TLS equivalent of `axum::serve`.  Each accepted TCP connection
-/// is wrapped with `acceptor`, then served in its own tokio task via
-/// hyper's auto HTTP/1+2 connection builder.
-pub async fn serve_tls(
+/// The TLS state is sampled **per accepted connection**, so writing a new
+/// [`tokio_rustls::TlsAcceptor`] into `tls` after enrollment takes effect
+/// immediately — no restart required.
+pub async fn serve_adaptive(
     listener: tokio::net::TcpListener,
     router:   axum::Router,
-    acceptor: tokio_rustls::TlsAcceptor,
+    tls:      Arc<tokio::sync::RwLock<Option<tokio_rustls::TlsAcceptor>>>,
 ) {
-    use hyper::body::Incoming;
-    use hyper_util::rt::{TokioExecutor, TokioIo};
-    use hyper_util::server::conn::auto::Builder as ConnBuilder;
-    use tower::ServiceExt as _;
-
     loop {
         let (stream, peer_addr) = match listener.accept().await {
             Ok(pair) => pair,
-            Err(e)   => { log::error!("API TLS accept error: {e}"); continue; }
+            Err(e)   => { log::error!("API accept error: {e}"); continue; }
         };
 
-        let acceptor = acceptor.clone();
-        let router   = router.clone();
+        // Sample the current TLS state.  TlsAcceptor is Arc<ServerConfig>
+        // internally, so cloning is cheap.
+        let acceptor_opt = tls.read().await.clone();
+        let router = router.clone();
 
-        tokio::spawn(async move {
-            let tls_stream = match acceptor.accept(stream).await {
-                Ok(s)  => s,
-                Err(e) => {
-                    log::warn!("TLS handshake failed from {peer_addr}: {e}");
-                    return;
-                }
-            };
-
-            let io  = TokioIo::new(tls_stream);
-            // `oneshot` consumes the cloned router and the request,
-            // avoiding the need for a mutable borrow inside the closure.
-            let svc = hyper::service::service_fn(move |req: hyper::Request<Incoming>| {
-                router.clone().oneshot(req)
-            });
-
-            if let Err(e) = ConnBuilder::new(TokioExecutor::new())
-                .serve_connection_with_upgrades(io, svc)
-                .await
-            {
-                log::debug!("API HTTPS connection closed ({peer_addr}): {e}");
+        match acceptor_opt {
+            Some(acceptor) => {
+                tokio::spawn(async move {
+                    match acceptor.accept(stream).await {
+                        Ok(s)  => serve_connection(
+                            hyper_util::rt::TokioIo::new(s), router, peer_addr,
+                        ).await,
+                        Err(e) => log::warn!("API TLS handshake failed from {peer_addr}: {e}"),
+                    }
+                });
             }
-        });
+            None => {
+                tokio::spawn(async move {
+                    serve_connection(
+                        hyper_util::rt::TokioIo::new(stream), router, peer_addr,
+                    ).await;
+                });
+            }
+        }
+    }
+}
+
+/// Serve one HTTP/1+2 connection to completion.
+///
+/// Generic over the I/O stream type so the same code path handles both plain
+/// TCP and TLS streams without boxing.
+async fn serve_connection<S>(
+    io:        hyper_util::rt::TokioIo<S>,
+    router:    axum::Router,
+    peer_addr: std::net::SocketAddr,
+)
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
+    use hyper::body::Incoming;
+    use hyper_util::rt::TokioExecutor;
+    use hyper_util::server::conn::auto::Builder as ConnBuilder;
+    use tower::ServiceExt as _;
+
+    let svc = hyper::service::service_fn(move |req: hyper::Request<Incoming>| {
+        router.clone().oneshot(req)
+    });
+    if let Err(e) = ConnBuilder::new(TokioExecutor::new())
+        .serve_connection_with_upgrades(io, svc)
+        .await
+    {
+        log::debug!("API connection closed ({peer_addr}): {e}");
     }
 }

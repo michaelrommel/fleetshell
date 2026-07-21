@@ -172,11 +172,10 @@ pub fn run() {
             };
             let router = server::build_router(api_state);
 
-            // Upgrade to HTTPS when a certificate and key are on disk for the
-            // enrolled client ID.  Falls back to plain HTTP transparently so
-            // the app remains fully usable before the first enrollment.
+            // Build the initial TLS acceptor from on-disk cert+key (if enrolled).
+            // Wrapped in Arc<RwLock> so enrollment can hot-swap it without a restart.
             let cfg = config::load(app.handle());
-            let tls_acceptor = cfg.client_id.as_deref().and_then(|id| {
+            let initial_acceptor = cfg.client_id.as_deref().and_then(|id| {
                 let cert = config::load_cert(app.handle(), id)?;
                 let key  = config::load_key(app.handle(), id)?;
                 match server::build_tls_acceptor(&cert, &key) {
@@ -185,36 +184,36 @@ pub fn run() {
                         Some(a)
                     }
                     Err(e) => {
-                        log::warn!("API server: TLS setup failed, using plain HTTP: {e}");
+                        log::warn!("API server: TLS setup failed, falling back to plain HTTP: {e}");
                         None
                     }
                 }
             });
+
+            let is_tls    = initial_acceptor.is_some();
+            let tls_state = Arc::new(tokio::sync::RwLock::new(initial_acceptor));
+            // Register as Tauri managed state so portal.rs can promote HTTP → HTTPS
+            // after enrollment without requiring a restart.
+            app.manage(server::TlsState(tls_state.clone()));
 
             tauri::async_runtime::spawn(async move {
                 let listener = tokio::net::TcpListener::bind(("127.0.0.1", server::API_PORT))
                     .await
                     .expect("Failed to bind API server");
 
-                match tls_acceptor {
-                    Some(acceptor) => {
-                        log::info!(
-                            "API server listening on https://{}:{} (bound to 127.0.0.1)",
-                            server::API_HOST,
-                            server::API_PORT,
-                        );
-                        server::serve_tls(listener, router, acceptor).await;
-                    }
-                    None => {
-                        log::info!(
-                            "API server listening on http://127.0.0.1:{}",
-                            server::API_PORT,
-                        );
-                        axum::serve(listener, router)
-                            .await
-                            .expect("API server crashed");
-                    }
+                if is_tls {
+                    log::info!(
+                        "API server listening on https://{}:{} (bound to 127.0.0.1)",
+                        server::API_HOST,
+                        server::API_PORT,
+                    );
+                } else {
+                    log::info!(
+                        "API server listening on http://127.0.0.1:{}",
+                        server::API_PORT,
+                    );
                 }
+                server::serve_adaptive(listener, router, tls_state).await;
             });
 
             // ── Tray icon ─────────────────────────────────────────────────

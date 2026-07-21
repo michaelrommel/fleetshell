@@ -10,6 +10,7 @@ use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use rustls::{DigitallySignedStruct, SignatureScheme};
 
 use crate::server::{ApiState, TunnelRequest};
+use tauri::Manager as _;  // for AppHandle::state()
 
 // ── Port-spec parser ──────────────────────────────────────────────────────────
 
@@ -271,7 +272,53 @@ async fn handle_connection(local: TcpStream, port: u16, req: TunnelRequest, stat
     };
 
     let payload = build_payload(&req, port, &state.gateway_path);
-    do_tunnel(local, tls, &payload, port, &state.app, last_active).await;
+
+    // HTTPS + transform: terminate the browser's TLS connection at the client.
+    //
+    // In transparent mode the browser's TLS ClientHello travels raw to the
+    // device, so the browser sees the device's self-signed certificate and
+    // refuses or warns.  By accepting the browser's TLS here (using the
+    // *.client.fleetshell.com cert the client already holds) we give the
+    // gateway plaintext HTTP it can parse, while the browser sees only our
+    // trusted wildcard cert.  The gateway then opens its own TLS session to
+    // the device (cert validation disabled) and rewrites the Host header.
+    if req.transform.unwrap_or(false) && req.application.eq_ignore_ascii_case("https") {
+        // Clone the Arc<RwLock<...>> out of managed state so the tauri::State
+        // borrow is released before the async .read().await.  TlsAcceptor is
+        // Arc<ServerConfig> internally, so the subsequent clone is cheap.
+        let tls_arc = state.app.state::<crate::server::TlsState>().0.clone();
+        let acceptor_opt = tls_arc.read().await.clone();
+        match acceptor_opt {
+            Some(acceptor) => {
+                log::info!(
+                    "port {} — HTTPS transform: terminating browser TLS at client",
+                    port
+                );
+                match acceptor.accept(local).await {
+                    Ok(local_tls) => {
+                        do_tunnel(local_tls, tls, &payload, port, &state.app, last_active)
+                            .await;
+                    }
+                    Err(e) => {
+                        log::error!("port {} — browser TLS accept failed: {e}", port);
+                        crate::util::navigate(&state.app, "logging");
+                    }
+                }
+            }
+            None => {
+                // Client not yet enrolled — no cert available to terminate TLS.
+                // Fall back to transparent relay so the user can at least reach
+                // devices with valid certificates.
+                log::warn!(
+                    "port {} — HTTPS transform requested but client has no TLS cert                      (enroll first); using transparent mode",
+                    port
+                );
+                do_tunnel(local, tls, &payload, port, &state.app, last_active).await;
+            }
+        }
+    } else {
+        do_tunnel(local, tls, &payload, port, &state.app, last_active).await;
+    }
 }
 
 // ── Handshake + bidirectional forwarding ──────────────────────────────────────
@@ -296,14 +343,15 @@ fn build_payload(req: &TunnelRequest, port: u16, gateway_path: &str) -> Vec<u8> 
 
 /// Send the JSON payload, read the gateway's response line, then forward
 /// bytes bidirectionally if the response is `"200 CONNECTED"`.
-async fn do_tunnel<S>(
-    mut local:   TcpStream,
+async fn do_tunnel<L, S>(
+    mut local:   L,
     mut gateway: S,
     payload:     &[u8],
     port:        u16,
     app:         &tauri::AppHandle,
     last_active: Arc<AtomicU64>,
 ) where
+    L: AsyncRead + AsyncWrite + Unpin + Send,
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
     if let Err(e) = gateway.write_all(payload).await {
