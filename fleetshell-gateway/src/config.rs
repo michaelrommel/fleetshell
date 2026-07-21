@@ -19,6 +19,15 @@ pub struct Config {
 
     /// Optional path to a PEM-encoded private-key file (PKCS#8 or SEC1).
     pub tls_key_file: Option<String>,
+
+    /// Skip TLS certificate chain verification when the gateway opens its own
+    /// TLS connection to an upstream server (transform mode, `application =
+    /// "https"`).
+    ///
+    /// Default: `true` — appropriate for medical devices and other embedded
+    /// targets that carry self-signed certificates.  Set to `false` in
+    /// environments where the upstream presents a CA-signed certificate.
+    pub upstream_tls_accept_invalid_certs: bool,
 }
 
 impl Config {
@@ -41,6 +50,11 @@ impl Config {
             jwt_secret,
             tls_cert_file: std::env::var("TLS_CERT_FILE").ok(),
             tls_key_file:  std::env::var("TLS_KEY_FILE").ok(),
+            upstream_tls_accept_invalid_certs: std::env::var(
+                "GATEWAY_UPSTREAM_TLS_ACCEPT_INVALID_CERTS",
+            )
+            .map(|v| !(v.eq_ignore_ascii_case("false") || v == "0"))
+            .unwrap_or(true),
         }
     }
 }

@@ -25,6 +25,12 @@ pub struct TunnelRequest {
     pub servicekey:  Option<String>,
     /// Gateway address as "host" or "host:port"; port defaults to 443.
     pub gateway:     String,
+    /// When `true` the gateway switches to HTTP/1.1 transform-proxy mode
+    /// instead of raw transparent forwarding.  The gateway will parse and
+    /// optionally modify every HTTP request/response before relaying it.
+    /// For `application = "https"` the gateway opens its own TLS connection
+    /// to the upstream target.
+    pub transform:   Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
