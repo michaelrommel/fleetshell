@@ -58,11 +58,21 @@ fleetshell/
 │   │       │   ├── settings/           # (placeholder)
 │   │       │   └── administration/     # (placeholder)
 │   │       └── api/
-│   │           ├── client/probe/[id]/  # POST — receives probe from client, stores in Redis
-│   │           ├── clients/            # GET — lists enrolled clients from Redis
-│   │           └── probes/[id]/stream/ # GET (SSE) — streams probe result to browser
-│   └── static/
-│       └── fleetshell-client_0.1.0_x64-setup.exe   # Bundled client installer
+│   │           ├── client/probe/[id]/      # POST — receives probe from client, stores in Redis
+│   │           ├── clients/                # POST — get/create stable client ID, issue probe JWT
+│   │           ├── probes/[id]/stream/     # GET (SSE) — streams probe result to browser
+│   │           ├── enrollment/[id]/stream/ # GET (SSE) — streams full enrollment events to browser
+│   │           └── cert/
+│   │               ├── request/            # POST — accept CSR, store static cert chain, publish cert-ready
+│   │               ├── status/             # GET  — poll cert issuance status (none|pending|ready)
+│   │               ├── get/                # GET  — fetch the issued certificate chain (PEM)
+│   │               ├── key/                # GET  — fetch the shared private key (PEM)
+│   │               └── confirm/            # POST — client confirms receipt; marks enrollment done
+│   ├── certs/
+│   │   └── client.pem                  # Shared wildcard cert chain (*.client.fleetshell.com)
+│   ├── private/
+│   │   └── client.key                  # Shared wildcard private key — NOT committed to VCS
+│   └── support/apps/[filename]/        # GET  — serves client installer download
 │
 ├── fleetshell-client/          # Tauri 2 desktop application (Windows target)
 │   ├── src/                    # SvelteKit + Svelte 5 frontend
@@ -172,19 +182,36 @@ fleetshell/
 - **Redis persistence** — `lib/server/redis.ts` provides a singleton client.
   Client IDs are stored as Redis hashes under `clients:<id>`.
   Device records are stored under `systems:by-ip:<ip>`.
-- **Probe flow** (the enrollment handshake):
-  - `/support` page generates a `fleetshell://` deep-link URL containing a
-    base64url-encoded JSON probe payload `{type:"probe", payload:"<id>", token:"<jwt>"}`.
-  - `POST /api/client/probe/[id]` — the client calls this endpoint after decoding
-    the deep-link; the portal validates the JWT, stores the probe result in Redis,
-    and publishes to a Redis Pub/Sub channel.
-  - `GET /api/probes/[id]/stream` — SSE endpoint; the browser subscribes and
-    receives the probe result as soon as the client posts it.
-  - `/welcome` page links to Support and then to Devices.
+- **Enrollment flow** — the full guided sequence is orchestrated from the `/support`
+  page and uses the following API endpoints in order:
+  1. `POST /api/clients` — browser fetches/creates the stable client UUID and a
+     short-lived probe JWT; resets the probe slot in Redis.
+  2. `/support` page generates a `fleetshell://` deep-link with a base64url-encoded
+     JSON envelope `{type:"enroll", payload:"<id>", token:"<jwt>"}` and opens it.
+  3. `POST /api/client/probe/[id]` — client posts `{version, arch}` with Bearer
+     JWT; portal validates, stores result, publishes to the `probe:` Redis channel.
+  4. `GET /api/probes/[id]/stream` — browser SSE stream receives the probe result.
+  5. `POST /api/cert/request` — client posts `{id, csr}` with Bearer JWT; portal
+     validates, stores the CSR, marks cert `pending`, and after a simulated CA
+     delay stores the **static** cert chain from `certs/client.pem` and marks cert
+     `ready`.  Publishes `csr-received` and `cert-ready` on the `enrollment:` channel.
+  6. `GET /api/cert/status?id=` — client polls until `"ready"`.
+  7. `GET /api/cert/get?id=` — client fetches the certificate chain (PEM).
+  8. `GET /api/cert/key?id=` — client fetches the matching private key (PEM);
+     requires cert status `ready`; key is read from `private/client.key` at startup.
+  9. `POST /api/cert/confirm` — client confirms receipt; portal publishes
+     `enrollment-confirmed` so the browser SSE stream advances to the final step.
+  - `GET /api/enrollment/[id]/stream` — browser SSE stream for steps 5–9;
+    receives `csr-received`, `cert-ready`, and `enrollment-confirmed` events.
+- **Static certificate (Phase 1)** — all enrolled clients receive the same shared
+  wildcard certificate (`*.client.fleetshell.com`).  The cert chain is read from
+  `certs/client.pem` and the private key from `private/client.key` at process
+  start.  Neither file is committed to VCS; both must be present in the deployment
+  environment.  Phase 2 will replace this with per-client key pairs and real CSRs.
 - **Device lookup** — `/devices` page searches Redis by IP address and renders
   the raw key/value hash.
-- **Client installer** — `/support` page offers `fleetshell-client_0.1.0_x64-setup.exe`
-  for download (served from `/static`).
+- **Client installer** — `/support` page serves the installer via
+  `GET /support/apps/[filename]` (streamed from the filesystem).
 
 ### What is NOT yet implemented (open work)
 
@@ -327,10 +354,14 @@ Currently `"enroll"` is the only handled type.  It runs a six-step sequence:
 | 2 | `POST {portal_base_url}/api/client/probe/{id}` — `{version, arch}` + Bearer token |
 | 3 | `POST {portal_base_url}/api/cert/request` — `{id, csr: "placeholder"}` + Bearer token |
 | 4 | Poll `GET {portal_base_url}/api/cert/status?id={id}` every 3 s (120 s timeout) until `"ready"` |
-| 5 | `GET {portal_base_url}/api/cert/get?id={id}` — receive the certificate |
-| 6 | `POST {portal_base_url}/api/cert/confirm` — `{id}` + Bearer token |
+| 5 | `GET {portal_base_url}/api/cert/get?id={id}` — receive the certificate chain (PEM) |
+| 6 | `GET {portal_base_url}/api/cert/key?id={id}` — receive the matching private key (PEM) |
+| 7 | `POST {portal_base_url}/api/cert/confirm` — `{id}` (no Bearer token required) |
 
-The CSR in step 3 is currently a placeholder string; a real PKCS#10 PEM will replace it in Phase 2.
+The portal currently serves a **static shared certificate** (`certs/client.pem`) and
+private key (`private/client.key`) to every enrolled client — Phase 1 bootstrapping
+using a wildcard cert (`*.client.fleetshell.com`).  The CSR in step 3 is a placeholder
+string; a real PKCS#10 PEM will replace it in Phase 2.
 
 ### Single-instance logic
 
@@ -580,12 +611,13 @@ Currently: HS256 (HMAC-SHA256). The client never inspects or validates the JWT.
       deep-link — stored as `client_id` in `AppConfig` (TOML)
 - [x] **Phase 1**: Client submits a placeholder CSR to `/api/cert/request` using
       the enrollment Bearer token; polls `/api/cert/status` until `"ready"`,
-      fetches the cert from `/api/cert/get`, then confirms via `/api/cert/confirm`
-- [ ] **Phase 1**: Obtain one shared wildcard cert (`*.client.fleetshell.com`)
-      for bootstrapping (portal-side LE issuance not yet implemented)
+      fetches the cert from `/api/cert/get`, fetches the private key from
+      `/api/cert/key`, then confirms via `/api/cert/confirm`
+- [x] **Phase 1**: Portal serves one shared wildcard cert (`*.client.fleetshell.com`)
+      from `certs/client.pem` and its private key from `private/client.key`
 - [ ] **Phase 1**: Replace placeholder CSR with a real PKCS#10 PEM
-- [ ] **Phase 1**: Portal obtains signed cert from LE and sends it to the client
 - [ ] **Phase 1**: Client activates an inbound HTTPS listener using the received cert
+      and key
 - [ ] **Phase 2**: Client generates a pub/private key pair
 - [ ] **Phase 2**: Client creates a CSR for `*.<uniquename>.client.fleetshell.com`
 - [ ] **Phase 2**: Client sends real CSR to the portal

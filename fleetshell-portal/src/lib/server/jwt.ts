@@ -56,6 +56,43 @@ export function issueProbeToken(probeId: string, secret: string): string {
 	return `${unsigned}.${sig}`;
 }
 
+// ── Tunnel token ─────────────────────────────────────────────────────────────
+
+/**
+ * Issue a tunnel JWT that authorises a specific target/port/gateway triple.
+ *
+ * Claims match the format expected by fleetshell-gateway's auth.rs:
+ *   sub    — authenticated portal user (informational)
+ *   iat    — issued-at (Unix seconds)
+ *   exp    — expiry (iat + ttlSeconds, default 24 h)
+ *   target — exact host the token authorises
+ *   ports  — port spec string (same comma/range format as the tunnel request)
+ *   gw     — gateway identifier (optional cross-gateway replay guard)
+ */
+export function issueTunnelToken(
+	sub        : string,
+	target     : string,
+	ports      : string,
+	gw         : string,
+	secret     : string,
+	ttlSeconds : number = 24 * 60 * 60,
+): string {
+	const now     = Math.floor(Date.now() / 1000);
+	const payload = b64url(Buffer.from(JSON.stringify({
+		sub,
+		iat    : now,
+		exp    : now + ttlSeconds,
+		target,
+		ports,
+		gw,
+	})));
+
+	const unsigned = `${HEADER_B64URL}.${payload}`;
+	const sig      = b64url(hmacSha256(unsigned, secret));
+
+	return `${unsigned}.${sig}`;
+}
+
 export type VerifyResult = 'ok' | 'expired' | 'invalid';
 
 /**
