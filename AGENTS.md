@@ -388,7 +388,7 @@ Installer type: NSIS, **user-level install** (no admin rights required).
 
 See [§7 Open work items — Client](#client-1).
 
----
+The portal issues JWTs. The gateway verifies them with `JWT_SECRET` (HS256).
 
 ## 5. Component: fleetshell-gateway
 
