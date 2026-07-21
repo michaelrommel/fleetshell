@@ -330,10 +330,23 @@ pub async fn run<C, T>(
 
 		let keep_alive_client = is_keep_alive(&request);
 
-		// ── 4. Apply request hook ─────────────────────────────────────────
+		// ── 4. Inject Host header from SNI (before the hook runs) ────────
+		//
+		// `target` is an IP address; the upstream needs the correct `Host:`
+		// for name-based virtual hosting and routing.  We overwrite whatever
+		// the local client sent (e.g. `Host: 127.0.0.1`) with the SNI name
+		// supplied in the handshake payload.  The hook may further override
+		// this if needed.
+		if let Some(ref sni) = payload.sni {
+			if matches!(payload.application.as_str(), "http" | "https") {
+				request.set_header("Host", sni.as_str());
+			}
+		}
+
+		// ── 5. Apply request hook ─────────────────────────────────────────
 		hook.on_request(&mut request);
 
-		// ── 5. Forward (possibly modified) request to upstream ────────────
+		// ── 6. Forward (possibly modified) request to upstream ────────────
 		let req_bytes = request.to_bytes();
 		if target_w.write_all(&req_bytes).await.is_err()
 			|| target_w.flush().await.is_err()
@@ -342,7 +355,7 @@ pub async fn run<C, T>(
 			break;
 		}
 
-		// ── 6. Read response headers from upstream ────────────────────────
+		// ── 7. Read response headers from upstream ────────────────────────
 		let resp_buf = match read_header_block(&mut target_r, MAX_HEADER_BUF).await {
 			Ok(Some(b)) => b,
 			Ok(None) => {
@@ -355,7 +368,7 @@ pub async fn run<C, T>(
 			}
 		};
 
-		// ── 7. Parse response line + headers ──────────────────────────────
+		// ── 8. Parse response line + headers ──────────────────────────────
 		let (mut response, resp_head_end) = match parse_response(&resp_buf) {
 			Ok(v) => v,
 			Err(e) => {
@@ -364,7 +377,7 @@ pub async fn run<C, T>(
 			}
 		};
 
-		// ── 8. Read response body ─────────────────────────────────────────
+		// ── 9. Read response body ─────────────────────────────────────────
 		response.body =
 			match read_body(&mut target_r, &response, &resp_buf[resp_head_end..]).await {
 				Ok(b) => b,
@@ -383,10 +396,10 @@ pub async fn run<C, T>(
 			"proxied"
 		);
 
-		// ── 9. Apply response hook ────────────────────────────────────────
+		// ── 10. Apply response hook ─────────────────────────────────────
 		hook.on_response(&mut response);
 
-		// ── 10. Write (possibly modified) response back to client ─────────
+		// ── 11. Write (possibly modified) response back to client ─────────
 		let resp_bytes = response.to_bytes();
 		if client_w.write_all(&resp_bytes).await.is_err()
 			|| client_w.flush().await.is_err()
@@ -395,7 +408,7 @@ pub async fn run<C, T>(
 			break;
 		}
 
-		// ── 11. Keep-alive decision ───────────────────────────────────────
+		// ── 12. Keep-alive decision ───────────────────────────────────────
 		if !keep_alive_client || !keep_alive_upstream {
 			debug!(target = %label, "closing (Connection: close)");
 			break;
