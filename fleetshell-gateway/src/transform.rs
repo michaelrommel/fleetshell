@@ -305,7 +305,14 @@ pub async fn run<C, T>(
 				break;
 			}
 			Err(e) => {
-				warn!(target = %label, "error reading request headers: {e}");
+				// rustls emits this when the peer closes the TCP connection
+				// without a TLS close_notify alert.  Browsers routinely do this
+				// at the end of a keep-alive session — it is not an error.
+				if e.to_string().contains("close_notify") {
+					debug!(target = %label, "client closed without TLS close_notify (normal)");
+				} else {
+					warn!(target = %label, "error reading request headers: {e}");
+				}
 				break;
 			}
 		};
@@ -328,6 +335,27 @@ pub async fn run<C, T>(
 			}
 		};
 
+		// ── 3a. Normalise chunked request bodies ─────────────────────────
+		//
+		// read_body() already decoded the chunks into a flat Vec<u8>.
+		// Strip Transfer-Encoding: chunked and set Content-Length so the
+		// upstream receives a well-formed Content-Length request.
+		if request.header("transfer-encoding")
+			.map(|v| v.to_ascii_lowercase().contains("chunked"))
+			.unwrap_or(false)
+		{
+			request.remove_header("transfer-encoding");
+			request.set_header("content-length", request.body.len().to_string());
+		}
+
+		// Capture the tunnel-facing Host before it is overwritten in step 4.
+		// We need it to rewrite Origin / Referer (request) and Location
+		// (response) so the browser never escapes the tunnel to the real
+		// upstream domain.
+		let client_host = request.header("host")
+			.map(|s| s.to_owned())
+			.unwrap_or_default();
+
 		let keep_alive_client = is_keep_alive(&request);
 
 		// ── 4. Inject Host header from SNI (before the hook runs) ────────
@@ -340,6 +368,26 @@ pub async fn run<C, T>(
 		if let Some(ref sni) = payload.sni {
 			if matches!(payload.application.as_str(), "http" | "https") {
 				request.set_header("Host", sni.as_str());
+			}
+		}
+
+		// ── 4b. Rewrite Origin and Referer to the upstream hostname ───────
+		//
+		// The browser sends these headers with the tunnel hostname.  Rewrite
+		// them to the real upstream hostname so the server does not reject
+		// the request as cross-origin or redirect to its canonical domain.
+		if let Some(ref sni) = payload.sni {
+			if matches!(payload.application.as_str(), "http" | "https")
+				&& !client_host.is_empty()
+			{
+				for hdr in &["origin", "referer"] {
+					if let Some(val) = request.header(hdr).map(|s| s.to_owned()) {
+						let rewritten = rewrite_host_in_url(&val, &client_host, sni);
+						if rewritten != val {
+							request.set_header(hdr, rewritten);
+						}
+					}
+				}
 			}
 		}
 
@@ -378,21 +426,99 @@ pub async fn run<C, T>(
 		};
 
 		// ── 9. Read response body ─────────────────────────────────────────
-		response.body =
-			match read_body(&mut target_r, &response, &resp_buf[resp_head_end..]).await {
-				Ok(b) => b,
-				Err(e) => {
-					warn!(target = %label, "error reading response body: {e}");
-					break;
+		//
+		// RFC 9110 §6.3: HEAD responses, 1xx, 204, and 304 never carry a body
+		// even when Content-Length is present.  Reading Content-Length bytes
+		// from a body-less response hangs (early eof) and stalls the client.
+		let is_head     = request.first_line.starts_with("HEAD ");
+		let status_code = response.first_line
+			.split_whitespace()
+			.nth(1)
+			.and_then(|s| s.parse::<u16>().ok())
+			.unwrap_or(0);
+		let response_has_body = !is_head
+			&& status_code >= 200
+			&& status_code != 204
+			&& status_code != 304;
+
+		if response_has_body {
+			response.body =
+				match read_body(&mut target_r, &response, &resp_buf[resp_head_end..]).await {
+					Ok(b) => b,
+					Err(e) => {
+						warn!(target = %label, "error reading response body: {e}");
+						break;
+					}
+				};
+
+			// ── 9a. Normalise chunked response bodies ─────────────────────
+			//
+			// The gateway buffered and decoded the chunks into a flat Vec<u8>.
+			// Replace Transfer-Encoding: chunked with Content-Length so the
+			// browser receives a well-formed response body
+			// (prevents ERR_INVALID_CHUNKED_ENCODING / blank page).
+			if response.header("transfer-encoding")
+				.map(|v| v.to_ascii_lowercase().contains("chunked"))
+				.unwrap_or(false)
+			{
+				response.remove_header("transfer-encoding");
+				response.set_header("content-length", response.body.len().to_string());
+			}
+		} else {
+			debug!(
+				target = %label,
+				status_code,
+				is_head,
+				"skipping response body (HEAD or body-less status)"
+			);
+		}
+
+		// ── 9b. Rewrite Location header to stay within the tunnel ─────────
+		//
+		// Redirects from the upstream (301/302/307/308) contain absolute URLs
+		// with the real hostname.  Without rewriting them the browser leaves
+		// the tunnel and connects directly to the upstream.  We replace the
+		// upstream hostname (SNI or target IP) with the tunnel hostname the
+		// browser actually connected to.
+		if !client_host.is_empty() {
+			let upstream_host = payload.sni.as_deref().unwrap_or(&payload.target);
+			if let Some(loc) = response.header("location").map(|s| s.to_owned()) {
+				let rewritten = rewrite_host_in_url(&loc, upstream_host, &client_host);
+				if rewritten != loc {
+					debug!(target = %label, old = %loc, new = %rewritten, "rewrote Location");
+					response.set_header("location", rewritten);
 				}
-			};
+			}
+		}
+
+		// ── 9c. Strip headers that must not be tunnelled ─────────────────
+		//
+		// Strict-Transport-Security: if forwarded to the browser, it pins
+		//   *the tunnel hostname* to a long HSTS policy instead of the real
+		//   upstream domain.  The tunnel hostname (127-0-0-x.client…) then
+		//   refuses plain HTTP for years — and the browser may cache a
+		//   redirect to the upstream that persists after the tunnel is gone.
+		//
+		// Alt-Svc: advertises HTTP/2 or HTTP/3 on the upstream's real
+		//   address.  The browser would connect directly to the upstream,
+		//   bypassing the tunnel entirely.
+		//
+		// Public-Key-Pins (HPKP): deprecated but pins the upstream's cert
+		//   to the tunnel hostname — breaks TLS for every future visit.
+		for hdr in &["strict-transport-security", "alt-svc", "public-key-pins"] {
+			response.remove_header(hdr);
+		}
 
 		let keep_alive_upstream = is_keep_alive(&response);
 
+		let method = request.first_line.split_whitespace().next().unwrap_or("-");
+		let path   = request.first_line.split_whitespace().nth(1).unwrap_or("/");
 		info!(
-			target   = %label,
-			status   = %response.first_line,
-			body_len = response.body.len(),
+			target       = %label,
+			%method,
+			%path,
+			status       = %response.first_line,
+			body_len     = response.body.len(),
 			"proxied"
 		);
 
@@ -636,6 +762,32 @@ fn is_keep_alive(msg: &HttpMessage) -> bool {
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
+/// Replace every `http(s)://from_host` occurrence in `value` with
+/// `http(s)://to_host`.
+///
+/// Handles the common cases in HTTP headers:
+/// - `Location: https://real.example.com/path` → `https://tunnel.host/path`
+/// - `Origin: https://tunnel.host` → `https://real.example.com`
+/// - `Referer: https://tunnel.host/page` → `https://real.example.com/page`
+///
+/// Only rewrites when both hosts are non-empty and different.
+/// Preserves the path, query, and fragment unchanged.
+fn rewrite_host_in_url(value: &str, from_host: &str, to_host: &str) -> String {
+	if from_host.is_empty() || to_host.is_empty() || from_host == to_host {
+		return value.to_owned();
+	}
+	let mut out = value.to_owned();
+	for scheme in ["https://", "http://"] {
+		let old_prefix = format!("{scheme}{from_host}");
+		let new_prefix = format!("{scheme}{to_host}");
+		if out.contains(&old_prefix) {
+			out = out.replace(&old_prefix, &new_prefix);
+			break; // one scheme per header value is enough
+		}
+	}
+	out
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;
@@ -680,6 +832,34 @@ mod tests {
 		let raw = b"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n";
 		let (msg, _) = parse_response(raw).unwrap();
 		assert!(!is_keep_alive(&msg));
+	}
+
+	#[test]
+	fn rewrite_host_location() {
+		assert_eq!(
+			rewrite_host_in_url(
+				"https://michaelrommel.com/login",
+				"michaelrommel.com",
+				"127-0-0-3.client.fleetshell.com",
+			),
+			"https://127-0-0-3.client.fleetshell.com/login",
+		);
+	}
+
+	#[test]
+	fn rewrite_host_relative_unchanged() {
+		// Relative Location values must pass through untouched.
+		let rel = "/login?next=/dashboard";
+		assert_eq!(
+			rewrite_host_in_url(rel, "michaelrommel.com", "127-0-0-3.client.fleetshell.com"),
+			rel,
+		);
+	}
+
+	#[test]
+	fn rewrite_host_same_noop() {
+		let url = "https://example.com/path";
+		assert_eq!(rewrite_host_in_url(url, "example.com", "example.com"), url);
 	}
 
 	#[test]
