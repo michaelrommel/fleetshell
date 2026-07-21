@@ -1,0 +1,146 @@
+/* ── Gruvbox Dark Hard ───────────────────────────────────────────────────────
+   Palette reference: https://github.com/morhetz/gruvbox
+   ─────────────────────────────────────────────────────────────────────────── */
+
+:root {
+	/* Backgrounds */
+	--bg-hard : #1d2021;
+	--bg0     : #282828;
+	--bg1     : #3c3836;
+	--bg2     : #504945;
+	--bg3     : #665c54;
+	--bg4     : #7c6f64;
+
+	/* Foregrounds */
+	--fg0     : #f9f5d7;
+	--fg1     : #ebdbb2;
+	--fg2     : #d5c4a1;
+	--fg3     : #bdae93;
+	--fg4     : #a89984;
+
+	/* Accent colours — normal */
+	--red     : #cc241d;
+	--green   : #98971a;
+	--yellow  : #d79921;
+	--blue    : #458588;
+	--purple  : #b16286;
+	--aqua    : #689d6a;
+	--orange  : #d65d0e;
+	--gray    : #928374;
+
+	/* Accent colours — bright */
+	--bright-red    : #fb4934;
+	--bright-green  : #b8bb26;
+	--bright-yellow : #fabd2f;
+	--bright-blue   : #83a598;
+	--bright-purple : #d3869b;
+	--bright-aqua   : #8ec07c;
+	--bright-orange : #fe8019;
+}
+
+/* ── Reset / base ─────────────────────────────────────────────────────────── */
+
+*, *::before, *::after {
+	box-sizing: border-box;
+	margin: 0;
+	padding: 0;
+}
+
+html, body {
+	height: 100%;
+}
+
+body {
+	background-color : var(--bg-hard);
+	color            : var(--fg1);
+	font-family      : 'Consolas', 'Menlo', 'Monaco', 'Liberation Mono',
+	                   'Courier New', monospace;
+	font-size        : 15px;
+	line-height      : 1.6;
+	-webkit-font-smoothing: antialiased;
+}
+
+a {
+	color: var(--bright-blue);
+	text-decoration: none;
+}
+a:hover { text-decoration: underline; }
+
+/* ── Form primitives ──────────────────────────────────────────────────────── */
+
+label {
+	display     : block;
+	font-size   : 0.8rem;
+	text-transform: uppercase;
+	letter-spacing: 0.08em;
+	color       : var(--fg4);
+	margin-bottom: 5px;
+}
+
+input[type="text"],
+input[type="password"] {
+	width           : 100%;
+	background      : var(--bg1);
+	color           : var(--fg1);
+	border          : 1px solid var(--bg3);
+	border-radius   : 3px;
+	padding         : 9px 12px;
+	font-family     : inherit;
+	font-size       : 0.95rem;
+	outline         : none;
+	transition      : border-color 0.15s, box-shadow 0.15s;
+}
+input[type="text"]:focus,
+input[type="password"]:focus {
+	border-color : var(--bright-blue);
+	box-shadow   : 0 0 0 2px color-mix(in srgb, var(--bright-blue) 25%, transparent);
+}
+input::placeholder { color: var(--bg4); }
+
+button[type="submit"], .btn-primary {
+	display         : inline-block;
+	width           : 100%;        /* sensible default for stand-alone form buttons */
+	background      : var(--blue);
+	color           : var(--fg0);
+	border          : none;
+	border-radius   : 3px;
+	padding         : 10px 20px;
+	font-family     : inherit;
+	font-size       : 0.95rem;
+	letter-spacing  : 0.04em;
+	cursor          : pointer;
+	transition      : background 0.15s;
+}
+button[type="submit"]:hover, .btn-primary:hover { background: var(--bright-blue); }
+button[type="submit"]:active, .btn-primary:active { background: var(--bg3); }
+
+.btn-secondary {
+	display         : inline-block;
+	background      : transparent;
+	color           : var(--fg4);
+	border          : 1px solid var(--bg3);
+	border-radius   : 3px;
+	padding         : 7px 18px;
+	font-family     : inherit;
+	font-size       : 0.9rem;
+	cursor          : pointer;
+	transition      : background 0.15s, color 0.15s, border-color 0.15s;
+	text-decoration : none;
+}
+.btn-secondary:hover {
+	background   : var(--bg1);
+	color        : var(--fg1);
+	border-color : var(--bg4);
+	text-decoration: none;
+}
+
+/* ── Utility ──────────────────────────────────────────────────────────────── */
+
+.error-banner {
+	background   : color-mix(in srgb, var(--red) 20%, var(--bg0));
+	border       : 1px solid var(--red);
+	border-radius: 3px;
+	color        : var(--bright-red);
+	padding      : 9px 14px;
+	font-size    : 0.9rem;
+}
