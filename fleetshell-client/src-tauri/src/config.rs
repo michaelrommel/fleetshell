@@ -20,11 +20,20 @@ pub struct AppConfig {
 
     /// Base URL of the FleetShell portal (no trailing slash).
     /// All API paths are constructed relative to this:
-    ///   /api/login            ← enrollment
-    ///   /api/client/probe/<id> ← deep-link probe
+    ///   /api/login               ← enrollment tab
+    ///   /api/client/probe/<id>   ← enroll deep-link step 1 (probe)
+    ///   /api/cert/request        ← enroll deep-link step 2 (CSR)
+    ///   /api/cert/status?id=<id> ← cert readiness poll
+    ///   /api/cert/get?id=<id>    ← cert fetch
+    ///   /api/cert/confirm        ← enroll deep-link step 3 (confirm)
     /// Set to e.g. http://localhost:5173 during development.
     #[serde(default = "default_portal_base_url")]
     pub portal_base_url: String,
+
+    /// Unique client ID assigned by the portal during the first successful
+    /// enrollment handshake.  `None` until enrollment completes.
+    #[serde(default)]
+    pub client_id: Option<String>,
 }
 
 fn default_portal_base_url() -> String {
@@ -37,6 +46,7 @@ impl Default for AppConfig {
             font_size:       15,
             vnc_viewer:      String::new(),
             portal_base_url: default_portal_base_url(),
+            client_id:       None,
         }
     }
 }
@@ -66,11 +76,97 @@ pub fn save(app: &tauri::AppHandle, config: &AppConfig) -> Result<(), String> {
     Ok(())
 }
 
+// ── Certificate persistence ───────────────────────────────────────────────────
+
+/// Persist the PEM certificate received from the portal.
+///
+/// Stored as `<id>.pem` in the app config directory:
+///   Linux:   ~/.config/com.fleetshell.client/<id>.pem
+///   Windows: …\AppData\Roaming\com.fleetshell.client\config\<id>.pem
+pub fn save_cert(app: &tauri::AppHandle, id: &str, pem: &str) -> Result<(), String> {
+	let path = cert_path(app, id);
+	if let Some(parent) = path.parent() {
+		std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+	}
+	std::fs::write(&path, pem).map_err(|e| e.to_string())?;
+	log::debug!("Certificate saved to {}", path.display());
+	Ok(())
+}
+
+/// Load the persisted PEM certificate for `id`.
+///
+/// Returns `None` if the file does not exist (not yet enrolled) or cannot be read.
+#[allow(dead_code)]
+pub fn load_cert(app: &tauri::AppHandle, id: &str) -> Option<String> {
+	std::fs::read_to_string(cert_path(app, id)).ok()
+}
+
+/// Move all identity files for `id` into an `archive/` subdirectory.
+///
+/// Files considered: `<id>.crt`, `<id>.csr`, `<id>.key`.
+/// Each existing file is renamed to
+/// `archive/<id>_<unix_seconds>.<ext>` so that repeated re-enrollments
+/// with the same ID do not silently overwrite earlier archives.
+///
+/// Failures are logged as warnings and do not stop the caller.
+pub fn archive_identity(app: &tauri::AppHandle, id: &str) {
+	let base        = app.path().app_config_dir().expect("app config dir unavailable");
+	let archive_dir = base.join("archive");
+
+	if let Err(e) = std::fs::create_dir_all(&archive_dir) {
+		log::warn!("Could not create archive directory {}: {e}", archive_dir.display());
+		return;
+	}
+
+	let ts = std::time::SystemTime::now()
+		.duration_since(std::time::UNIX_EPOCH)
+		.map(|d| d.as_secs())
+		.unwrap_or(0);
+
+	for ext in ["pem", "csr", "key"] {
+		let src = base.join(format!("{id}.{ext}"));
+		if !src.exists() {
+			continue;
+		}
+		let dst = archive_dir.join(format!("{id}_{ts}.{ext}"));
+		match std::fs::rename(&src, &dst) {
+			Ok(()) => log::info!("Archived {} → {}", src.display(), dst.display()),
+			Err(e) => log::warn!("Could not archive {}: {e}", src.display()),
+		}
+	}
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 fn config_path(app: &tauri::AppHandle) -> std::path::PathBuf {
-    app.path()
-        .app_config_dir()
-        .expect("app config dir unavailable")
-        .join("config.toml")
+	app.path()
+		.app_config_dir()
+		.expect("app config dir unavailable")
+		.join("config.toml")
+}
+
+/// Path for `<id>.pem` — the signed certificate issued by the portal.
+fn cert_path(app: &tauri::AppHandle, id: &str) -> std::path::PathBuf {
+	app.path()
+		.app_config_dir()
+		.expect("app config dir unavailable")
+		.join(format!("{id}.pem"))
+}
+
+/// Path for `<id>.csr` — the certificate signing request (Phase 2).
+#[allow(dead_code)]
+pub fn csr_path(app: &tauri::AppHandle, id: &str) -> std::path::PathBuf {
+	app.path()
+		.app_config_dir()
+		.expect("app config dir unavailable")
+		.join(format!("{id}.csr"))
+}
+
+/// Path for `<id>.key` — the private key (Phase 2).
+#[allow(dead_code)]
+pub fn key_path(app: &tauri::AppHandle, id: &str) -> std::path::PathBuf {
+	app.path()
+		.app_config_dir()
+		.expect("app config dir unavailable")
+		.join(format!("{id}.key"))
 }
