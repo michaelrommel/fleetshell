@@ -315,12 +315,22 @@ Dispatches into the normal deep-link handler.
 The URL host is a base64url (no padding) JSON envelope:
 
 ```json
-{ "type": "probe", "payload": "<id>", "token": "<jwt>" }
+{ "type": "enroll", "payload": "<id>", "token": "<jwt>" }
 ```
 
 The client decodes it on startup (or via `/api/deep-link` forwarding) and dispatches on `type`.
-Currently only `"probe"` is handled: the client POSTs `{version, arch}` to
-`{portal_base_url}/api/client/probe/{id}` with `Authorization: Bearer <token>`.
+Currently `"enroll"` is the only handled type.  It runs a six-step sequence:
+
+| Step | Action |
+|---|---|
+| 1 | Persist `client_id` into `AppConfig` (TOML) |
+| 2 | `POST {portal_base_url}/api/client/probe/{id}` — `{version, arch}` + Bearer token |
+| 3 | `POST {portal_base_url}/api/cert/request` — `{id, csr: "placeholder"}` + Bearer token |
+| 4 | Poll `GET {portal_base_url}/api/cert/status?id={id}` every 3 s (120 s timeout) until `"ready"` |
+| 5 | `GET {portal_base_url}/api/cert/get?id={id}` — receive the certificate |
+| 6 | `POST {portal_base_url}/api/cert/confirm` — `{id}` + Bearer token |
+
+The CSR in step 3 is currently a placeholder string; a real PKCS#10 PEM will replace it in Phase 2.
 
 ### Single-instance logic
 
@@ -358,11 +368,27 @@ Backend emits `"navigate"` events to switch tabs:
 
 Installer type: NSIS, **user-level install** (no admin rights required).
 
+> ⚠️ **Version bump checklist** — Tauri does NOT auto-sync versions between its
+> two config files.  Whenever the version number changes, **both** files must be
+> updated manually or the installer and the in-process `env!("CARGO_PKG_VERSION")`
+> will disagree:
+>
+> | File | Key |
+> |---|---|
+> | `src-tauri/Cargo.toml` | `version = "x.y.z"` (line 3) |
+> | `src-tauri/tauri.conf.json` | `"version": "x.y.z"` (line 4) |
+>
+> `Cargo.toml` controls what `env!("CARGO_PKG_VERSION")` returns at compile time
+> (used in the probe body sent to the portal).  `tauri.conf.json` controls the
+> NSIS installer product version, the window title, and all bundle metadata.
+> Changing only one of them produces a binary that reports a different version
+> than the installer that shipped it.
+
 ### What is NOT yet implemented (open work)
 
 See [§7 Open work items — Client](#client-1).
 
----
+The portal issues JWTs. The gateway verifies them with `JWT_SECRET` (HS256).
 
 ## 5. Component: fleetshell-gateway
 
@@ -542,32 +568,34 @@ Currently: HS256 (HMAC-SHA256). The client never inspects or validates the JWT.
 - [ ] Ability to perform LE web-based auth challenges
 - [ ] Portal must be able to submit a connect request directly to the locally
       running client (`POST http://127.0.0.1:8080/api/tunnel`) — currently only
-      deep-links are used, and the client-side `DeepLinkPayload` only has a
-      `Probe` variant; a `Connect` / `Tunnel` variant and corresponding handler
+      deep-links are used, and the client-side `DeepLinkPayload` only has an
+      `Enroll` variant; a `Connect` / `Tunnel` variant and corresponding handler
       need to be added
 - [ ] Convert the portal welcome page into a guided multi-step enrollment page
       with more space and step-by-step instructions
 
 ### Client
 
-- [ ] **Phase 1**: Persist the unique client ID returned by the probe/enrollment
-      request — store in `AppConfig` or a separate identity file
+- [x] **Phase 1**: Persist the unique client ID returned by the enrollment
+      deep-link — stored as `client_id` in `AppConfig` (TOML)
+- [x] **Phase 1**: Client submits a placeholder CSR to `/api/cert/request` using
+      the enrollment Bearer token; polls `/api/cert/status` until `"ready"`,
+      fetches the cert from `/api/cert/get`, then confirms via `/api/cert/confirm`
 - [ ] **Phase 1**: Obtain one shared wildcard cert (`*.client.fleetshell.com`)
-      for bootstrapping
-- [ ] **Phase 1**: Client submits a simplified certificate request to the portal
-      using its enrolled ID
+      for bootstrapping (portal-side LE issuance not yet implemented)
+- [ ] **Phase 1**: Replace placeholder CSR with a real PKCS#10 PEM
 - [ ] **Phase 1**: Portal obtains signed cert from LE and sends it to the client
 - [ ] **Phase 1**: Client activates an inbound HTTPS listener using the received cert
 - [ ] **Phase 2**: Client generates a pub/private key pair
 - [ ] **Phase 2**: Client creates a CSR for `*.<uniquename>.client.fleetshell.com`
-- [ ] **Phase 2**: Client sends CSR to the portal
+- [ ] **Phase 2**: Client sends real CSR to the portal
 - [ ] Prepare 16 loopback address slots for concurrent connections:
       `127.0.0.2` – `127.0.0.17` (one IP per active session)
 - [ ] Display connection slots in the UI with a free / busy-until countdown timer
 - [ ] Add idle-time field to Settings: after N seconds of no traffic, shut down the
       connection listener. Ideally per-protocol (long for http/https, short for rdp/vnc)
 - [ ] Add a `Connect`/`Tunnel` variant to `DeepLinkPayload` so the portal can
-      trigger full tunnel sessions via deep-link (not just probes)
+      trigger full tunnel sessions via deep-link (not just enrollment)
 
 ### Gateway
 
