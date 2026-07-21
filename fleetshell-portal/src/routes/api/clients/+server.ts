@@ -40,12 +40,19 @@ export const POST: RequestHandler = async ({ locals }) => {
 		trace(user, 'existing client ID retrieved', { id });
 	}
 
-	// Reset the probe slot; clear any previous consumed marker.
+	// Reset the probe slot AND clear all enrollment state from any previous
+	// session for this ID.  Without this, the enrollment SSE stream's
+	// fast-path replay would see the stale `enrollment:confirmed` flag (TTL
+	// 24 h) and immediately advance the browser to the "enrolled" phase
+	// before the client has done anything.
 	await Promise.all([
 		redis.set(`client:${id}:probe`, 'pending', { EX: PROBE_TTL_S }),
 		redis.del(`client:${id}:probe:consumed`),
+		redis.del(`client:${id}:cert`),
+		redis.del(`client:${id}:cert:csr`),
+		redis.del(`client:${id}:enrollment:confirmed`),
 	]);
-	trace(user, 'probe slot reset to pending', { id });
+	trace(user, 'probe slot and enrollment state reset', { id });
 
 	// Issue a 5-minute JWT bound to this probe ID.
 	const secret = env.JWT_SECRET ?? 'change-me-in-production';
