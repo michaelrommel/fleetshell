@@ -16,7 +16,7 @@
 - [x] can open a probe request and authenticate and validate incoming probes
 - [x] portal be can inform the portal via SSE about incoming valid probes
 - [x] portal can display probe results
-- [ ] convert client test page to enrollment page with more space and guided steps
+- [x] convert client test page to enrollment page with more space and guided steps
 
 ## fleetshell-client
 - [ ] Phase 1: client needs to persist the unique id given by the probe/enrollment request
