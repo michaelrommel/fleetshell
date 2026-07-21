@@ -1,6 +1,6 @@
 [package]
 name = "fleetshell-client"
-version = "0.3.0"
+version = "0.4.0"
 description = "FleetShell desktop client"
 authors = []
 license = ""
@@ -42,6 +42,17 @@ toml          = "0.8"
 reqwest       = { version = "0.12", default-features = false, features = ["json", "rustls-tls-native-roots", "blocking"] }
 base64        = "0.22"
 url           = "2"
+
+# ── TLS for the inbound HTTPS API server ────────────────────────────────────
+# Parses PEM cert/key files stored by the enrollment flow.
+rustls-pemfile = "2"
+# hyper + hyper-util are needed to serve Axum over a raw TlsAcceptor.
+# Both are transitive deps already; making them direct keeps feature flags
+# explicit and avoids relying on whatever features another crate enables.
+hyper          = { version = "1",   features = ["http1"] }
+hyper-util     = { version = "0.1", features = ["tokio", "server-auto"] }
+# tower::ServiceExt::oneshot is used in the TLS serve loop.
+tower          = { version = "0.5", features = ["util"] }
 
 # ── TLS for gateway connections ─────────────────────────────────────────────
 # Both tokio-rustls and rustls default to aws_lc_rs; adding ring on top

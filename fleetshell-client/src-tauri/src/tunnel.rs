@@ -1,5 +1,6 @@
 /// Per-port TCP listeners, gateway tunnel sessions, and local app launching.
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
@@ -186,10 +187,12 @@ impl ServerCertVerifier for SkipServerVerification {
 /// Accept connections on an already-bound `TcpListener`, spawning a
 /// `handle_connection` task for every incoming local TCP connection.
 pub async fn run_accept_loop(
-    listener: tokio::net::TcpListener,
-    port:     u16,
-    req:      TunnelRequest,
-    state:    ApiState,
+    listener:     tokio::net::TcpListener,
+    port:         u16,
+    req:          TunnelRequest,
+    state:        ApiState,
+    last_active:  Arc<AtomicU64>,
+    task_handles: Arc<Mutex<Vec<tokio::task::JoinHandle<()>>>>,
 ) {
     log::info!("port {} — tunnel listener ready", port);
 
@@ -199,7 +202,18 @@ pub async fn run_accept_loop(
                 log::debug!("port {} — accepted connection from {}", port, peer);
                 let req_c   = req.clone();
                 let state_c = state.clone();
-                tokio::spawn(handle_connection(stream, port, req_c, state_c));
+                let last_c  = last_active.clone();
+
+                let handle = tokio::spawn(
+                    handle_connection(stream, port, req_c, state_c, last_c),
+                );
+
+                // Store the handle; prune finished entries first to prevent
+                // unbounded growth over the lifetime of the slot.
+                if let Ok(mut pool) = task_handles.lock() {
+                    pool.retain(|h| !h.is_finished());
+                    pool.push(handle);
+                }
             }
             Err(e) => {
                 log::error!("port {} — accept error: {}", port, e);
@@ -211,7 +225,7 @@ pub async fn run_accept_loop(
 
 // ── Per-connection gateway handshake ─────────────────────────────────────────
 
-async fn handle_connection(local: TcpStream, port: u16, req: TunnelRequest, state: ApiState) {
+async fn handle_connection(local: TcpStream, port: u16, req: TunnelRequest, state: ApiState, last_active: Arc<AtomicU64>) {
     // The gateway connection is always TLS regardless of the `application`
     // field.  The `application` field describes what is being tunnelled, not
     // how the client↔gateway leg is secured.
@@ -257,7 +271,7 @@ async fn handle_connection(local: TcpStream, port: u16, req: TunnelRequest, stat
     };
 
     let payload = build_payload(&req, port, &state.gateway_path);
-    do_tunnel(local, tls, &payload, port, &state.app).await;
+    do_tunnel(local, tls, &payload, port, &state.app, last_active).await;
 }
 
 // ── Handshake + bidirectional forwarding ──────────────────────────────────────
@@ -271,6 +285,7 @@ fn build_payload(req: &TunnelRequest, port: u16, gateway_path: &str) -> Vec<u8> 
         "token":       req.token,
         "servicekey":  req.servicekey,
         "gateway":     req.gateway,
+        "sni":         req.sni,
         "path":        gateway_path,
         "transform":   req.transform,
     });
@@ -287,6 +302,7 @@ async fn do_tunnel<S>(
     payload:     &[u8],
     port:        u16,
     app:         &tauri::AppHandle,
+    last_active: Arc<AtomicU64>,
 ) where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
@@ -321,13 +337,54 @@ async fn do_tunnel<S>(
 
     log::info!("port {} — tunnel established, forwarding data", port);
 
-    match tokio::io::copy_bidirectional(&mut local, &mut gateway).await {
-        Ok((to_gw, from_gw)) => log::info!(
-            "port {} — tunnel closed (→gw {} B, ←gw {} B)",
-            port, to_gw, from_gw
-        ),
+    match copy_tracked(&mut local, &mut gateway, &last_active).await {
+        Ok(_)  => log::info!("port {} — tunnel closed", port),
         Err(e) => log::debug!("port {} — tunnel error: {}", port, e),
     }
+}
+
+// ── Traffic-tracked bidirectional copy ────────────────────────────────────────
+
+/// Copy bytes between `a` and `b` in both directions, updating `last_active`
+/// whenever any data flows.  Used instead of `tokio::io::copy_bidirectional`
+/// so the idle monitor can detect real traffic vs. an open-but-silent connection.
+async fn copy_tracked<A, B>(
+    a:           &mut A,
+    b:           &mut B,
+    last_active: &AtomicU64,
+) -> std::io::Result<()>
+where
+    A: AsyncRead + AsyncWrite + Unpin,
+    B: AsyncRead + AsyncWrite + Unpin,
+{
+    let mut buf_a = vec![0u8; 16_384];
+    let mut buf_b = vec![0u8; 16_384];
+
+    loop {
+        tokio::select! {
+            // A → B
+            res = a.read(&mut buf_a) => {
+                match res? {
+                    0 => { let _ = b.shutdown().await; break; }
+                    n => {
+                        b.write_all(&buf_a[..n]).await?;
+                        last_active.store(crate::slot::now_secs(), Ordering::Relaxed);
+                    }
+                }
+            }
+            // B → A
+            res = b.read(&mut buf_b) => {
+                match res? {
+                    0 => { let _ = a.shutdown().await; break; }
+                    n => {
+                        a.write_all(&buf_b[..n]).await?;
+                        last_active.store(crate::slot::now_secs(), Ordering::Relaxed);
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Read bytes from `reader` until `\n` or EOF, up to `max_bytes`.
@@ -364,13 +421,14 @@ async fn read_line<R: AsyncRead + Unpin>(
 pub fn launch_application(
     application: &str,
     port:        u16,
+    bind_ip:     &str,
     cfg:         &crate::config::AppConfig,
 ) -> Vec<String> {
     match application.to_lowercase().as_str() {
-        "http"  => vec![format!("http://127.0.0.1:{}", port)],
-        "https" => vec![format!("https://127.0.0.1:{}", port)],
-        "rdp"   => { launch_rdp(port);       vec![] }
-        "vnc"   => { launch_vnc(port, cfg);  vec![] }
+        "http"  => vec![format!("http://{}:{}",  dns_host(bind_ip), port)],
+        "https" => vec![format!("https://{}:{}", dns_host(bind_ip), port)],
+        "rdp"   => { launch_rdp(port, bind_ip);      vec![] }
+        "vnc"   => { launch_vnc(port, bind_ip, cfg); vec![] }
         other   => {
             log::warn!("Unknown application type '{}' — no local app launched", other);
             vec![]
@@ -378,10 +436,20 @@ pub fn launch_application(
     }
 }
 
+/// Map a slot bind-IP to its DNS hostname.
+/// `"127.0.0.2"` → `"127-0-0-2.client.fleetshell.com"`
+///
+/// The wildcard cert (`*.client.fleetshell.com`) covers every name in this
+/// range and each hostname resolves to the corresponding loopback address,
+/// so the returned URL can be opened directly in a browser without warnings.
+fn dns_host(bind_ip: &str) -> String {
+    bind_ip.replace('.', "-") + ".client.fleetshell.com"
+}
+
 // ── RDP ───────────────────────────────────────────────────────────────────────
 
-fn launch_rdp(port: u16) {
-    let path = match write_rdp_file(port) {
+fn launch_rdp(port: u16, bind_ip: &str) {
+    let path = match write_rdp_file(port, bind_ip) {
         Ok(p)  => p,
         Err(e) => {
             log::error!("RDP port {} — could not write temp file: {}", port, e);
@@ -389,7 +457,7 @@ fn launch_rdp(port: u16) {
         }
     };
 
-    log::info!("RDP port {} — launching mstsc with {}", port, path.display());
+    log::info!("RDP port {} — launching mstsc with {} on {}", port, path.display(), bind_ip);
 
     match std::process::Command::new("mstsc.exe")
         .arg(&path)
@@ -400,10 +468,12 @@ fn launch_rdp(port: u16) {
     }
 }
 
-fn write_rdp_file(port: u16) -> std::io::Result<std::path::PathBuf> {
-    let path = std::env::temp_dir().join(format!("fleetshell_rdp_{}.rdp", port));
+fn write_rdp_file(port: u16, bind_ip: &str) -> std::io::Result<std::path::PathBuf> {
+    // Include the IP in the filename so concurrent slots don't collide.
+    let safe_ip = bind_ip.replace('.', "_");
+    let path = std::env::temp_dir().join(format!("fleetshell_rdp_{}_{}.rdp", safe_ip, port));
     let content = format!(
-        "full address:s:127.0.0.1:{port}\r\n\
+        "full address:s:{bind_ip}:{port}\r\n\
          prompt for credentials:i:1\r\n\
          administrative session:i:0\r\n\
          redirectclipboard:i:1\r\n\
@@ -416,8 +486,8 @@ fn write_rdp_file(port: u16) -> std::io::Result<std::path::PathBuf> {
 
 // ── VNC ───────────────────────────────────────────────────────────────────────
 
-fn launch_vnc(port: u16, cfg: &crate::config::AppConfig) {
-    let path = match write_vnc_file(port) {
+fn launch_vnc(port: u16, bind_ip: &str, cfg: &crate::config::AppConfig) {
+    let path = match write_vnc_file(port, bind_ip) {
         Ok(p)  => p,
         Err(e) => {
             log::error!("VNC port {} — could not write temp file: {}", port, e);
@@ -453,14 +523,15 @@ fn launch_vnc(port: u16, cfg: &crate::config::AppConfig) {
     );
 }
 
-fn write_vnc_file(port: u16) -> std::io::Result<std::path::PathBuf> {
-    let path = std::env::temp_dir().join(format!("fleetshell_vnc_{}.tigervnc", port));
+fn write_vnc_file(port: u16, bind_ip: &str) -> std::io::Result<std::path::PathBuf> {
+    let safe_ip = bind_ip.replace('.', "_");
+    let path = std::env::temp_dir().join(format!("fleetshell_vnc_{}_{}.tigervnc", safe_ip, port));
     // ServerName uses double-colon notation for a direct TCP port number.
     // Single-colon would be a VNC display number (display N = port 5900+N).
     let content = format!(
         "TigerVNC Configuration file Version 1.0\r\n\
          \r\n\
-         ServerName=127.0.0.1::{port}\r\n\
+         ServerName={bind_ip}::{port}\r\n\
          SecurityTypes=None,VncAuth,RA2ne,RA2ne_256,Plain,DH,MSLogonII,TLSNone,TLSVnc,TLSPlain,X509None,X509Vnc,X509Plain,RA2,RA2_256\r\n\
          AlwaysCursor=on\r\n\
          CursorType=System\r\n"

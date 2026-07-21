@@ -29,7 +29,9 @@
 ///    status to `"pending"` and begins the issuance flow.
 /// 4. Poll `GET /api/cert/status?id=<id>` until the status is `"ready"`.
 /// 5. Fetch the certificate from `GET /api/cert/get?id=<id>`.
-/// 6. POST confirmation to `/api/cert/confirm` — the portal marks the client as
+/// 6. If no private key is stored for this ID, fetch it from
+///    `GET /api/cert/key?id=<id>` and persist it as `<id>.key`.
+/// 7. POST confirmation to `/api/cert/confirm` — the portal marks the client as
 ///    fully enrolled.
 
 use serde::{Deserialize, Serialize};
@@ -90,6 +92,12 @@ struct CertStatusResponse {
 #[derive(Debug, Deserialize)]
 struct CertGetResponse {
 	cert: String,
+}
+
+/// Response from `GET /api/cert/key?id=<id>`.
+#[derive(Debug, Deserialize)]
+struct KeyGetResponse {
+	key: String,
 }
 
 // ── Public entry points ───────────────────────────────────────────────────────
@@ -162,15 +170,15 @@ async fn handle_enroll(
 	if let Err(e) = crate::config::save(app, &cfg) {
 		log::warn!("Could not persist client ID: {e}");
 	}
-	log::info!("Enrollment [1/6]: client ID = {id}");
+	log::info!("Enrollment [1/7]: client ID = {id}");
 
 	// ── Step 2: probe ────────────────────────────────────────────────────────
 	send_probe(base, id, token).await?;
-	log::info!("Enrollment [2/6]: probe sent");
+	log::info!("Enrollment [2/7]: probe sent");
 
 	// ── Step 3: submit placeholder CSR ───────────────────────────────────────
 	submit_csr(base, id, token).await?;
-	log::info!("Enrollment [3/6]: CSR submitted");
+	log::info!("Enrollment [3/7]: CSR submitted");
 
 	// ── Steps 4+5: poll until cert is ready, then fetch ──────────────────────
 	let cert = poll_and_fetch_cert(base, id).await?;
@@ -179,11 +187,28 @@ async fn handle_enroll(
 		// and the confirm step should still fire so the portal knows we got it.
 		log::warn!("Could not persist certificate to disk: {e}");
 	}
-	log::info!("Enrollment [4+5/6]: cert received and persisted ({} bytes)", cert.len());
+	log::info!("Enrollment [4+5/7]: cert received and persisted ({} bytes)", cert.len());
 
-	// ── Step 6: confirm receipt ───────────────────────────────────────────────
+	// ── Step 6: fetch private key if not already on disk ─────────────────────
+	//
+	// While we send a placeholder CSR, the portal generates the keypair on its
+	// side and hands the private key back to us here.  In Phase 2 the client
+	// will generate its own keypair and this step will be skipped entirely.
+	if crate::config::has_key(app, id) {
+		log::info!("Enrollment [6/7]: private key already on disk — skipping fetch");
+	} else {
+		let key = fetch_key(base, id, token).await?;
+		if let Err(e) = crate::config::save_key(app, id, &key) {
+			// Non-fatal for the same reason as save_cert above.
+			log::warn!("Could not persist private key to disk: {e}");
+		} else {
+			log::info!("Enrollment [6/7]: private key received and persisted ({} bytes)", key.len());
+		}
+	}
+
+	// ── Step 7: confirm receipt ───────────────────────────────────────────────
 	confirm_cert(base, id, token).await?;
-	log::info!("Enrollment [6/6]: confirmed");
+	log::info!("Enrollment [7/7]: confirmed");
 
 	Ok(format!(
 		"Enrollment complete — id={id}, cert {} bytes",
@@ -342,6 +367,37 @@ async fn poll_and_fetch_cert(base: &str, id: &str) -> Result<String, String> {
 
 	log::info!("Certificate received: {} bytes", body.cert.len());
 	Ok(body.cert)
+}
+
+/// Fetch the private key from `GET <base>/api/cert/key?id=<id>`.
+///
+/// The portal generates the keypair while we still send a placeholder CSR.
+/// In Phase 2, when the client generates its own keypair, this call is
+/// bypassed entirely (the key is already on disk from generation time).
+async fn fetch_key(base: &str, id: &str, token: Option<&str>) -> Result<String, String> {
+	let url = format!("{base}/api/cert/key");
+	log::info!("Key fetch: GET {url}?id={id}");
+
+	let client = build_client()?;
+	let mut req = client.get(&url).query(&[("id", id)]);
+	if let Some(t) = token {
+		req = req.bearer_auth(t);
+	}
+
+	let resp        = req.send().await.map_err(|e| format!("Key fetch failed: {e}"))?;
+	let http_status = resp.status();
+	if !http_status.is_success() {
+		let text = resp.text().await.unwrap_or_default();
+		return Err(format!("Key fetch: HTTP {http_status}\n{text}"));
+	}
+
+	let body: KeyGetResponse = resp
+		.json()
+		.await
+		.map_err(|e| format!("Key fetch JSON parse failed: {e}"))?;
+
+	log::info!("Private key received: {} bytes", body.key.len());
+	Ok(body.key)
 }
 
 /// POST `{id}` to `<base>/api/cert/confirm` — signals that the client has

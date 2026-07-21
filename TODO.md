@@ -16,16 +16,16 @@
 - [x] can open a probe request and authenticate and validate incoming probes
 - [x] portal be can inform the portal via SSE about incoming valid probes
 - [x] portal can display probe results
-- [ ] convert client test page to enrollment page with more space and guided steps
+- [x] convert client test page to enrollment page with more space and guided steps
 
 ## fleetshell-client
-- [ ] Phase 1: client needs to persist the unique id given by the probe/enrollment request
-- [ ] Phase 1: get one shared cert for starters (*.client.fleetshell.com)
-- [ ] Phase 1: client submits a simplified certificate request to the portal for its id
+- [x] Phase 1: client needs to persist the unique id given by the probe/enrollment request
+- [x] Phase 1: get one shared cert for starters (*.client.fleetshell.com)
+- [x] Phase 1: client submits a simplified certificate request to the portal for its id
 - [ ] Phase 2: client creates a pub/private key pair
 - [ ] Phase 2: client creates a CSR for *.<uniqename>.client.fleetshell.com
 - [ ] Phase 2: sends CSR to the portal
-- [ ] Phase 1: portal gets the signed cert from LE, sends it to client
+- [x] Phase 1: portal gets the signed cert from LE, sends it to client
 - [ ] Phase 1: client switches on https listener
 - [ ] Client needs to prepare 16 slots for connections: 127.0.0.2-127.0.0.17
 - [ ] Each slot needs to be displayed with a free/busy-until timer
