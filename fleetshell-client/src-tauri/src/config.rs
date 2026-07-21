@@ -30,6 +30,12 @@ pub struct AppConfig {
     #[serde(default = "default_portal_base_url")]
     pub portal_base_url: String,
 
+    /// Idle-time threshold in seconds.  When no traffic has flowed through an
+    /// active tunnel slot for this many seconds the listeners on that slot's
+    /// loopback IP are torn down and the slot is released.
+    #[serde(default = "default_idle_timeout")]
+    pub idle_timeout: u32,
+
     /// Unique client ID assigned by the portal during the first successful
     /// enrollment handshake.  `None` until enrollment completes.
     #[serde(default)]
@@ -40,12 +46,15 @@ fn default_portal_base_url() -> String {
 	"https://portal.fleetshell.com".to_string()
 }
 
+fn default_idle_timeout() -> u32 { 300 }
+
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
             font_size:       15,
             vnc_viewer:      String::new(),
             portal_base_url: default_portal_base_url(),
+            idle_timeout:    default_idle_timeout(),
             client_id:       None,
         }
     }
@@ -96,9 +105,15 @@ pub fn save_cert(app: &tauri::AppHandle, id: &str, pem: &str) -> Result<(), Stri
 /// Load the persisted PEM certificate for `id`.
 ///
 /// Returns `None` if the file does not exist (not yet enrolled) or cannot be read.
-#[allow(dead_code)]
 pub fn load_cert(app: &tauri::AppHandle, id: &str) -> Option<String> {
 	std::fs::read_to_string(cert_path(app, id)).ok()
+}
+
+/// Load the persisted PEM private key for `id`.
+///
+/// Returns `None` if the file does not exist or cannot be read.
+pub fn load_key(app: &tauri::AppHandle, id: &str) -> Option<String> {
+	std::fs::read_to_string(key_path(app, id)).ok()
 }
 
 /// Move all identity files for `id` into an `archive/` subdirectory.
@@ -162,8 +177,30 @@ pub fn csr_path(app: &tauri::AppHandle, id: &str) -> std::path::PathBuf {
 		.join(format!("{id}.csr"))
 }
 
-/// Path for `<id>.key` — the private key (Phase 2).
-#[allow(dead_code)]
+/// Persist the PEM private key received from the portal.
+///
+/// Stored as `<id>.key` in the app config directory:
+///   Linux:   ~/.config/com.fleetshell.client/<id>.key
+///   Windows: …\AppData\Roaming\com.fleetshell.client\config\<id>.key
+pub fn save_key(app: &tauri::AppHandle, id: &str, key: &str) -> Result<(), String> {
+	let path = key_path(app, id);
+	if let Some(parent) = path.parent() {
+		std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+	}
+	std::fs::write(&path, key).map_err(|e| e.to_string())?;
+	log::debug!("Private key saved to {}", path.display());
+	Ok(())
+}
+
+/// Returns `true` when a private key for `id` is already stored on disk.
+///
+/// Used during enrollment to skip the key-fetch step when re-enrolling with
+/// the same ID and the key is still present (e.g. after a cert rotation).
+pub fn has_key(app: &tauri::AppHandle, id: &str) -> bool {
+	key_path(app, id).exists()
+}
+
+/// Path for `<id>.key` — the private key.
 pub fn key_path(app: &tauri::AppHandle, id: &str) -> std::path::PathBuf {
 	app.path()
 		.app_config_dir()

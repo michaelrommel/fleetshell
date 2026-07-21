@@ -1,6 +1,7 @@
 mod config;
 mod portal;
 mod server;
+mod slot;
 mod tunnel;
 mod util;
 
@@ -167,20 +168,53 @@ pub fn run() {
             let api_state = server::ApiState {
                 app:          app.handle().clone(),
                 gateway_path: Arc::new(server::DEFAULT_GATEWAY_PATH.to_string()),
+                slot_manager: slot::SlotManager::new(),
             };
             let router = server::build_router(api_state);
+
+            // Upgrade to HTTPS when a certificate and key are on disk for the
+            // enrolled client ID.  Falls back to plain HTTP transparently so
+            // the app remains fully usable before the first enrollment.
+            let cfg = config::load(app.handle());
+            let tls_acceptor = cfg.client_id.as_deref().and_then(|id| {
+                let cert = config::load_cert(app.handle(), id)?;
+                let key  = config::load_key(app.handle(), id)?;
+                match server::build_tls_acceptor(&cert, &key) {
+                    Ok(a) => {
+                        log::info!("API server: TLS configured for client id={id}");
+                        Some(a)
+                    }
+                    Err(e) => {
+                        log::warn!("API server: TLS setup failed, using plain HTTP: {e}");
+                        None
+                    }
+                }
+            });
 
             tauri::async_runtime::spawn(async move {
                 let listener = tokio::net::TcpListener::bind(("127.0.0.1", server::API_PORT))
                     .await
                     .expect("Failed to bind API server");
-                log::info!(
-                    "API server listening on http://127.0.0.1:{}",
-                    server::API_PORT
-                );
-                axum::serve(listener, router)
-                    .await
-                    .expect("API server crashed");
+
+                match tls_acceptor {
+                    Some(acceptor) => {
+                        log::info!(
+                            "API server listening on https://{}:{} (bound to 127.0.0.1)",
+                            server::API_HOST,
+                            server::API_PORT,
+                        );
+                        server::serve_tls(listener, router, acceptor).await;
+                    }
+                    None => {
+                        log::info!(
+                            "API server listening on http://127.0.0.1:{}",
+                            server::API_PORT,
+                        );
+                        axum::serve(listener, router)
+                            .await
+                            .expect("API server crashed");
+                    }
+                }
             });
 
             // ── Tray icon ─────────────────────────────────────────────────
@@ -257,6 +291,11 @@ enum ForwardResult {
 /// Try to forward a `fleetshell://` URL to an already-running instance by
 /// POSTing it to the local API server on port 8080.
 ///
+/// Tries HTTPS first (post-enrollment) then plain HTTP (pre-enrollment).
+/// Invalid certificates are accepted intentionally: the cert is issued for
+/// `*.client.fleetshell.com`, not for `127.0.0.1`, but we trust our own
+/// loopback listener.
+///
 /// Uses `reqwest::blocking` so this runs before the Tauri / tokio runtime
 /// is started.  The timeout is intentionally short (300 ms) so a stale port
 /// binding does not delay startup.
@@ -274,19 +313,34 @@ fn try_forward_to_running_instance(raw_url: &str) -> ForwardResult {
         return ForwardResult::NoRunningInstance;
     }
 
-    // Something is listening — attempt the HTTP POST.
-    match reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(2))
-        .build()
-        .and_then(|c| {
-            c.post(format!("http://127.0.0.1:{}/api/deep-link", server::API_PORT))
-                .json(&serde_json::json!({ "url": raw_url }))
-                .send()
-        }) {
-        Ok(resp) if resp.status().is_success() => ForwardResult::Forwarded,
-        Ok(resp) => ForwardResult::ForwardFailed(
-            format!("server returned HTTP {}", resp.status())
-        ),
-        Err(e) => ForwardResult::ForwardFailed(e.to_string()),
+    let body = serde_json::json!({ "url": raw_url });
+
+    // Try HTTPS first (running instance is enrolled), then plain HTTP
+    // (running instance not yet enrolled).
+    // HTTPS uses the DNS hostname so the wildcard cert validates correctly.
+    // HTTP falls back for pre-enrollment instances that haven't got a cert yet.
+    let https_url = format!("https://{}:{}/api/deep-link", server::API_HOST, server::API_PORT);
+    let http_url  = format!("http://127.0.0.1:{}/api/deep-link", server::API_PORT);
+
+    for url in [https_url.as_str(), http_url.as_str()] {
+        let result = reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(2))
+            .build()
+            .and_then(|c| c.post(url).json(&body).send());
+
+        match result {
+            Ok(resp) if resp.status().is_success() => return ForwardResult::Forwarded,
+            Ok(resp) => {
+                return ForwardResult::ForwardFailed(
+                    format!("server returned HTTP {}", resp.status()),
+                );
+            }
+            // Connection-level or TLS error — try the next scheme.
+            Err(_) => continue,
+        }
     }
+
+    ForwardResult::ForwardFailed(
+        "forward attempts failed on both https and http".to_string(),
+    )
 }

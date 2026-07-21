@@ -6,6 +6,7 @@
 		font_size:       number;
 		vnc_viewer:      string;
 		portal_base_url: string;
+		idle_timeout:    number;
 		client_id:       string | null;
 	}
 
@@ -18,13 +19,15 @@
 		font_size:       FONT_DEFAULT,
 		vnc_viewer:      '',
 		portal_base_url: 'https://portal.fleetshell.com',
+		idle_timeout:    300,
 		client_id:       null,
 	});
 
 	// Per-field save-state indicators so they don't interfere with each other.
-	let fontSaveState:      'idle' | 'saving' | 'saved' | 'error' = $state('idle');
-	let vncSaveState:       'idle' | 'saving' | 'saved' | 'error' = $state('idle');
-	let portalUrlSaveState: 'idle' | 'saving' | 'saved' | 'error' = $state('idle');
+	let fontSaveState:        'idle' | 'saving' | 'saved' | 'error' = $state('idle');
+	let vncSaveState:         'idle' | 'saving' | 'saved' | 'error' = $state('idle');
+	let portalUrlSaveState:   'idle' | 'saving' | 'saved' | 'error' = $state('idle');
+	let idleTimeoutSaveState: 'idle' | 'saving' | 'saved' | 'error' = $state('idle');
 
 	let fontSaveTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -63,13 +66,28 @@
 		saveConfig('portal');
 	}
 
+	// ── Idle timeout ─────────────────────────────────────────────────────
+
+	const IDLE_MIN     =   10;
+	const IDLE_MAX     = 3600;
+	const IDLE_STEP    =   10;
+	const IDLE_DEFAULT =  300;
+
+	function applyIdleTimeout(value: number) {
+		const clamped = Math.max(IDLE_MIN, Math.min(IDLE_MAX,
+			Math.round(value / IDLE_STEP) * IDLE_STEP));
+		cfg = { ...cfg, idle_timeout: clamped };
+		saveConfig('idle-timeout');
+	}
+
 	// ── Shared save ──────────────────────────────────────────────────────────
 
-	async function saveConfig(indicator: 'font' | 'vnc' | 'portal') {
+	async function saveConfig(indicator: 'font' | 'vnc' | 'portal' | 'idle-timeout') {
 		const setState =
-			indicator === 'font'   ? (s: typeof fontSaveState)      => { fontSaveState      = s; } :
-			indicator === 'vnc'    ? (s: typeof vncSaveState)       => { vncSaveState       = s; } :
-			                         (s: typeof portalUrlSaveState) => { portalUrlSaveState = s; };
+			indicator === 'font'         ? (s: typeof fontSaveState)        => { fontSaveState        = s; } :
+			indicator === 'vnc'          ? (s: typeof vncSaveState)         => { vncSaveState         = s; } :
+			indicator === 'idle-timeout' ? (s: typeof idleTimeoutSaveState) => { idleTimeoutSaveState = s; } :
+			                               (s: typeof portalUrlSaveState)   => { portalUrlSaveState   = s; };
 
 		setState('saving');
 		try {
@@ -196,6 +214,37 @@
 		</div>
 	</div>
 
+	<!-- ── Connections ───────────────────────────────────────────────────── -->
+	<h2 class="section-title">Connections</h2>
+
+	<div class="setting-row">
+		<label for="idle-timeout" class="setting-label">
+			Idle Timeout
+			<span class="setting-hint">
+				Seconds of no traffic before a<br>
+				tunnel slot is released.
+			</span>
+		</label>
+
+		<div class="size-control">
+			<input
+				type="number"
+				id="idle-timeout"
+				min={IDLE_MIN}
+				max={IDLE_MAX}
+				step={IDLE_STEP}
+				value={cfg.idle_timeout}
+				onchange={(e) => applyIdleTimeout(Number(e.currentTarget.value))}
+				class="idle-number"
+				aria-label="Idle timeout in seconds"
+			/>
+			<span class="size-unit">s</span>
+			<button class="btn-secondary" onclick={() => applyIdleTimeout(IDLE_DEFAULT)}
+				title="Reset to default ({IDLE_DEFAULT} s)">Reset</button>
+			{@render SaveIndicator({ state: idleTimeoutSaveState })}
+		</div>
+	</div>
+
 </div>
 
 <!-- ── Inline save-state badge ──────────────────────────────────────────── -->
@@ -290,6 +339,24 @@
 	.size-number::-webkit-outer-spin-button,
 	.size-number::-webkit-inner-spin-button { -webkit-appearance: none; }
 	.size-number:focus { outline: 1px solid var(--yellow); border-color: var(--yellow); }
+
+	/* Wider variant for idle timeout (larger numbers) */
+	.idle-number {
+		width: 80px;
+		background: var(--bg1);
+		color: var(--fg);
+		border: 1px solid var(--bg3);
+		border-radius: 3px;
+		padding: 3px 6px;
+		font-family: inherit;
+		font-size: 1rem;
+		text-align: right;
+		-moz-appearance: textfield;
+		appearance: textfield;
+	}
+	.idle-number::-webkit-outer-spin-button,
+	.idle-number::-webkit-inner-spin-button { -webkit-appearance: none; }
+	.idle-number:focus { outline: 1px solid var(--yellow); border-color: var(--yellow); }
 
 	.size-unit { color: var(--fg4); font-size: 0.85rem; }
 
