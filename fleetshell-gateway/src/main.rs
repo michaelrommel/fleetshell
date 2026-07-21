@@ -36,6 +36,7 @@ mod auth;
 mod config;
 mod handler;
 mod tls;
+mod transform;
 
 use std::sync::Arc;
 
@@ -67,8 +68,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let listener = TcpListener::bind(&cfg.listen_addr).await?;
     info!(addr = %cfg.listen_addr, "TLS listener bound — waiting for connections");
 
-    // Shared JWT secret — cloned cheaply into each spawned task via Arc.
-    let jwt_secret = Arc::new(cfg.jwt_secret);
+    // Shared config — used in handler for JWT validation and transform-mode
+    // TLS settings.
+    let config = Arc::new(cfg);
+
+    // Shared JWT secret derived from config — cloned cheaply per spawned task.
+    let jwt_secret = Arc::new(config.jwt_secret.clone());
+
+    // Default transform hook (no-op).  Swap in a custom implementation to
+    // inspect or mutate HTTP payloads in transform mode.
+    let hook: Arc<dyn transform::TransformHook> = Arc::new(transform::NoopHook);
 
     // ── Accept loop ──────────────────────────────────────────────────────────
     loop {
@@ -84,12 +93,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let acceptor   = acceptor.clone();
         let jwt_secret = Arc::clone(&jwt_secret);
+        let config     = Arc::clone(&config);
+        let hook       = Arc::clone(&hook);
 
         tokio::spawn(async move {
             // Complete the TLS handshake before calling into the handler.
             match acceptor.accept(tcp_stream).await {
                 Ok(tls_stream) => {
-                    handler::handle(tls_stream, peer_addr, jwt_secret).await;
+                    handler::handle(tls_stream, peer_addr, jwt_secret, config, hook).await;
                 }
                 Err(e) => {
                     warn!(%peer_addr, "TLS handshake failed: {e}");

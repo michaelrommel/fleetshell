@@ -272,6 +272,7 @@ fn build_payload(req: &TunnelRequest, port: u16, gateway_path: &str) -> Vec<u8> 
         "servicekey":  req.servicekey,
         "gateway":     req.gateway,
         "path":        gateway_path,
+        "transform":   req.transform,
     });
     let mut bytes = json.to_string().into_bytes();
     bytes.push(b'\n');

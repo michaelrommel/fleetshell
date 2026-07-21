@@ -31,6 +31,15 @@
 - container image needed for it
 - NLB or ALB needs to be set up
 - if ALB terminates HTTPS, we need a certificate for connect.fleetshell.com
+- transform mode is wired to `NoopHook`; implement concrete `TransformHook`
+  impls as needed (e.g. rewrite `Host:` header, inject auth headers, redact
+  sensitive fields in responses)
+- transform mode is HTTP/1.1 only; add HTTP/2 support if upstream devices
+  require it
+- `GATEWAY_UPSTREAM_TLS_ACCEPT_INVALID_CERTS` defaults to `true`; add a
+  proper upstream trust store (e.g. `webpki-roots`) for CA-signed deployments
+- body buffering in transform mode has a 16 MiB limit; add streaming support
+  for large file transfers if required
 
 ## Simulated devices
 - We need some virtual machines or similar in the same AWS VPC

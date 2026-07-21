@@ -27,6 +27,9 @@ rcgen         = "0.14"
 # is consistent with our ring-only policy and avoids aws-lc-rs.
 jsonwebtoken  = { version = "10", features = ["rust_crypto"] }
 
+# ── HTTP/1.x header parsing (transform mode) ────────────────────────────────
+httparse      = "1"
+
 # ── Serialisation ────────────────────────────────────────────────────────────
 serde         = { version = "1",    features = ["derive"] }
 serde_json    = "1"

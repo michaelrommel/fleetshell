@@ -18,6 +18,8 @@ use tokio_rustls::server::TlsStream;
 use tracing::{debug, error, info, warn};
 
 use crate::auth;
+use crate::config::Config;
+use crate::transform;
 
 // ── Wire types ────────────────────────────────────────────────────────────────
 
@@ -32,6 +34,11 @@ pub struct HandshakePayload {
     pub servicekey:  Option<String>,
     pub gateway:     String,
     pub path:        String,
+    /// When `true` the gateway switches from raw byte relay to an HTTP/1.1
+    /// transform proxy, allowing [`crate::transform::TransformHook`]s to
+    /// inspect and modify every request and response.
+    /// Absent or `false` → existing transparent `copy_bidirectional` mode.
+    pub transform:   Option<bool>,
 }
 
 // ── Handler ───────────────────────────────────────────────────────────────────
@@ -41,6 +48,8 @@ pub async fn handle(
     stream:     TlsStream<TcpStream>,
     peer:       SocketAddr,
     jwt_secret: Arc<String>,
+    config:     Arc<Config>,
+    hook:       Arc<dyn transform::TransformHook>,
 ) {
     info!(%peer, "connection accepted");
 
@@ -138,37 +147,69 @@ pub async fn handle(
         }
     };
 
-    // ── 6. Accept — send 200 and start bidirectional proxy ────────────────
+    // ── 6. Accept — send 200 and start proxy ─────────────────────────────
     info!(%peer, %target_addr, "sending 200 CONNECTED — entering proxy mode");
     send_line(&mut writer_half, b"200 CONNECTED\n").await;
 
-    // Join the BufReader + write half into a single bidirectional object.
-    // Using tokio::io::join (rather than ReadHalf::unsplit) preserves any
-    // bytes the BufReader may have read ahead past the handshake line,
-    // ensuring they are forwarded to the target and not silently dropped.
+    // Join the BufReader + write half back into a single bidirectional
+    // object.  Using tokio::io::join (rather than ReadHalf::unsplit)
+    // preserves any bytes the BufReader may have read ahead past the
+    // handshake line, ensuring they reach the target and are not lost.
     let mut client = tokio::io::join(reader, writer_half);
 
-    match tokio::io::copy_bidirectional(&mut client, &mut target).await {
-        Ok((to_target, from_target)) => {
-            info!(
-                %peer,
-                %target_addr,
-                to_target,
-                from_target,
-                "tunnel closed cleanly"
-            );
-        }
-        Err(e) => {
-            use std::io::ErrorKind::{BrokenPipe, ConnectionAborted, ConnectionReset, UnexpectedEof};
-            // These are all normal ways a proxied connection ends: the browser,
-            // the target server, or the client closed without a TLS close_notify.
-            // Log at DEBUG to avoid flooding the console during normal operation.
-            match e.kind() {
-                ConnectionReset | ConnectionAborted | BrokenPipe | UnexpectedEof => {
-                    debug!(%peer, %target_addr, "tunnel ended ({})", e.kind());
+    if payload.transform.unwrap_or(false) {
+        // ── Transform mode: HTTP/1.1-aware reverse proxy ──────────────────
+        match payload.application.as_str() {
+            "https" => {
+                // Open our own TLS session to the upstream so the gateway
+                // can see and transform the plaintext HTTP payload.
+                match transform::connect_tls_upstream(
+                    target,
+                    &payload.target,
+                    config.upstream_tls_accept_invalid_certs,
+                )
+                .await
+                {
+                    Ok(tls_target) => {
+                        info!(%peer, %target_addr, "transform mode — TLS upstream");
+                        transform::run(client, tls_target, &payload, hook).await;
+                    }
+                    Err(e) => {
+                        error!(%peer, %target_addr, "TLS upstream connect failed: {e}");
+                    }
                 }
-                _ => {
-                    info!(%peer, %target_addr, "tunnel ended: {e}");
+            }
+            _ => {
+                info!(%peer, %target_addr, "transform mode — plain upstream");
+                transform::run(client, target, &payload, hook).await;
+            }
+        }
+    } else {
+        // ── Transparent mode: raw bidirectional byte relay ────────────────
+        match tokio::io::copy_bidirectional(&mut client, &mut target).await {
+            Ok((to_target, from_target)) => {
+                info!(
+                    %peer,
+                    %target_addr,
+                    to_target,
+                    from_target,
+                    "tunnel closed cleanly"
+                );
+            }
+            Err(e) => {
+                use std::io::ErrorKind::{
+                    BrokenPipe, ConnectionAborted, ConnectionReset, UnexpectedEof,
+                };
+                // These are all normal ways a proxied connection ends: the
+                // browser, target server, or client closed without a TLS
+                // close_notify.  Log at DEBUG to avoid flooding the console.
+                match e.kind() {
+                    ConnectionReset | ConnectionAborted | BrokenPipe | UnexpectedEof => {
+                        debug!(%peer, %target_addr, "tunnel ended ({})", e.kind());
+                    }
+                    _ => {
+                        info!(%peer, %target_addr, "tunnel ended: {e}");
+                    }
                 }
             }
         }
