@@ -39,6 +39,19 @@ pub struct HandshakePayload {
     /// inspect and modify every request and response.
     /// Absent or `false` → existing transparent `copy_bidirectional` mode.
     pub transform:   Option<bool>,
+
+    /// Optional SNI / virtual-host name for HTTP(S) transform mode.
+    ///
+    /// When present and `application` is `"http"` or `"https"`:
+    /// - Used as the TLS SNI hostname when opening the upstream TLS session
+    ///   (instead of `target`, which is typically a bare IP address that is
+    ///   not a valid SNI name and breaks name-based virtual hosting).
+    /// - Injected as the `Host:` header value on every forwarded HTTP request
+    ///   so the upstream server routes the request correctly.
+    ///
+    /// Has no effect in transparent (`transform = false`) mode — the gateway
+    /// never sees HTTP headers there.
+    pub sni:         Option<String>,
 }
 
 // ── Handler ───────────────────────────────────────────────────────────────────
@@ -84,12 +97,13 @@ pub async fn handle(
     // ── 3. Log all received fields ───────────────────────────────────────
     info!(
         %peer,
-        target     = %payload.target,
+        target      = %payload.target,
         application = %payload.application,
-        port       = payload.port,
-        gateway    = %payload.gateway,
-        path       = %payload.path,
-        servicekey = ?payload.servicekey,
+        port        = payload.port,
+        gateway     = %payload.gateway,
+        path        = %payload.path,
+        sni         = ?payload.sni,
+        servicekey  = ?payload.servicekey,
         "handshake payload"
     );
     // Token value is intentionally not logged to avoid leaking credentials.
@@ -163,9 +177,14 @@ pub async fn handle(
             "https" => {
                 // Open our own TLS session to the upstream so the gateway
                 // can see and transform the plaintext HTTP payload.
+                //
+                // Prefer `sni` over `target` for the TLS ServerName: `target`
+                // is typically a bare IP address, which is not a valid SNI
+                // name and breaks name-based virtual hosting on the device.
+                let tls_hostname = payload.sni.as_deref().unwrap_or(&payload.target);
                 match transform::connect_tls_upstream(
                     target,
-                    &payload.target,
+                    tls_hostname,
                     config.upstream_tls_accept_invalid_certs,
                 )
                 .await
