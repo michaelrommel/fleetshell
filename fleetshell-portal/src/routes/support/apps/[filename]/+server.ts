@@ -35,13 +35,21 @@ export const GET: RequestHandler = async ({ params }) => {
 	const logicalName = params.filename;
 	const envKey      = FILE_MAP[logicalName];
 
+	console.log(`[download] request for logical name: "${logicalName}"`);
+	console.log(`[download] mapped env key: ${envKey ?? '(none — not in FILE_MAP)'}`);
+
 	// Unknown logical name — not in the map at all.
-	if (!envKey) error(404, `No download registered for "${logicalName}"`);
+	if (!envKey) {
+		console.log(`[download] 404 — no FILE_MAP entry for "${logicalName}"`);
+		error(404, `No download registered for "${logicalName}"`);
+	}
 
 	const diskPath = (env[envKey] ?? '').trim();
+	console.log(`[download] env.${envKey} = "${diskPath || '(empty/unset)'}"`);
 
 	// Env var exists in the map but has not been configured yet.
 	if (!diskPath) {
+		console.log(`[download] 503 — env var ${envKey} is empty or unset`);
 		error(503, `Download not yet available (set the ${envKey} environment variable)`);
 	}
 
@@ -49,12 +57,21 @@ export const GET: RequestHandler = async ({ params }) => {
 	let fileStat: Awaited<ReturnType<typeof stat>>;
 	try {
 		fileStat = await stat(diskPath);
-	} catch {
+		console.log(`[download] stat ok — size=${fileStat.size}, isFile=${fileStat.isFile()}`);
+	} catch (err) {
+		console.log(`[download] 404 — stat failed for "${diskPath}": ${err}`);
 		error(404, `File not found on server: ${diskPath}`);
 	}
 
 	// Stream the file — important for large installers.
+	console.log(`[download] streaming "${diskPath}" as "${logicalName}"`);
 	const nodeStream = createReadStream(diskPath);
+	nodeStream.on('error', (err) => {
+		console.error(`[download] stream error after headers sent for "${diskPath}": ${err}`);
+	});
+	nodeStream.on('close', () => {
+		console.log(`[download] stream closed for "${diskPath}"`);
+	});
 	const webStream  = Readable.toWeb(nodeStream) as ReadableStream;
 
 	return new Response(webStream, {

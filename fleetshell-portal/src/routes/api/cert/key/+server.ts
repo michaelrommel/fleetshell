@@ -30,33 +30,33 @@
  *   Certificate not yet issued or ID unknown — key will not be provided
  *   until enrollment has reached the "ready" state.
  */
-import { readFileSync }   from 'node:fs';
-import { join }           from 'node:path';
 import { error, json }    from '@sveltejs/kit';
+import { env }            from '$env/dynamic/private';
 import { getRedisClient } from '$lib/server/redis';
 import type { RequestHandler } from './$types';
 
 // ── Private key ───────────────────────────────────────────────────────────────
-// Read once at module load time.  Falls back to a clearly-marked placeholder
-// if the file is absent so the server still starts cleanly in dev environments
-// without the key file present.
-let PRIVATE_KEY: string;
-try {
-	PRIVATE_KEY = readFileSync(join(process.cwd(), 'private/client.key'), 'utf8').trim();
-	console.log(
-		`${new Date().toISOString()} [cert/key] loaded private key from` +
-		` private/client.key (${PRIVATE_KEY.length} bytes)`,
-	);
-} catch {
+// Loaded from the CLIENT_KEY environment variable (injected via AWS Secrets
+// Manager at deploy time).  Falls back to a clearly-marked placeholder so the
+// server still starts cleanly in environments without the variable set.
+const PRIVATE_KEY: string = (() => {
+	const val = (env.CLIENT_KEY ?? '').trim();
+	if (val) {
+		console.log(
+			`${new Date().toISOString()} [cert/key] loaded private key from` +
+			` CLIENT_KEY env var (${val.length} bytes)`,
+		);
+		return val;
+	}
 	console.warn(
-		`${new Date().toISOString()} [cert/key] private/client.key not found — using placeholder`,
+		`${new Date().toISOString()} [cert/key] CLIENT_KEY not set — using placeholder`,
 	);
-	PRIVATE_KEY = [
+	return [
 		'-----BEGIN PRIVATE KEY-----',
-		'[PLACEHOLDER — place real key at private/client.key]',
+		'[PLACEHOLDER — set CLIENT_KEY environment variable]',
 		'-----END PRIVATE KEY-----',
 	].join('\n');
-}
+})();
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 

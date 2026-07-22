@@ -11,13 +11,13 @@
 	);
 
 	// ── Connect form state ────────────────────────────────────────────────────
-	let target      = $state('192.168.13.187');
+	let target      = $state('172.16.33.');
 	let application = $state<'http' | 'https' | 'rdp' | 'vnc'>('https');
 	let ports       = $state('443');
-	let gateway     = $state('gateway.fleetshell.com:8443');
+	let gateway     = $state('gateway.fleetshell.com');
 	let sni         = $state('');
-	let servicekey  = $state('');
-	let transform   = $state(false);
+	let servicekey  = $state('i-love-healthineers-so-much');
+	let e2ecrypt    = $state(false);
 
 	type ConnectState = 'idle' | 'signing' | 'connecting' | 'done' | 'error';
 	let connectState = $state<ConnectState>('idle');
@@ -62,10 +62,10 @@
 					application,
 					ports,
 					token,
-					sni        : sni        || undefined,
+					sni        : sni      || undefined,
 					servicekey : servicekey || undefined,
 					gateway,
-					transform,
+					e2ecrypt   : e2ecrypt || undefined,
 				}),
 			});
 			if (!res.ok) {
@@ -263,19 +263,19 @@
 					/>
 				</div>
 
-				<!-- Transform -->
+				<!-- End-to-end Encryption -->
 				<div class="field field-check">
-					<label class="field-label" for="cf-transform">Transform mode</label>
+					<label class="field-label" for="cf-e2ecrypt">End-to-end Encryption</label>
 					<label class="check-label">
 						<input
-							id="cf-transform"
+							id="cf-e2ecrypt"
 							class="check-input"
 							type="checkbox"
-							bind:checked={transform}
+							bind:checked={e2ecrypt}
 							disabled={busy}
 						/>
 						<span class="check-text">
-							Enable HTTP/1.1 transform proxy on the gateway
+							Passes the browser's TLS connection directly to the device. The browser will always show a certificate warning, because the device certificate is issued for the device's own hostname — not for the tunnel address.
 						</span>
 					</label>
 				</div>
@@ -555,9 +555,11 @@
 	}
 
 	.check-text {
-		font-size  : 0.9rem;
-		color      : var(--fg3);
-		line-height: 1.3;
+		font-size     : 0.85rem;
+		color         : var(--fg4);
+		line-height   : 1.5;
+		text-transform: none;
+		letter-spacing: normal;
 	}
 
 	/* ── Action row ──────────────────────────────────────────────────────── */
@@ -602,7 +604,7 @@
 	/* ── Result banner ───────────────────────────────────────────────────── */
 	.result-banner {
 		display      : flex;
-		align-items  : center;
+		align-items  : flex-start;
 		gap          : 12px;
 		border-radius: 3px;
 		padding      : 14px 18px;
@@ -648,6 +650,7 @@
 	.open-btn {
 		margin-left  : auto;
 		flex-shrink  : 0;
+		align-self   : center;
 		background   : var(--green);
 		color        : var(--fg0);
 		border       : none;

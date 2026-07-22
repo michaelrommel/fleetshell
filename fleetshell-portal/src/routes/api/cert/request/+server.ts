@@ -22,8 +22,6 @@
  * Response 200
  *   { "ok": true }
  */
-import { readFileSync }     from 'node:fs';
-import { join }             from 'node:path';
 import { error, json }      from '@sveltejs/kit';
 import { env }              from '$env/dynamic/private';
 import { getRedisClient }   from '$lib/server/redis';
@@ -40,26 +38,27 @@ const CONSUMED_TTL_S =  5 * 60;       // 5 minutes
 const SIGN_DELAY_MS  = 10_000;        // 10 seconds
 
 // ── Certificate chain ─────────────────────────────────────────────────────────
-// Read the real cert chain once at module load time.
-// Falls back to a clearly-marked placeholder if the file is absent so the
-// server still starts cleanly in environments without the cert file.
-let CERT_CHAIN: string;
-try {
-	CERT_CHAIN = readFileSync(join(process.cwd(), 'certs/client.pem'), 'utf8').trim();
-	console.log(
-		`${new Date().toISOString()} [cert/request] loaded cert chain from` +
-		` certs/client.pem (${CERT_CHAIN.length} bytes)`,
-	);
-} catch {
+// Loaded from the CLIENT_CERT environment variable (injected via AWS Secrets
+// Manager at deploy time).  Falls back to a clearly-marked placeholder so the
+// server still starts cleanly in environments without the variable set.
+const CERT_CHAIN: string = (() => {
+	const val = (env.CLIENT_CERT ?? '').trim();
+	if (val) {
+		console.log(
+			`${new Date().toISOString()} [cert/request] loaded cert chain from` +
+			` CLIENT_CERT env var (${val.length} bytes)`,
+		);
+		return val;
+	}
 	console.warn(
-		`${new Date().toISOString()} [cert/request] certs/client.pem not found — using placeholder`,
+		`${new Date().toISOString()} [cert/request] CLIENT_CERT not set — using placeholder`,
 	);
-	CERT_CHAIN = [
+	return [
 		'-----BEGIN CERTIFICATE-----',
-		'[PLACEHOLDER — place real cert at certs/client.pem]',
+		'[PLACEHOLDER — set CLIENT_CERT environment variable]',
 		'-----END CERTIFICATE-----',
 	].join('\n');
-}
+})();
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
