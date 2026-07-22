@@ -28,6 +28,28 @@ pub struct Config {
     /// targets that carry self-signed certificates.  Set to `false` in
     /// environments where the upstream presents a CA-signed certificate.
     pub upstream_tls_accept_invalid_certs: bool,
+
+    /// Whether the gateway handles TLS on its own listening socket.
+    ///
+    /// **Default: `false`** — in the standard deployment an AWS NLB terminates
+    /// TLS (ACM certificate for `gateway.fleetshell.com`) and forwards plain
+    /// TCP to the container fleet.  No certificate management is needed on the
+    /// containers, and all containers in a scale-out group are identical.
+    ///
+    /// Set `GATEWAY_TLS=true` only for standalone / development deployments
+    /// where no load balancer is in front of the gateway.  In that mode the
+    /// gateway generates a self-signed certificate unless `TLS_CERT_FILE` and
+    /// `TLS_KEY_FILE` are also provided.
+    pub tls_enabled: bool,
+
+    /// Address for the HTTP health-check listener.
+    ///
+    /// Responds to any HTTP request with `200 OK {"status":"ok"}`.  Configure
+    /// the NLB health check to use HTTP on this port instead of TCP on the
+    /// traffic port so health probes never appear in the tunnel handler logs.
+    ///
+    /// Default: `0.0.0.0:8080`.
+    pub health_addr: String,
 }
 
 impl Config {
@@ -55,6 +77,13 @@ impl Config {
             )
             .map(|v| !(v.eq_ignore_ascii_case("false") || v == "0"))
             .unwrap_or(true),
+
+            tls_enabled: std::env::var("GATEWAY_TLS")
+                .map(|v| !(v.eq_ignore_ascii_case("false") || v == "0"))
+                .unwrap_or(false),
+
+            health_addr: std::env::var("GATEWAY_HEALTH_ADDR")
+                .unwrap_or_else(|_| "0.0.0.0:8080".to_string()),
         }
     }
 }

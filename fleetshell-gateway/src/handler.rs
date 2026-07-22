@@ -14,7 +14,6 @@ use std::sync::Arc;
 use serde::Deserialize;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
-use tokio_rustls::server::TlsStream;
 use tracing::{debug, error, info, warn};
 
 use crate::auth;
@@ -34,11 +33,15 @@ pub struct HandshakePayload {
     pub servicekey:  Option<String>,
     pub gateway:     String,
     pub path:        String,
-    /// When `true` the gateway switches from raw byte relay to an HTTP/1.1
-    /// transform proxy, allowing [`crate::transform::TransformHook`]s to
-    /// inspect and modify every request and response.
-    /// Absent or `false` → existing transparent `copy_bidirectional` mode.
-    pub transform:   Option<bool>,
+    /// When `true` the gateway relays raw bytes end-to-end (transparent
+    /// passthrough).  The browser's TLS session reaches the target device
+    /// directly; the device's certificate is presented to the browser.
+    /// Use only when the device has a browser-trusted certificate.
+    ///
+    /// When `false` or absent (the default), the gateway runs in HTTP/1.1
+    /// proxy mode: parses each HTTP request / response and forwards them to
+    /// the upstream over its own TLS session (self-signed certs accepted).
+    pub e2ecrypt:    Option<bool>,
 
     /// Optional SNI / virtual-host name for HTTP(S) transform mode.
     ///
@@ -49,21 +52,28 @@ pub struct HandshakePayload {
     /// - Injected as the `Host:` header value on every forwarded HTTP request
     ///   so the upstream server routes the request correctly.
     ///
-    /// Has no effect in transparent (`transform = false`) mode — the gateway
-    /// never sees HTTP headers there.
+    /// Has no effect in e2ecrypt passthrough mode — the gateway never sees
+    /// HTTP headers when relaying raw bytes.
     pub sni:         Option<String>,
 }
 
 // ── Handler ───────────────────────────────────────────────────────────────────
 
 /// Entry point called from the accept loop in `main`.
-pub async fn handle(
-    stream:     TlsStream<TcpStream>,
+///
+/// Generic over the I/O stream type so the same handler works both when the
+/// gateway terminates TLS itself (`TlsStream<TcpStream>`) and when TLS is
+/// terminated upstream and the gateway receives a plain `TcpStream`.
+pub async fn handle<S>(
+    stream:     S,
     peer:       SocketAddr,
     jwt_secret: Arc<String>,
     config:     Arc<Config>,
     hook:       Arc<dyn transform::TransformHook>,
-) {
+)
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send,
+{
     info!(%peer, "connection accepted");
 
     let (reader_half, mut writer_half) = tokio::io::split(stream);
@@ -73,10 +83,20 @@ pub async fn handle(
     let mut raw_line = String::new();
     match reader.read_line(&mut raw_line).await {
         Ok(0) => {
-            warn!(%peer, "connection closed before sending handshake");
+            // The NLB TCP health check opens a connection and closes it
+            // immediately without sending any data.  This is normal and
+            // expected — log at DEBUG so it does not pollute INFO output.
+            // Switch the NLB health check to HTTP on the health port
+            // (GATEWAY_HEALTH_ADDR) to eliminate these entirely.
+            debug!(%peer, "connection closed before sending handshake (likely TCP health probe)");
             return;
         }
-        Ok(n) => info!(%peer, bytes = n, "handshake line received"),
+        Ok(n) => {
+            info!(%peer, bytes = n, "handshake line received");
+            // Log the raw bytes at DEBUG so we can spot NLB garbling or
+            // unexpected TLS framing being forwarded as plaintext.
+            debug!(%peer, raw = %raw_line.trim(), "raw handshake content");
+        }
         Err(e) => {
             error!(%peer, "I/O error reading handshake: {e}");
             return;
@@ -171,7 +191,7 @@ pub async fn handle(
     // handshake line, ensuring they reach the target and are not lost.
     let mut client = tokio::io::join(reader, writer_half);
 
-    if payload.transform.unwrap_or(false) {
+    if !payload.e2ecrypt.unwrap_or(false) {
         // ── Transform mode: HTTP/1.1-aware reverse proxy ──────────────────
         match payload.application.as_str() {
             "https" => {
@@ -190,7 +210,7 @@ pub async fn handle(
                 .await
                 {
                     Ok(tls_target) => {
-                        info!(%peer, %target_addr, "transform mode — TLS upstream");
+                        info!(%peer, %target_addr, "proxy mode — TLS upstream");
                         transform::run(client, tls_target, &payload, hook).await;
                     }
                     Err(e) => {
@@ -199,12 +219,12 @@ pub async fn handle(
                 }
             }
             _ => {
-                info!(%peer, %target_addr, "transform mode — plain upstream");
+                info!(%peer, %target_addr, "proxy mode — plain upstream");
                 transform::run(client, target, &payload, hook).await;
             }
         }
     } else {
-        // ── Transparent mode: raw bidirectional byte relay ────────────────
+        // ── End-to-end encrypted passthrough: raw bidirectional byte relay ─
         match tokio::io::copy_bidirectional(&mut client, &mut target).await {
             Ok((to_target, from_target)) => {
                 info!(
