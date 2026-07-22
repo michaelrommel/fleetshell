@@ -70,9 +70,11 @@ fleetshell/
 │   │               ├── key/                # GET  — fetch the shared private key (PEM)
 │   │               └── confirm/            # POST — client confirms receipt; marks enrollment done
 │   ├── certs/
-│   │   └── client.pem                  # Shared wildcard cert chain (*.client.fleetshell.com)
+│   │   └── client.pem                  # (deprecated) cert chain formerly read from disk;
+│   │                                   #   now injected via CLIENT_CERT env var
 │   ├── private/
-│   │   └── client.key                  # Shared wildcard private key — NOT committed to VCS
+│   │   └── client.key                  # (deprecated) private key formerly read from disk;
+│   │                                   #   now injected via CLIENT_KEY env var
 │   └── support/apps/[filename]/        # GET  — serves client installer download
 │
 ├── fleetshell-client/          # Tauri 2 desktop application (Windows target)
@@ -100,6 +102,7 @@ fleetshell/
         ├── config.rs           # Config::from_env() — all settings via env vars
         ├── auth.rs             # JWT verify_connection(), Claims struct, AuthError
         ├── handler.rs          # Per-connection logic: parse → auth → connect → proxy; SNI support
+        ├── health.rs           # HTTP health-check server on GATEWAY_HEALTH_ADDR (:8080)
         ├── tls.rs              # build_acceptor(): self-signed (rcgen) or file-based PEM
         └── transform.rs       # HTTP/1.1 transform proxy + TransformHook trait + NoopHook
 ```
@@ -183,6 +186,8 @@ fleetshell/
 | `SESSION_SECRET` | — | Cookie signing key |
 | `REDIS_URL` | `redis://localhost:6379` | Redis connection string |
 | `JWT_SECRET` | `change-me-in-production` | HMAC secret for signing tunnel + probe JWTs |
+| `CLIENT_CERT` | — | PEM certificate chain for the wildcard cert — injected from AWS Secrets Manager via `valueFrom` in the ECS task definition; replaces the former `certs/client.pem` file |
+| `CLIENT_KEY` | — | PEM private key matching the cert — injected from AWS Secrets Manager via `valueFrom`; replaces the former `private/client.key` file |
 
 ### What is implemented
 
@@ -218,10 +223,13 @@ fleetshell/
   - `GET /api/enrollment/[id]/stream` — browser SSE stream for steps 5–9;
     receives `csr-received`, `cert-ready`, and `enrollment-confirmed` events.
 - **Static certificate (Phase 1)** — all enrolled clients receive the same shared
-  wildcard certificate (`*.client.fleetshell.com`).  The cert chain is read from
-  `certs/client.pem` and the private key from `private/client.key` at process
-  start.  Neither file is committed to VCS; both must be present in the deployment
-  environment.  Phase 2 will replace this with per-client key pairs and real CSRs.
+  wildcard certificate (`*.client.fleetshell.com`).  The cert chain and private key
+  are loaded from the `CLIENT_CERT` and `CLIENT_KEY` environment variables,
+  which are injected at container start from **AWS Secrets Manager** (using
+  `valueFrom` in the ECS task definition — **not** `value`, which would inject
+  the ARN string literally).  The former `certs/client.pem` / `private/client.key`
+  filesystem approach is deprecated and no longer used.
+  Phase 2 will replace this with per-client key pairs and real CSRs.
 - **Device lookup + Connect form** — `/devices` page searches Redis by IP address
   and renders the raw key/value hash.  The page also has a Connect form with fields:
   `target`, `application` (http/https/rdp/vnc), `ports`, `gateway`, `sni`, `servicekey`,
@@ -326,7 +334,7 @@ Request:
     "servicekey":  "abcde-...",
     "gateway":     "atlanta-01",
     "sni":         "device.example.com",
-    "transform":   false
+    "e2ecrypt":    false
 }
 ```
 
@@ -349,7 +357,7 @@ Error responses:
 | `servicekey` | Optional — triggers Functions tab + navigate event when present |
 | `gateway` | `"host"` or `"host:port"` — port defaults to 443 |
 | `sni` | Optional — SNI hostname for TLS + `Host:` header in transform mode |
-| `transform` | Optional bool — enables HTTP/1.1 transform mode on the gateway |
+| `e2ecrypt` | Optional bool — when `true`, relay raw bytes end-to-end (passthrough); default `false` = proxy mode |
 
 #### `POST /api/deep-link`
 
@@ -420,13 +428,13 @@ of the bare IP so that HTTPS certificates validate correctly.
     "gateway":     "atlanta-01",
     "sni":         "device.example.com",
     "path":        "/service/tunnel/",
-    "transform":   false
+    "e2ecrypt":    false
 }
 ```
 
 `port` is always a single integer (expanded from the range).
 `path` defaults to `"/service/tunnel/"`.
-`sni` is forwarded to the gateway for use in transform-mode TLS + Host header.
+`sni` is forwarded to the gateway for use in proxy-mode TLS + Host header.
 
 ### Deep-link handling (`fleetshell://`)
 
@@ -543,10 +551,12 @@ The portal issues JWTs. The gateway verifies them with `JWT_SECRET` (HS256).
 |---|---|---|
 | `GATEWAY_LISTEN_ADDR` | `0.0.0.0:8443` | TCP listen address |
 | `JWT_SECRET` | `change-me-in-production` | HMAC-SHA256 secret — **always override** |
-| `TLS_CERT_FILE` | *(none)* | PEM cert chain; if absent a self-signed cert is generated |
-| `TLS_KEY_FILE` | *(none)* | PEM private key (PKCS#8 or SEC1) |
+| `TLS_CERT_FILE` | *(none)* | PEM cert chain; used only when `GATEWAY_TLS=true` |
+| `TLS_KEY_FILE` | *(none)* | PEM private key (PKCS#8 or SEC1); used only when `GATEWAY_TLS=true` |
+| `GATEWAY_TLS` | `false` | Set `true` for standalone/dev mode (no NLB in front); gateway terminates TLS itself |
+| `GATEWAY_HEALTH_ADDR` | `0.0.0.0:8080` | HTTP health-check listener — point NLB health checks at HTTP on this port to avoid polluting tunnel logs |
 | `GATEWAY_UPSTREAM_TLS_ACCEPT_INVALID_CERTS` | `true` | Skip upstream cert verification in transform mode |
-| `RUST_LOG` | `info` | tracing filter |
+| `RUST_LOG` | `info` | Log filter — `debug` for per-connection detail, `trace` for TLS internals |
 
 ### Wire protocol
 
@@ -596,16 +606,17 @@ The portal issues JWTs. The gateway verifies them with `JWT_SECRET` (HS256).
 
 | File | Responsibility |
 |---|---|
-| `main.rs` | tokio accept loop; TLS handshake; spawns one task per connection |
-| `config.rs` | `Config::from_env()` |
+| `main.rs` | tokio accept loop; TCP-level `info!` log before spawning; optional TLS handshake with debug logs; spawns handler + health tasks |
+| `config.rs` | `Config::from_env()` — includes `GATEWAY_TLS` and `GATEWAY_HEALTH_ADDR` |
 | `auth.rs` | `verify_connection()` — JWT decode + target/port/gateway claims check; has unit tests for `port_in_spec` |
-| `handler.rs` | Reads handshake, calls auth, connects to target, selects proxy mode; handles `sni` field for transform-mode TLS/Host |
+| `handler.rs` | Reads handshake, calls auth, connects to target, selects proxy mode; raw handshake bytes logged at DEBUG; TCP health probe close demoted to DEBUG |
+| `health.rs` | HTTP health-check server on `GATEWAY_HEALTH_ADDR`; responds `200 {"status":"ok"}` to any request; probes logged at DEBUG only |
 | `tls.rs` | `build_acceptor()` — loads PEM files or generates self-signed cert via rcgen |
 | `transform.rs` | HTTP/1.1 aware proxy loop; `TransformHook` trait; `NoopHook` impl; `SkipServerVerification` for self-signed upstream certs |
 
 ### Transform mode
 
-When `transform: true` is set in the handshake, the gateway switches to an
+When `e2ecrypt: false` (the default) is set in the handshake, the gateway switches to an
 HTTP/1.1 request-response loop instead of raw `copy_bidirectional`.
 
 ```
@@ -716,17 +727,12 @@ These bugs span multiple components and require coordinated fixes.
   separate longer-lived enrollment session token that is valid for the full
   cert/key fetch phase.
 
-- [ ] **BUG-2: Client API not upgraded to HTTPS until restart** (client)
-  After a successful enrollment the cert and key are written to disk, but the
-  API server (axum) continues to serve plain HTTP for the rest of the process
-  lifetime.  HTTPS only activates on the next application start.  This means:
-  (a) the portal's devices page `fetch('https://127-0-0-1.client.fleetshell.com:8080/...')`
-  fails immediately after first enrollment (until the user restarts).
-  (b) single-instance forwarding tries HTTPS then falls back to HTTP — the deep
-  link still works but the HTTPS attempt wastes time.
-  Fix: after `handle_enroll` completes, tear down the current axum server and
-  restart it with a freshly built `TlsAcceptor`, or send a signal so the main
-  task can hot-reload the TLS config.
+- [x] **BUG-2: Client API not upgraded to HTTPS until restart** (client) — **FIXED**
+  `handle_enroll` in `portal.rs` now hot-reloads TLS immediately after writing
+  the cert+key to disk: it updates a `TlsState` (`Arc<RwLock<Option<TlsAcceptor>>>`)
+  held in Tauri app state.  The axum server checks the current acceptor for every
+  new TCP connection, so HTTPS activates within the same process lifetime — no
+  restart required.
 
 - [ ] **BUG-3: Portal Connect form fails for pre-enrollment or just-enrolled clients** (portal ↔ client)
   The devices page always fetches `https://127-0-0-1.client.fleetshell.com:8080/api/tunnel`.
@@ -756,7 +762,7 @@ These bugs span multiple components and require coordinated fixes.
 - [x] **Phase 1**: Portal serves one shared wildcard cert (`*.client.fleetshell.com`)
       from `certs/client.pem` and its private key from `private/client.key`
 - [x] **Phase 1**: Client activates an inbound HTTPS listener (via `serve_tls`) using
-      the received cert and key — **activated on restart only** (see BUG-2)
+      the received cert and key — hot-reloads immediately after enrollment (BUG-2 fixed)
 - [x] 16 connection slots: `127.0.0.2` – `127.0.0.17`, managed by `SlotManager`
 - [x] Slot display in `FunctionsView` with SVG arc free/busy/countdown timers
 - [x] Idle-time field in Settings UI (`idle_timeout`, 10–3600 s, default 300 s)
@@ -774,8 +780,19 @@ These bugs span multiple components and require coordinated fixes.
 
 - [ ] **Dockerfile** — build a minimal static container image
       (`FROM scratch` or `FROM alpine`, copy the musl binary)
-- [ ] **AWS infrastructure** — NLB or ALB setup; if ALB terminates TLS, provision
-      a certificate for `connect.fleetshell.com`
+- [x] **AWS infrastructure** — NLB deployed and wired to the ECS service:
+      - ACM certificate on the NLB for `gateway.fleetshell.com`; NLB listener on
+        port 443 forwards plain TCP to target group (type **`ip`**, port 8443)
+      - ECS service updated with load balancer config pointing to the target group
+        (must be set at service creation / update — not on the NLB alone)
+      - ECS task SG: inbound TCP 8443 from `0.0.0.0/0` (NLB preserves client IPs
+        so the task sees real client addresses, not the NLB IP)
+      - ECS task SG: inbound TCP 8080 from NLB subnet CIDRs (health checks)
+      - NLB health check: **HTTP on port 8080** (not TCP on 8443) so health probes
+        never appear in the tunnel handler logs
+      - `JWT_SECRET` and any secrets must use `valueFrom` (Secrets Manager ARN)
+        in the ECS task definition, **not** `value` (which injects the ARN string)
+- [x] **Health check endpoint** — `health.rs` / `GATEWAY_HEALTH_ADDR` (`:8080`)
 - [ ] **Implement concrete `TransformHook`** — currently `NoopHook` is wired in
       `main.rs`; implement at minimum:
       - Rewrite `Host:` header to the upstream target (or `sni` when present)

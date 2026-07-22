@@ -108,6 +108,16 @@ the Connect form.  Falls back to transparent mode if the client has no cert yet.
 - [ ] LE certificate for `portal.fleetshell.com`
 - [ ] Device entry form: enter machine details (IP, hostname, OS, serial, etc.)
       and persist to Redis under `systems:by-ip:<ip>`
+- [x] `CLIENT_CERT` and `CLIENT_KEY` env vars — cert chain and private key are
+      now loaded from AWS Secrets Manager via `valueFrom` in the ECS task
+      definition instead of from `certs/client.pem` / `private/client.key` files
+- [x] Devices page UX improvements:
+      - Gateway field default changed to `gateway.fleetshell.com` (port omitted;
+        client defaults to 443)
+      - Target field pre-filled with `172.16.33.` (operator fills in last octet)
+      - Service key field pre-filled with `i-love-healthineers-so-much`
+      - Connect success banner: checkmark icon now top-aligned with first text
+        line (`align-items: flex-start`); Open button stays vertically centred
 - [ ] Service-launch buttons per device: RDP, VNC, HTTP, HTTPS
 - [ ] Ability to retrieve LE certificates (ACME client / integration)
 - [ ] Ability to perform LE web-based auth challenges
@@ -134,7 +144,14 @@ the Connect form.  Falls back to transparent mode if the client has no cert yet.
 ### Gateway
 
 - [ ] Dockerfile — `FROM scratch` or `FROM alpine` with musl binary
-- [ ] AWS infrastructure — NLB/ALB; cert for `connect.fleetshell.com` if ALB terminates TLS
+- [x] AWS infrastructure — NLB deployed and working; see AGENTS.md §7 Gateway
+      for the full checklist of SG rules, target group settings, and the
+      `valueFrom` / `value` Secrets Manager gotcha
+- [x] Health check endpoint — `health.rs` on `GATEWAY_HEALTH_ADDR` (`:8080`);
+      NLB health check set to HTTP port 8080; probe noise eliminated from logs
+- [x] Logging improvements — TCP-level accept log; raw handshake bytes at DEBUG;
+      TCP health probe close demoted from WARN to DEBUG; `.with_target(true)`;
+      simplified default filter; `RUST_LOG` values documented
 - [ ] Implement concrete `TransformHook`:
       - Rewrite `Host:` header to `sni` (when present) or `target`
       - Inject auth headers if required
