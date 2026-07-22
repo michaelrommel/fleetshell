@@ -1,0 +1,20 @@
+# Rust / Cargo
+/target/
+**/*.rs.bk
+Cargo.lock          # remove this line if you publish a binary crate
+
+# Node / SvelteKit
+node_modules/
+.svelte-kit/
+build/
+dist/
+
+# Tauri
+fleetshell-client/src-tauri/target/
+fleetshell-client/src-tauri/gen/
+
+# Misc
+.env
+.env.*
+!.env.example
+.DS_Store
