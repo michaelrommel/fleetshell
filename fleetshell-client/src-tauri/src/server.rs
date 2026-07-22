@@ -30,8 +30,8 @@ pub const DEFAULT_GATEWAY_PATH: &str = "/service/tunnel/";
 /// transition takes effect for the very next accepted connection — no restart
 /// needed.
 ///
-/// Also used by `tunnel.rs` to terminate the browser's TLS connection when
-/// operating in HTTPS + transform mode.
+/// Also used by `tunnel.rs` to terminate the browser's TLS connection in
+/// HTTPS proxy mode (the default when `e2ecrypt` is absent or false).
 pub struct TlsState(
     pub Arc<tokio::sync::RwLock<Option<tokio_rustls::TlsAcceptor>>>,
 );
@@ -59,12 +59,16 @@ pub struct TunnelRequest {
     /// connects to the upstream target.  When absent the gateway falls back
     /// to `target`.
     pub sni:          Option<String>,
-    /// When `true` the gateway switches to HTTP/1.1 transform-proxy mode
-    /// instead of raw transparent forwarding.  The gateway will parse and
-    /// optionally modify every HTTP request/response before relaying it.
-    /// For `application = "https"` the gateway opens its own TLS connection
-    /// to the upstream target.
-    pub transform:   Option<bool>,
+    /// When `true` the tunnel relays raw bytes end-to-end (transparent
+    /// passthrough).  The browser's TLS session reaches the device directly;
+    /// the device's certificate is presented to the browser unchanged.
+    /// Use only when the device has a browser-trusted certificate.
+    ///
+    /// When `false` or absent (the default), the gateway runs in HTTP/1.1
+    /// proxy mode: the client terminates the browser's TLS, the gateway opens
+    /// its own TLS session to the device (self-signed certs accepted), and
+    /// HTTP traffic can be inspected and rewritten in flight.
+    pub e2ecrypt:    Option<bool>,
 }
 
 #[derive(Debug, Serialize)]

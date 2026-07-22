@@ -1,6 +1,6 @@
 [package]
 name = "fleetshell-client"
-version = "0.4.0"
+version = "0.6.0"
 description = "FleetShell desktop client"
 authors = []
 license = ""
@@ -39,7 +39,7 @@ toml          = "0.8"
 # ── HTTP client (enrollment portal)
 # default-features = false avoids bundling a second TLS provider alongside
 # the tokio-rustls already in scope.
-reqwest       = { version = "0.12", default-features = false, features = ["json", "rustls-tls-native-roots", "blocking"] }
+reqwest       = { version = "0.12", default-features = false, features = ["json", "rustls-tls-native-roots", "blocking", "cookies"] }
 base64        = "0.22"
 url           = "2"
 

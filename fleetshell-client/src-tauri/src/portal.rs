@@ -177,16 +177,20 @@ async fn handle_enroll(
 	}
 	log::info!("Enrollment [1/7]: client ID = {id}");
 
+	// One reqwest client shared across all portal requests so the ZScaler
+	// session cookie (if a bypass was needed) persists for every step.
+	let client = crate::zscaler::build_portal_client()?;
+
 	// ── Step 2: probe ────────────────────────────────────────────────────────
-	send_probe(base, id, token).await?;
+	send_probe(&client, base, id, token).await?;
 	log::info!("Enrollment [2/7]: probe sent");
 
 	// ── Step 3: submit placeholder CSR ───────────────────────────────────────
-	submit_csr(base, id, token).await?;
+	submit_csr(&client, base, id, token).await?;
 	log::info!("Enrollment [3/7]: CSR submitted");
 
 	// ── Steps 4+5: poll until cert is ready, then fetch ──────────────────────
-	let cert = poll_and_fetch_cert(base, id).await?;
+	let cert = poll_and_fetch_cert(&client, base, id).await?;
 	if let Err(e) = crate::config::save_cert(app, id, &cert) {
 		// Non-fatal: log the failure but continue — the cert is still in memory
 		// and the confirm step should still fire so the portal knows we got it.
@@ -202,7 +206,7 @@ async fn handle_enroll(
 	if crate::config::has_key(app, id) {
 		log::info!("Enrollment [6/7]: private key already on disk — skipping fetch");
 	} else {
-		let key = fetch_key(base, id, token).await?;
+		let key = fetch_key(&client, base, id, token).await?;
 		if let Err(e) = crate::config::save_key(app, id, &key) {
 			// Non-fatal for the same reason as save_cert above.
 			log::warn!("Could not persist private key to disk: {e}");
@@ -212,7 +216,7 @@ async fn handle_enroll(
 	}
 
 	// ── Step 7: confirm receipt ───────────────────────────────────────────────
-	confirm_cert(base, id, token).await?;
+	confirm_cert(&client, base, id, token).await?;
 	log::info!("Enrollment [7/7]: confirmed");
 
 	// ── Hot-reload TLS ────────────────────────────────────────────────────────────────────────────
@@ -244,64 +248,54 @@ async fn handle_enroll(
 // ── Step helpers ──────────────────────────────────────────────────────────────
 
 /// Build a shared [`reqwest::Client`] for all portal calls.
-fn build_client() -> Result<reqwest::Client, String> {
-	reqwest::Client::builder()
-		.build()
-		.map_err(|e| format!("HTTP client error: {e}"))
-}
-
 /// POST `{version, arch}` to `<base>/api/client/probe/<id>`.
-async fn send_probe(base: &str, id: &str, token: Option<&str>) -> Result<(), String> {
-	let url = format!("{base}/api/client/probe/{id}");
+async fn send_probe(
+	client: &reqwest::Client,
+	base:   &str,
+	id:     &str,
+	token:  Option<&str>,
+) -> Result<(), String> {
+	let url  = format!("{base}/api/client/probe/{id}");
+	let body = ProbeBody { version: env!("CARGO_PKG_VERSION"), arch: std::env::consts::ARCH };
 	log::info!("Probe: POST {url}");
 
-	let client = build_client()?;
-	let body = ProbeBody {
-		version: env!("CARGO_PKG_VERSION"),
-		arch:    std::env::consts::ARCH,
-	};
+	let resp = crate::zscaler::send_with_bypass(client, || {
+		let mut r = client.post(&url).json(&body);
+		if let Some(t) = token { r = r.bearer_auth(t); }
+		r
+	}).await?;
 
-	let mut req = client.post(&url).json(&body);
-	if let Some(t) = token {
-		req = req.bearer_auth(t);
-	}
-
-	let resp   = req.send().await.map_err(|e| format!("Probe request failed: {e}"))?;
 	let status = resp.status();
-	let text   = resp.text().await.unwrap_or_default();
-
 	if !status.is_success() {
+		let text = resp.text().await.unwrap_or_default();
 		return Err(format!("Probe: HTTP {status}\n{text}"));
 	}
-
 	log::info!("Probe: HTTP {status}");
 	Ok(())
 }
 
 /// POST placeholder CSR to `<base>/api/cert/request`.
-async fn submit_csr(base: &str, id: &str, token: Option<&str>) -> Result<(), String> {
-	let url = format!("{base}/api/cert/request");
+async fn submit_csr(
+	client: &reqwest::Client,
+	base:   &str,
+	id:     &str,
+	token:  Option<&str>,
+) -> Result<(), String> {
+	let url  = format!("{base}/api/cert/request");
+	let body = CertRequestBody { id: id.to_string(), csr: "placeholder-csr-not-a-real-csr".to_string() };
 	log::info!("Cert request: POST {url}");
 
-	let client = build_client()?;
-	let body = CertRequestBody {
-		id:  id.to_string(),
-		csr: "placeholder-csr-not-a-real-csr".to_string(),
-	};
+	let resp = crate::zscaler::send_with_bypass(client, || {
+		let mut r = client.post(&url).json(&body);
+		if let Some(t) = token { r = r.bearer_auth(t); }
+		r
+	}).await?;
 
-	let mut req = client.post(&url).json(&body);
-	if let Some(t) = token {
-		req = req.bearer_auth(t);
-	}
-
-	let resp   = req.send().await.map_err(|e| format!("Cert request failed: {e}"))?;
 	let status = resp.status();
-
 	if !status.is_success() {
 		let text = resp.text().await.unwrap_or_default();
 		return Err(format!("Cert request: HTTP {status}\n{text}"));
 	}
-
 	log::info!("Cert request: HTTP {status}");
 	Ok(())
 }
@@ -310,11 +304,14 @@ async fn submit_csr(base: &str, id: &str, token: Option<&str>) -> Result<(), Str
 /// then fetch and return the certificate from `GET <base>/api/cert/get?id=<id>`.
 ///
 /// Polls every 3 seconds for up to 120 seconds before giving up.
-async fn poll_and_fetch_cert(base: &str, id: &str) -> Result<String, String> {
+async fn poll_and_fetch_cert(
+	client: &reqwest::Client,
+	base:   &str,
+	id:     &str,
+) -> Result<String, String> {
 	const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(3);
 	const TIMEOUT:       std::time::Duration = std::time::Duration::from_secs(120);
 
-	let client     = build_client()?;
 	let status_url = format!("{base}/api/cert/status");
 	let start      = std::time::Instant::now();
 
@@ -332,12 +329,9 @@ async fn poll_and_fetch_cert(base: &str, id: &str) -> Result<String, String> {
 			));
 		}
 
-		let resp = client
-			.get(&status_url)
-			.query(&[("id", id)])
-			.send()
-			.await
-			.map_err(|e| format!("Cert status poll failed: {e}"))?;
+		let resp = crate::zscaler::send_with_bypass(client, || {
+			client.get(&status_url).query(&[("id", id)])
+		}).await?;
 
 		let http_status = resp.status();
 		if !http_status.is_success() {
@@ -372,12 +366,9 @@ async fn poll_and_fetch_cert(base: &str, id: &str) -> Result<String, String> {
 	// Fetch the certificate now that it is ready.
 	let get_url = format!("{base}/api/cert/get");
 	log::info!("Cert fetch: GET {get_url}?id={id}");
-	let resp = client
-		.get(&get_url)
-		.query(&[("id", id)])
-		.send()
-		.await
-		.map_err(|e| format!("Cert fetch failed: {e}"))?;
+	let resp = crate::zscaler::send_with_bypass(client, || {
+		client.get(&get_url).query(&[("id", id)])
+	}).await?;
 
 	let http_status = resp.status();
 	if !http_status.is_success() {
@@ -399,17 +390,21 @@ async fn poll_and_fetch_cert(base: &str, id: &str) -> Result<String, String> {
 /// The portal generates the keypair while we still send a placeholder CSR.
 /// In Phase 2, when the client generates its own keypair, this call is
 /// bypassed entirely (the key is already on disk from generation time).
-async fn fetch_key(base: &str, id: &str, token: Option<&str>) -> Result<String, String> {
+async fn fetch_key(
+	client: &reqwest::Client,
+	base:   &str,
+	id:     &str,
+	token:  Option<&str>,
+) -> Result<String, String> {
 	let url = format!("{base}/api/cert/key");
 	log::info!("Key fetch: GET {url}?id={id}");
 
-	let client = build_client()?;
-	let mut req = client.get(&url).query(&[("id", id)]);
-	if let Some(t) = token {
-		req = req.bearer_auth(t);
-	}
-
-	let resp        = req.send().await.map_err(|e| format!("Key fetch failed: {e}"))?;
+	let resp = crate::zscaler::send_with_bypass(client, || {
+		let mut r = client.get(&url).query(&[("id", id)]);
+		if let Some(t) = token { r = r.bearer_auth(t); }
+		r
+	}).await?;
+	let resp = { resp };
 	let http_status = resp.status();
 	if !http_status.is_success() {
 		let text = resp.text().await.unwrap_or_default();
@@ -427,19 +422,21 @@ async fn fetch_key(base: &str, id: &str, token: Option<&str>) -> Result<String, 
 
 /// POST `{id}` to `<base>/api/cert/confirm` — signals that the client has
 /// received and stored the certificate.
-async fn confirm_cert(base: &str, id: &str, token: Option<&str>) -> Result<(), String> {
-	let url = format!("{base}/api/cert/confirm");
+async fn confirm_cert(
+	client: &reqwest::Client,
+	base:   &str,
+	id:     &str,
+	token:  Option<&str>,
+) -> Result<(), String> {
+	let url  = format!("{base}/api/cert/confirm");
+	let body = CertConfirmBody { id: id.to_string() };
 	log::info!("Cert confirm: POST {url}");
 
-	let client = build_client()?;
-	let body   = CertConfirmBody { id: id.to_string() };
-
-	let mut req = client.post(&url).json(&body);
-	if let Some(t) = token {
-		req = req.bearer_auth(t);
-	}
-
-	let resp   = req.send().await.map_err(|e| format!("Cert confirm failed: {e}"))?;
+	let resp = crate::zscaler::send_with_bypass(client, || {
+		let mut r = client.post(&url).json(&body);
+		if let Some(t) = token { r = r.bearer_auth(t); }
+		r
+	}).await?;
 	let status = resp.status();
 
 	if !status.is_success() {

@@ -9,16 +9,17 @@
   // 16 slots corresponding to loopback addresses 127.0.0.2 – 127.0.0.17.
   // State is kept in sync with the Rust backend via "slot-update" Tauri events.
 
-  const SLOT_COUNT    = 16;
-  const RADIUS        = 18;
-  const CIRCUMFERENCE = 2 * Math.PI * RADIUS;  // ≈ 113.1
+  const SLOT_COUNT = 16;
+  const RADIUS     = 18;
+  const CX         = 22;
+  const CY         = 22;
 
   type SlotStatus = 'free' | 'active' | 'countdown' | 'idle';
 
   interface Slot {
     id:       number;      // 1–16  →  127.0.0.{id + 1}
     status:   SlotStatus;
-    progress: number;      // 0..1  (1 = full ring, 0 = empty)
+    progress: number;      // 0..1  (1 = full pie, 0 = empty)
     label:    string;      // target / service description when occupied
   }
 
@@ -39,7 +40,6 @@
     unlisten = await listen<{ idx: number; status: string; progress: number }>(
       'slot-update',
       ({ payload }) => {
-        // payload.idx is 0-based (slot index); slot.id is 1-based.
         slots = slots.map(s =>
           s.id === payload.idx + 1
             ? { ...s, status: payload.status as SlotStatus, progress: payload.progress }
@@ -51,20 +51,47 @@
 
   onDestroy(() => { unlisten?.(); });
 
-  // ── Arc helpers ───────────────────────────────────────────────────────────
+  // ── Pie-segment helpers ───────────────────────────────────────────────────
 
-  function arcStroke(slot: Slot): string {
-    switch (slot.status) {
-      case 'active':    return 'var(--green)';
-      case 'countdown': return slot.progress <= 0.05 ? 'var(--red)' : 'var(--aqua)';
-      default:          return 'none';          // free / idle → no arc
-    }
-  }
-
-  function arcProgress(slot: Slot): number {
+  /**
+   * How much of the pie to fill for a given slot.
+   *   active    → 1  (full disc)
+   *   countdown → slot.progress (shrinking wedge)
+   *   free/idle → 0  (no foreground)
+   */
+  function slotProgress(slot: Slot): number {
     if (slot.status === 'active')    return 1;
     if (slot.status === 'countdown') return slot.progress;
     return 0;
+  }
+
+  /** Fill colour for the foreground pie segment. */
+  function pieColor(slot: Slot): string {
+    if (slot.status === 'active')    return 'var(--green)';
+    if (slot.status === 'countdown') return slot.progress <= 0.05 ? 'var(--red)' : 'var(--aqua)';
+    return 'transparent';
+  }
+
+  /**
+   * SVG path for a filled pie wedge.
+   *
+   * Starts at 12 o'clock and sweeps clockwise by `progress` (0..1).
+   * For a full circle (`progress >= 1`) the caller renders a `<circle>`
+   * element instead, because a zero-length arc degenerates.
+   */
+  function piePath(cx: number, cy: number, r: number, progress: number): string {
+    const startX = cx;
+    const startY = cy - r;
+    const angle  = progress * 2 * Math.PI;
+    const endX   = cx + r * Math.sin(angle);
+    const endY   = cy - r * Math.cos(angle);
+    const large  = progress > 0.5 ? 1 : 0;
+    return (
+      `M ${cx} ${cy} ` +
+      `L ${startX} ${startY} ` +
+      `A ${r} ${r} 0 ${large} 1 ${endX.toFixed(3)} ${endY.toFixed(3)} ` +
+      `Z`
+    );
   }
 
   function slotIp(slot: Slot): string {
@@ -100,36 +127,28 @@
     <h2 class="slot-title">Connection Slots</h2>
     <div class="slot-grid">
       {#each slots as slot (slot.id)}
-        {@const p = arcProgress(slot)}
+        {@const p     = slotProgress(slot)}
+        {@const live  = slot.status === 'active' || slot.status === 'countdown'}
         <div class="slot-item" title={slotTitle(slot)}>
-          <svg viewBox="0 0 44 44" width="44" height="44" aria-hidden="true">
-            <!-- Background ring, always visible -->
-            <circle
-              cx="22" cy="22" r={RADIUS}
-              fill="none"
-              stroke="var(--bg2)"
-              stroke-width="5"
-            />
-            <!-- Progress arc — starts at 12 o'clock, shrinks counter-clockwise -->
-            {#if p > 0}
-              <circle
-                cx="22" cy="22" r={RADIUS}
-                fill="none"
-                stroke={arcStroke(slot)}
-                stroke-width="5"
-                stroke-linecap="round"
-                stroke-dasharray="{p * CIRCUMFERENCE} {CIRCUMFERENCE}"
-                transform="rotate(-90 22 22)"
-              />
+
+          <!-- Number in plain text before the circle -->
+          <span class="slot-num" class:slot-num-live={live}>
+            {slot.id + 1}
+          </span>
+
+          <!-- Pie disc -->
+          <svg class="slot-svg" viewBox="0 0 44 44" aria-hidden="true">
+            <!-- Background disc — always visible so free slots have a shape -->
+            <circle cx={CX} cy={CY} r={RADIUS} class="disc-bg" />
+
+            <!-- Foreground: full filled circle for active, wedge for countdown -->
+            {#if p >= 1}
+              <circle cx={CX} cy={CY} r={RADIUS} fill={pieColor(slot)} />
+            {:else if p > 0}
+              <path d={piePath(CX, CY, RADIUS, p)} fill={pieColor(slot)} />
             {/if}
-            <!-- Slot number -->
-            <text
-              x="22" y="26"
-              text-anchor="middle"
-              class="slot-num"
-              class:slot-num-live={slot.status === 'active' || slot.status === 'countdown'}
-            >{slot.id + 1}</text>
           </svg>
+
         </div>
       {/each}
     </div>
@@ -181,30 +200,49 @@
     margin: 0 0 14px;
   }
 
-  /* 8 columns, rows wrap automatically → two rows of 8 */
+  /* 8 columns; each cell is a (number + disc) pair */
   .slot-grid {
     display: grid;
-    grid-template-columns: repeat(8, 44px);
-    gap: 14px 10px;
+    grid-template-columns: repeat(8, min-content);
+    gap: 10px 14px;
   }
 
   .slot-item {
     display: flex;
+    flex-direction: row;
     align-items: center;
-    justify-content: center;
+    gap: 5px;
     cursor: default;
+    white-space: nowrap;
   }
 
-  /* SVG text nodes — font-size / fill set here via CSS class */
+  /* Number shown before the disc */
   .slot-num {
-    font-size: 9px;
-    fill: var(--bg3);
-    font-family: inherit;
-    user-select: none;
+    font-size: 1em;
+    color: var(--bg4);
+    width: 2ch;               /* exactly two-character width — lines up 2-digit numbers */
+    text-align: right;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+    flex-shrink: 0;
+    transition: color 0.2s, font-weight 0.2s;
   }
 
   .slot-num-live {
-    fill: var(--fg3);
+    color: var(--fg1);
+    font-weight: 600;
+  }
+
+  /* The pie SVG — rendered at 28×28; viewBox stays 44×44 */
+  .slot-svg {
+    width: 28px;
+    height: 28px;
+    flex-shrink: 0;
+  }
+
+  /* Background disc — muted ring to show slot outline even when free */
+  .disc-bg {
+    fill: var(--bg2);
   }
 
   /* ── Service key area ── */

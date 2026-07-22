@@ -4,6 +4,7 @@ mod server;
 mod slot;
 mod tunnel;
 mod util;
+mod zscaler;
 
 use std::sync::Arc;
 use tauri::{

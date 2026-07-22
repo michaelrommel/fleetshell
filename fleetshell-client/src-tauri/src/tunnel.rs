@@ -273,16 +273,17 @@ async fn handle_connection(local: TcpStream, port: u16, req: TunnelRequest, stat
 
     let payload = build_payload(&req, port, &state.gateway_path);
 
-    // HTTPS + transform: terminate the browser's TLS connection at the client.
+    // Default (proxy) mode for HTTPS — e2ecrypt absent or false.
     //
-    // In transparent mode the browser's TLS ClientHello travels raw to the
-    // device, so the browser sees the device's self-signed certificate and
-    // refuses or warns.  By accepting the browser's TLS here (using the
-    // *.client.fleetshell.com cert the client already holds) we give the
-    // gateway plaintext HTTP it can parse, while the browser sees only our
-    // trusted wildcard cert.  The gateway then opens its own TLS session to
-    // the device (cert validation disabled) and rewrites the Host header.
-    if req.transform.unwrap_or(false) && req.application.eq_ignore_ascii_case("https") {
+    // The client terminates the browser's TLS using the *.client.fleetshell.com
+    // cert; the gateway then receives plaintext HTTP, opens its own TLS session
+    // to the device (self-signed certs accepted), and can rewrite Host / Location
+    // headers.  The browser never sees the device's certificate.
+    //
+    // When e2ecrypt = true the raw TLS bytes pass through unchanged — the
+    // browser's session reaches the device directly (device cert is visible;
+    // browser-trusted certs work fine, self-signed certs will warn or block).
+    if !req.e2ecrypt.unwrap_or(false) && req.application.eq_ignore_ascii_case("https") {
         // Clone the Arc<RwLock<...>> out of managed state so the tauri::State
         // borrow is released before the async .read().await.  TlsAcceptor is
         // Arc<ServerConfig> internally, so the subsequent clone is cheap.
@@ -291,7 +292,7 @@ async fn handle_connection(local: TcpStream, port: u16, req: TunnelRequest, stat
         match acceptor_opt {
             Some(acceptor) => {
                 log::info!(
-                    "port {} — HTTPS transform: terminating browser TLS at client",
+                    "port {} — HTTPS proxy mode: terminating browser TLS at client",
                     port
                 );
                 match acceptor.accept(local).await {
@@ -310,7 +311,7 @@ async fn handle_connection(local: TcpStream, port: u16, req: TunnelRequest, stat
                 // Fall back to transparent relay so the user can at least reach
                 // devices with valid certificates.
                 log::warn!(
-                    "port {} — HTTPS transform requested but client has no TLS cert                      (enroll first); using transparent mode",
+                    "port {} — HTTPS proxy mode: no TLS cert yet (enroll first);                      falling back to e2ecrypt passthrough",
                     port
                 );
                 do_tunnel(local, tls, &payload, port, &state.app, last_active).await;
@@ -334,7 +335,7 @@ fn build_payload(req: &TunnelRequest, port: u16, gateway_path: &str) -> Vec<u8> 
         "gateway":     req.gateway,
         "sni":         req.sni,
         "path":        gateway_path,
-        "transform":   req.transform,
+        "e2ecrypt":    req.e2ecrypt,
     });
     let mut bytes = json.to_string().into_bytes();
     bytes.push(b'\n');
@@ -377,6 +378,16 @@ async fn do_tunnel<L, S>(
     log::info!("port {} — gateway: '{}'", port, response);
 
     let upper = response.to_uppercase();
+
+    // If the gateway replied with an HTTP response line, ZScaler (or another
+    // transparent proxy) has intercepted the TLS connection and injected a
+    // block page.  Drain the rest of the HTTP response, submit the bypass
+    // form, and tell the user to retry — the next connection will go through.
+    if upper.starts_with("HTTP/") {
+        crate::zscaler::handle_gateway_block(&mut gateway, &response, port, app).await;
+        return;
+    }
+
     if !upper.starts_with("200") || !upper.contains("CONNECTED") {
         log::error!("port {} — gateway refused: '{}'", port, response);
         crate::util::navigate(app, "logging");
