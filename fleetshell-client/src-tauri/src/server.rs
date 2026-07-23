@@ -43,32 +43,40 @@ pub struct DeepLinkForwardRequest {
     pub url: String,
 }
 
+/// Per-port connection settings sent from the portal.
+/// Each row covers one port spec (single port, range, or comma list) and
+/// carries its own application / guac / e2ecrypt / sni settings.
+#[derive(Debug, Clone, Deserialize)]
+pub struct PortRow {
+    /// Comma-separated ports / ranges, e.g. "443" or "3000-3020" or "443,8080".
+    pub ports:       String,
+    /// Protocol the device speaks: "http" | "https" | "rdp" | "vnc".
+    pub application: String,
+    /// Placeholder: prefer Guacamole browser tab over launching a local app.
+    /// Received and stored; not yet connected to any Guacamole integration.
+    pub guac:        Option<bool>,
+    /// When `true`, relay raw TLS bytes end-to-end (passthrough).
+    /// When `false`/absent (default), use HTTP/1.1 proxy mode.
+    pub e2ecrypt:    Option<bool>,
+    /// SNI hostname for proxy-mode HTTP/S connections to the upstream device.
+    pub sni:         Option<String>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct TunnelRequest {
-    pub target:      String,
-    /// What is being tunnelled: "http", "https", "rdp", "vnc", …
-    /// This is distinct from the client↔gateway transport, which is always TLS.
-    pub application: String,
-    /// Comma-separated ports / ranges, e.g. "443,7000-7010"
-    pub ports:       String,
-    pub token:       String,
-    pub servicekey:  Option<String>,
+    pub target:     String,
+    /// JWT signed by the portal; forwarded verbatim to the gateway.
+    pub token:      String,
+    pub servicekey: Option<String>,
     /// Gateway address as "host" or "host:port"; port defaults to 443.
-    pub gateway:     String,
-    /// Optional SNI hostname to send in the TLS ClientHello when the gateway
-    /// connects to the upstream target.  When absent the gateway falls back
-    /// to `target`.
-    pub sni:          Option<String>,
-    /// When `true` the tunnel relays raw bytes end-to-end (transparent
-    /// passthrough).  The browser's TLS session reaches the device directly;
-    /// the device's certificate is presented to the browser unchanged.
-    /// Use only when the device has a browser-trusted certificate.
-    ///
-    /// When `false` or absent (the default), the gateway runs in HTTP/1.1
-    /// proxy mode: the client terminates the browser's TLS, the gateway opens
-    /// its own TLS session to the device (self-signed certs accepted), and
-    /// HTTP traffic can be inspected and rewritten in flight.
-    pub e2ecrypt:    Option<bool>,
+    pub gateway:    String,
+    /// Per-port connection settings.  One row can cover multiple ports via
+    /// a range or comma list; every port in the row shares the same settings.
+    pub port_rows:  Vec<PortRow>,
+    /// Username for RDP/VNC config file injection — stored, not yet used.
+    pub username:   Option<String>,
+    /// Password for RDP/VNC config file injection — stored, not yet used.
+    pub password:   Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -111,16 +119,38 @@ async fn tunnel_handler(
     State(state): State<ApiState>,
     Json(req): Json<TunnelRequest>,
 ) -> HandlerResult {
-    let ports = crate::tunnel::parse_ports(&req.ports);
     let (gw_host, gw_port) = crate::tunnel::parse_gateway(&req.gateway);
 
-    // Load config early — we need idle_timeout for the monitor, and vnc_viewer
-    // for application launching.
+    // Load config early — needed for idle_timeout and vnc_viewer path.
     let cfg = crate::config::load(&state.app);
 
+    if req.port_rows.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "port_rows must not be empty" })),
+        ));
+    }
+
+    // Flatten all rows into (port, PortRow) pairs so every port carries its
+    // own application / e2ecrypt / sni settings.
+    let mut flat: Vec<(u16, PortRow)> = Vec::new();
+    for row in &req.port_rows {
+        for port in crate::tunnel::parse_ports(&row.ports) {
+            flat.push((port, row.clone()));
+        }
+    }
+
+    if flat.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "no valid ports found in port_rows" })),
+        ));
+    }
+
     log::info!(
-        "Tunnel request: gateway={}:{} target={} application={} ports={:?}",
-        gw_host, gw_port, req.target, req.application, ports
+        "Tunnel request: gateway={}:{} target={} ports={:?}",
+        gw_host, gw_port, req.target,
+        flat.iter().map(|(p, _)| *p).collect::<Vec<_>>(),
     );
 
     // ── Claim a free connection slot ──────────────────────────────────────
@@ -136,23 +166,20 @@ async fn tunnel_handler(
         }
     };
 
-    log::info!(
-        "Tunnel request: assigned slot {} ({})",
-        slot.idx + 2,
-        slot.ip,
-    );
+    log::info!("Tunnel request: assigned slot {} ({})", slot.idx + 2, slot.ip);
 
     // ── Phase 1: pre-bind ALL listeners on the slot IP ────────────────────
     //
     // Every port must bind successfully before any task is spawned.
     // On any failure the slot is released immediately.
-    let mut listeners: Vec<(u16, tokio::net::TcpListener)> = Vec::with_capacity(ports.len());
+    let mut listeners: Vec<(u16, PortRow, tokio::net::TcpListener)> =
+        Vec::with_capacity(flat.len());
 
-    for &port in &ports {
+    for (port, row) in flat {
         match tokio::net::TcpListener::bind((slot.ip.as_str(), port)).await {
             Ok(l) => {
-                log::info!("port {} — bound on {}", port, slot.ip);
-                listeners.push((port, l));
+                log::info!("port {} app={} — bound on {}", port, row.application, slot.ip);
+                listeners.push((port, row, l));
             }
             Err(e) => {
                 let msg = format!("Failed to bind {}:{}: {}", slot.ip, port, e);
@@ -169,9 +196,9 @@ async fn tunnel_handler(
 
     // ── Phase 2: launch local applications and collect URLs ───────────────
     let mut urls: Vec<String> = Vec::new();
-    for &port in &ports {
+    for (port, row, _) in &listeners {
         let port_urls = crate::tunnel::launch_application(
-            &req.application, port, &slot.ip, &cfg,
+            &row.application, *port, &slot.ip, &cfg,
         );
         urls.extend(port_urls);
     }
@@ -194,18 +221,18 @@ async fn tunnel_handler(
     })).ok();
 
     // ── Phase 5: spawn one accept-loop task per port ──────────────────────
-    let bound_ports: Vec<u16> = listeners.iter().map(|(p, _)| *p).collect();
+    let bound_ports: Vec<u16> = listeners.iter().map(|(p, _, _)| *p).collect();
     let task_handles = slot.task_handles.clone();
     let last_active  = slot.last_active.clone();
 
-    for (port, listener) in listeners {
-        let req_c      = req.clone();
-        let state_c    = state.clone();
-        let last_c     = last_active.clone();
-        let handles_c  = task_handles.clone();
+    for (port, row, listener) in listeners {
+        let port_cfg  = crate::tunnel::PortConfig::from_request(&req, &row);
+        let state_c   = state.clone();
+        let last_c    = last_active.clone();
+        let handles_c = task_handles.clone();
 
         let accept_handle = tokio::spawn(
-            crate::tunnel::run_accept_loop(listener, port, req_c, state_c, last_c, handles_c),
+            crate::tunnel::run_accept_loop(listener, port, port_cfg, state_c, last_c, handles_c),
         );
 
         // Register the accept-loop handle so release() can abort it.

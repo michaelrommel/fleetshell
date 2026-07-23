@@ -9,8 +9,45 @@ use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, Server
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use rustls::{DigitallySignedStruct, SignatureScheme};
 
-use crate::server::{ApiState, TunnelRequest};
+use crate::server::{ApiState, PortRow, TunnelRequest};
 use tauri::Manager as _;  // for AppHandle::state()
+
+// ── Per-port connection config ────────────────────────────────────────────────
+
+/// Flat, per-port configuration extracted from a `TunnelRequest` + `PortRow`.
+///
+/// This is what every accept-loop / connection handler needs.  Creating it
+/// early lets us drop the `TunnelRequest` borrow before spawning tasks.
+#[derive(Debug, Clone)]
+pub struct PortConfig {
+	pub target:      String,
+	pub token:       String,
+	pub gateway:     String,
+	pub servicekey:  Option<String>,
+	/// Protocol the device speaks — "http", "https", "rdp", "vnc".
+	pub application: String,
+	/// Placeholder for future Guacamole integration — not yet acted on.
+	pub guac:        Option<bool>,
+	/// `true` = raw TLS relay; `false`/absent = HTTP proxy mode (default).
+	pub e2ecrypt:    Option<bool>,
+	/// SNI hostname for proxy-mode HTTP/S upstream connections.
+	pub sni:         Option<String>,
+}
+
+impl PortConfig {
+	pub fn from_request(req: &TunnelRequest, row: &PortRow) -> Self {
+		Self {
+			target:      req.target.clone(),
+			token:       req.token.clone(),
+			gateway:     req.gateway.clone(),
+			servicekey:  req.servicekey.clone(),
+			application: row.application.clone(),
+			guac:        row.guac,
+			e2ecrypt:    row.e2ecrypt,
+			sni:         row.sni.clone(),
+		}
+	}
+}
 
 // ── Port-spec parser ──────────────────────────────────────────────────────────
 
@@ -190,7 +227,7 @@ impl ServerCertVerifier for SkipServerVerification {
 pub async fn run_accept_loop(
     listener:     tokio::net::TcpListener,
     port:         u16,
-    req:          TunnelRequest,
+    cfg:          PortConfig,
     state:        ApiState,
     last_active:  Arc<AtomicU64>,
     task_handles: Arc<Mutex<Vec<tokio::task::JoinHandle<()>>>>,
@@ -201,12 +238,12 @@ pub async fn run_accept_loop(
         match listener.accept().await {
             Ok((stream, peer)) => {
                 log::debug!("port {} — accepted connection from {}", port, peer);
-                let req_c   = req.clone();
+                let cfg_c   = cfg.clone();
                 let state_c = state.clone();
                 let last_c  = last_active.clone();
 
                 let handle = tokio::spawn(
-                    handle_connection(stream, port, req_c, state_c, last_c),
+                    handle_connection(stream, port, cfg_c, state_c, last_c),
                 );
 
                 // Store the handle; prune finished entries first to prevent
@@ -226,11 +263,8 @@ pub async fn run_accept_loop(
 
 // ── Per-connection gateway handshake ─────────────────────────────────────────
 
-async fn handle_connection(local: TcpStream, port: u16, req: TunnelRequest, state: ApiState, last_active: Arc<AtomicU64>) {
-    // The gateway connection is always TLS regardless of the `application`
-    // field.  The `application` field describes what is being tunnelled, not
-    // how the client↔gateway leg is secured.
-    let (gw_host, gw_port) = parse_gateway(&req.gateway);
+async fn handle_connection(local: TcpStream, port: u16, cfg: PortConfig, state: ApiState, last_active: Arc<AtomicU64>) {
+    let (gw_host, gw_port) = parse_gateway(&cfg.gateway);
     let gw_addr = format!("{}:{}", gw_host, gw_port);
 
     log::debug!("port {} — connecting to gateway {} (TLS)", port, gw_addr);
@@ -271,19 +305,9 @@ async fn handle_connection(local: TcpStream, port: u16, req: TunnelRequest, stat
         }
     };
 
-    let payload = build_payload(&req, port, &state.gateway_path);
+    let payload = build_payload(&cfg, port, &state.gateway_path);
 
-    // Default (proxy) mode for HTTPS — e2ecrypt absent or false.
-    //
-    // The client terminates the browser's TLS using the *.client.fleetshell.com
-    // cert; the gateway then receives plaintext HTTP, opens its own TLS session
-    // to the device (self-signed certs accepted), and can rewrite Host / Location
-    // headers.  The browser never sees the device's certificate.
-    //
-    // When e2ecrypt = true the raw TLS bytes pass through unchanged — the
-    // browser's session reaches the device directly (device cert is visible;
-    // browser-trusted certs work fine, self-signed certs will warn or block).
-    if !req.e2ecrypt.unwrap_or(false) && req.application.eq_ignore_ascii_case("https") {
+    if !cfg.e2ecrypt.unwrap_or(false) && cfg.application.eq_ignore_ascii_case("https") {
         // Clone the Arc<RwLock<...>> out of managed state so the tauri::State
         // borrow is released before the async .read().await.  TlsAcceptor is
         // Arc<ServerConfig> internally, so the subsequent clone is cheap.
@@ -325,17 +349,17 @@ async fn handle_connection(local: TcpStream, port: u16, req: TunnelRequest, stat
 // ── Handshake + bidirectional forwarding ──────────────────────────────────────
 
 /// Build the JSON payload sent to the gateway on first connect.
-fn build_payload(req: &TunnelRequest, port: u16, gateway_path: &str) -> Vec<u8> {
+fn build_payload(cfg: &PortConfig, port: u16, gateway_path: &str) -> Vec<u8> {
     let json = serde_json::json!({
-        "target":      req.target,
-        "application": req.application,
+        "target":      cfg.target,
+        "application": cfg.application,
         "port":        port,
-        "token":       req.token,
-        "servicekey":  req.servicekey,
-        "gateway":     req.gateway,
-        "sni":         req.sni,
+        "token":       cfg.token,
+        "servicekey":  cfg.servicekey,
+        "gateway":     cfg.gateway,
+        "sni":         cfg.sni,
         "path":        gateway_path,
-        "e2ecrypt":    req.e2ecrypt,
+        "e2ecrypt":    cfg.e2ecrypt,
     });
     let mut bytes = json.to_string().into_bytes();
     bytes.push(b'\n');
