@@ -534,6 +534,25 @@ pub async fn run<C, T>(
 			break;
 		}
 
+		// ── 11b. Protocol upgrade (WebSocket etc.) ───────────────────────
+		//
+		// After a 101 the connection is no longer HTTP — both sides exchange
+		// raw WebSocket (or other upgraded-protocol) frames.  The HTTP loop
+		// must not try to read another request; instead we relay bytes
+		// transparently for the rest of the connection lifetime.
+		//
+		// client_r / target_r are BufReader wrappers: any bytes already in
+		// their buffers are flushed out before reading from the underlying
+		// stream, so no data is lost.
+		if status_code == 101 {
+			info!(target = %label, "101 Switching Protocols — switching to raw relay");
+			relay_upgraded(
+				&mut client_r, &mut client_w,
+				&mut target_r, &mut target_w,
+			).await;
+			break;
+		}
+
 		// ── 12. Keep-alive decision ───────────────────────────────────────
 		if !keep_alive_client || !keep_alive_upstream {
 			debug!(target = %label, "closing (Connection: close)");
@@ -543,6 +562,39 @@ pub async fn run<C, T>(
 }
 
 // ── Private helpers ───────────────────────────────────────────────────────────
+
+/// Transparent bidirectional relay used after a protocol upgrade (101).
+///
+/// Pumps bytes between (`client_r`, `client_w`) and (`target_r`, `target_w`)
+/// until either side closes or errors.  Because both readers are `BufReader`
+/// wrappers they will drain any already-buffered bytes before hitting the
+/// underlying stream — no in-flight data is dropped.
+async fn relay_upgraded<CR, CW, TR, TW>(
+	client_r: &mut CR,
+	client_w: &mut CW,
+	target_r: &mut TR,
+	target_w: &mut TW,
+) where
+	CR: AsyncRead + Unpin,
+	CW: AsyncWrite + Unpin,
+	TR: AsyncRead + Unpin,
+	TW: AsyncWrite + Unpin,
+{
+	let mut buf_c = vec![0u8; 8192];
+	let mut buf_t = vec![0u8; 8192];
+	loop {
+		tokio::select! {
+			res = client_r.read(&mut buf_c) => match res {
+				Ok(0) | Err(_) => break,
+				Ok(n) => { let _ = target_w.write_all(&buf_c[..n]).await; }
+			},
+			res = target_r.read(&mut buf_t) => match res {
+				Ok(0) | Err(_) => break,
+				Ok(n) => { let _ = client_w.write_all(&buf_t[..n]).await; }
+			},
+		}
+	}
+}
 
 /// Read bytes from `reader` until the `\r\n\r\n` header terminator, up to
 /// `max_bytes`.
