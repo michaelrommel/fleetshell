@@ -10,14 +10,37 @@
 			: [],
 	);
 
-	// ── Connect form state ────────────────────────────────────────────────────
-	let target      = $state('172.16.33.');
-	let application = $state<'http' | 'https' | 'rdp' | 'vnc'>('https');
-	let ports       = $state('443');
-	let gateway     = $state('gateway.fleetshell.com');
-	let sni         = $state('');
-	let servicekey  = $state('i-love-healthineers-so-much');
-	let e2ecrypt    = $state(false);
+	// ── Connect form state ────────────────────────────────────────────
+	let target     = $state('172.16.33.');
+	let gateway    = $state('gateway.fleetshell.com');
+	let servicekey = $state('i-love-healthineers-so-much');
+	let username   = $state('');
+	let password   = $state('');
+
+	interface PortRow {
+		ports:       string;
+		application: 'http' | 'https' | 'rdp' | 'vnc';
+		guac:        boolean;
+		e2ecrypt:    boolean;
+		sni:         string;
+	}
+
+	let portRows = $state<PortRow[]>([
+		{ ports: '443', application: 'https', guac: false, e2ecrypt: false, sni: '' },
+	]);
+
+	function addRow(): void {
+		portRows = [...portRows, { ports: '', application: 'https', guac: false, e2ecrypt: false, sni: '' }];
+	}
+
+	function removeRow(i: number): void {
+		if (portRows.length > 1) portRows = portRows.filter((_, idx) => idx !== i);
+	}
+
+	/** True when the SNI field is meaningful for a given row. */
+	function sniEffective(row: PortRow): boolean {
+		return (row.application === 'http' || row.application === 'https') && !row.e2ecrypt;
+	}
 
 	type ConnectState = 'idle' | 'signing' | 'connecting' | 'done' | 'error';
 	let connectState = $state<ConnectState>('idle');
@@ -32,13 +55,16 @@
 		connectMsg   = '';
 		connectUrls  = [];
 
+		// Collect all ports across rows for the JWT claim.
+		const allPorts = portRows.map(r => r.ports).filter(Boolean).join(',');
+
 		// 1. Sign the JWT server-side (JWT_SECRET never leaves the portal).
 		let token: string;
 		try {
 			const res = await fetch('/api/tunnel/sign', {
 				method  : 'POST',
 				headers : { 'Content-Type': 'application/json' },
-				body    : JSON.stringify({ target, ports, gateway }),
+				body    : JSON.stringify({ target, ports: allPorts, gateway }),
 			});
 			if (!res.ok) {
 				const txt = await res.text();
@@ -59,13 +85,18 @@
 				headers : { 'Content-Type': 'application/json' },
 				body    : JSON.stringify({
 					target,
-					application,
-					ports,
 					token,
-					sni        : sni      || undefined,
-					servicekey : servicekey || undefined,
 					gateway,
-					e2ecrypt   : e2ecrypt || undefined,
+					servicekey : servicekey || undefined,
+					username   : username   || undefined,
+					password   : password   || undefined,
+					port_rows  : portRows.map(r => ({
+						ports      : r.ports,
+						application: r.application,
+						guac       : r.guac       || undefined,
+						e2ecrypt   : r.e2ecrypt   || undefined,
+						sni        : r.sni        || undefined,
+					})),
 				}),
 			});
 			if (!res.ok) {
@@ -163,31 +194,65 @@
 
 		<form class="connect-form" onsubmit={onConnect}>
 
-			<div class="field-grid">
+			<!-- Target + Gateway -->
+		<div class="field-grid">
+			<div class="field">
+				<label class="field-label" for="cf-target">Target</label>
+				<input
+					id="cf-target"
+					class="field-input"
+					type="text"
+					placeholder="192.168.1.100"
+					bind:value={target}
+					required
+					autocomplete="off"
+					spellcheck="false"
+					disabled={busy}
+				/>
+			</div>
 
-				<!-- Target -->
-				<div class="field">
-					<label class="field-label" for="cf-target">Target</label>
+			<div class="field">
+				<label class="field-label" for="cf-gateway">Gateway</label>
+				<input
+					id="cf-gateway"
+					class="field-input"
+					type="text"
+					placeholder="gateway.fleetshell.com"
+					bind:value={gateway}
+					required
+					autocomplete="off"
+					spellcheck="false"
+					disabled={busy}
+				/>
+			</div>
+		</div>
+
+		<!-- Port rows -->
+		<div class="field">
+			<span class="field-label">Ports</span>
+			<div class="port-rows">
+				<div class="port-row-head">
+					<span>Ports</span>
+					<span>Application</span>
+					<span class="col-center">Guac</span>
+					<span class="col-center">E2E</span>
+					<span>SNI <span class="optional">(optional)</span></span>
+					<span></span>
+				</div>
+				{#each portRows as row, i}
+				<div class="port-row">
 					<input
-						id="cf-target"
-						class="field-input"
+						class="pr-input"
 						type="text"
-						placeholder="192.168.1.100"
-						bind:value={target}
-						required
+						placeholder="443 or 80,8080-8090"
+						bind:value={row.ports}
+						disabled={busy}
 						autocomplete="off"
 						spellcheck="false"
-						disabled={busy}
 					/>
-				</div>
-
-				<!-- Application -->
-				<div class="field">
-					<label class="field-label" for="cf-application">Application</label>
 					<select
-						id="cf-application"
-						class="field-input field-select"
-						bind:value={application}
+						class="pr-input pr-select"
+						bind:value={row.application}
 						disabled={busy}
 					>
 						<option value="https">HTTPS</option>
@@ -195,94 +260,92 @@
 						<option value="rdp">RDP</option>
 						<option value="vnc">VNC</option>
 					</select>
-				</div>
-
-				<!-- Ports -->
-				<div class="field">
-					<label class="field-label" for="cf-ports">Ports</label>
-					<input
-						id="cf-ports"
-						class="field-input"
-						type="text"
-						placeholder="443  or  3000-3020  or  443,8080"
-						bind:value={ports}
-						required
-						autocomplete="off"
-						spellcheck="false"
-						disabled={busy}
-					/>
-				</div>
-
-				<!-- Gateway -->
-				<div class="field">
-					<label class="field-label" for="cf-gateway">Gateway</label>
-					<input
-						id="cf-gateway"
-						class="field-input"
-						type="text"
-						placeholder="atlanta-01  or  gw.example.com:443"
-						bind:value={gateway}
-						required
-						autocomplete="off"
-						spellcheck="false"
-						disabled={busy}
-					/>
-				</div>
-
-				<!-- SNI / Hostname (optional) -->
-				<div class="field">
-					<label class="field-label" for="cf-sni">
-						SNI / Hostname <span class="optional">(optional)</span>
+					<label class="pr-check" title="Open via Guacamole in a new browser tab (placeholder)">
+						<input type="checkbox" class="check-input" bind:checked={row.guac} disabled={busy} />
+					</label>
+					<label class="pr-check" title="Pass TLS bytes end-to-end; browser sees device certificate directly">
+						<input type="checkbox" class="check-input" bind:checked={row.e2ecrypt} disabled={busy} />
 					</label>
 					<input
-						id="cf-sni"
-						class="field-input"
+						class="pr-input"
+						class:pr-sni-muted={!sniEffective(row)}
 						type="text"
-						placeholder="device.internal.example.com"
-						bind:value={sni}
+						placeholder="device.example.com"
+						bind:value={row.sni}
+						disabled={busy}
 						autocomplete="off"
 						spellcheck="false"
-						disabled={busy}
 					/>
+					<button
+						type="button"
+						class="pr-remove"
+						onclick={() => removeRow(i)}
+						disabled={busy || portRows.length === 1}
+						title="Remove row"
+						aria-label="Remove row"
+					>✕</button>
 				</div>
-
-				<!-- Service key (optional) -->
-				<div class="field">
-					<label class="field-label" for="cf-servicekey">
-						Service Key <span class="optional">(optional)</span>
-					</label>
-					<input
-						id="cf-servicekey"
-						class="field-input"
-						type="text"
-						placeholder="abcde-…"
-						bind:value={servicekey}
-						autocomplete="off"
-						spellcheck="false"
-						disabled={busy}
-					/>
-				</div>
-
-				<!-- End-to-end Encryption -->
-				<div class="field field-check">
-					<label class="field-label" for="cf-e2ecrypt">End-to-end Encryption</label>
-					<label class="check-label">
-						<input
-							id="cf-e2ecrypt"
-							class="check-input"
-							type="checkbox"
-							bind:checked={e2ecrypt}
-							disabled={busy}
-						/>
-						<span class="check-text">
-							Passes the browser's TLS connection directly to the device. The browser will always show a certificate warning, because the device certificate is issued for the device's own hostname — not for the tunnel address.
-						</span>
-					</label>
-				</div>
-
+				{/each}
+				<button
+					type="button"
+					class="pr-add"
+					onclick={addRow}
+					disabled={busy}
+				>+ Add row</button>
 			</div>
+		</div>
 
-			<!-- Action row -->
+		<!-- Service Key -->
+		<div class="field">
+			<label class="field-label" for="cf-servicekey">
+				Service Key <span class="optional">(optional)</span>
+			</label>
+			<input
+				id="cf-servicekey"
+				class="field-input"
+				type="text"
+				placeholder="abcde-…"
+				bind:value={servicekey}
+				autocomplete="off"
+				spellcheck="false"
+				disabled={busy}
+			/>
+		</div>
+
+		<!-- Username + Password -->
+		<div class="field-grid">
+			<div class="field">
+				<label class="field-label" for="cf-username">
+					Username <span class="optional">(optional)</span>
+				</label>
+				<input
+					id="cf-username"
+					class="field-input"
+					type="text"
+					placeholder="administrator"
+					bind:value={username}
+					autocomplete="off"
+					spellcheck="false"
+					disabled={busy}
+				/>
+			</div>
+			<div class="field">
+				<label class="field-label" for="cf-password">
+					Password <span class="optional">(optional)</span>
+				</label>
+				<input
+					id="cf-password"
+					class="field-input"
+					type="password"
+					placeholder="••••••••"
+					bind:value={password}
+					autocomplete="current-password"
+					disabled={busy}
+				/>
+			</div>
+		</div>
+
+				<!-- Action row -->
 			<div class="action-row">
 				<button
 					type="submit"
@@ -666,4 +729,110 @@
 	}
 	.open-btn:hover  { background: var(--bright-green); color: var(--bg-hard); }
 	.open-btn:active { background: var(--aqua); }
+
+	/* ── Port rows ─────────────────────────────────────────────────────────── */
+	.port-rows {
+		border       : 1px solid var(--bg3);
+		border-radius: 3px;
+		overflow     : hidden;
+	}
+
+	.port-row-head,
+	.port-row {
+		display              : grid;
+		grid-template-columns: 140px 110px 52px 52px 1fr 32px;
+		align-items          : stretch;
+	}
+
+	.port-row-head {
+		background    : var(--bg1);
+		font-size     : 0.72rem;
+		font-weight   : 600;
+		color         : var(--fg4);
+		text-transform: uppercase;
+		letter-spacing: 0.07em;
+	}
+	.port-row-head > span {
+		padding: 7px 10px;
+	}
+	.col-center { text-align: center; }
+
+	.port-row { border-top: 1px solid var(--bg2); }
+
+	/* Shared style for all inline inputs and selects inside a port row */
+	.pr-input {
+		background  : transparent;
+		color       : var(--fg1);
+		border      : none;
+		border-right: 1px solid var(--bg2);
+		padding     : 9px 10px;
+		font-family : inherit;
+		font-size   : 0.92rem;
+		outline     : none;
+		width       : 100%;
+		min-width   : 0;
+		transition  : background 0.12s;
+	}
+	.pr-input:focus {
+		background: var(--bg1);
+		box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--bright-blue) 30%, transparent);
+		position  : relative;
+		z-index   : 1;
+	}
+	.pr-input::placeholder { color: var(--bg4); }
+	.pr-input:disabled     { opacity: 0.5; cursor: not-allowed; }
+
+	.pr-select {
+		appearance         : none;
+		background-image   : url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%237c6f64' d='M6 8 0 0h12z'/%3E%3C/svg%3E");
+		background-repeat  : no-repeat;
+		background-position: right 8px center;
+		padding-right      : 28px;
+		cursor             : pointer;
+	}
+	.pr-select option { background: var(--bg1); }
+
+	.pr-check {
+		display        : flex;
+		justify-content: center;
+		align-items    : center;
+		border-right   : 1px solid var(--bg2);
+		cursor         : pointer;
+	}
+	.pr-check:has(.check-input:disabled) { opacity: 0.5; cursor: not-allowed; }
+
+	/* Dim SNI when it has no effect (rdp/vnc, or e2ecrypt on) */
+	.pr-sni-muted { opacity: 0.35; }
+
+	.pr-remove {
+		background     : transparent;
+		color          : var(--fg4);
+		border         : none;
+		cursor         : pointer;
+		display        : flex;
+		align-items    : center;
+		justify-content: center;
+		padding        : 0;
+		font-size      : 0.85rem;
+		transition     : color 0.12s;
+	}
+	.pr-remove:hover:not(:disabled) { color: var(--bright-red); }
+	.pr-remove:disabled              { opacity: 0.25; cursor: not-allowed; }
+
+	.pr-add {
+		display    : block;
+		width      : 100%;
+		background : transparent;
+		color      : var(--bright-blue);
+		border     : none;
+		border-top : 1px solid var(--bg2);
+		padding    : 8px 14px;
+		font-family: inherit;
+		font-size  : 0.85rem;
+		cursor     : pointer;
+		text-align : left;
+		transition : background 0.12s, color 0.12s;
+	}
+	.pr-add:hover:not(:disabled) { background: var(--bg1); color: var(--bright-aqua); }
+	.pr-add:disabled              { opacity: 0.5; cursor: not-allowed; }
 </style>
