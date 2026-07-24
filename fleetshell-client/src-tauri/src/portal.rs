@@ -156,72 +156,22 @@ async fn dispatch(app: &tauri::AppHandle, url: &url::Url) -> Result<String, Stri
 
 /// Handle a `fleetshell://tunnel/<payload>` deep-link.
 ///
-/// The portal sends this when a direct HTTP POST to the client API fails
-/// (client not running, or browser mixed-content block).  The client:
-/// 1. Shows its window so the user knows something is happening.
-/// 2. Waits up to 5 seconds for the local API server to be ready (handles the
-///    race where this handler runs before the Axum server has finished binding).
-/// 3. POSTs the `TunnelRequest` JSON to its own `/api/tunnel` endpoint.
-/// 4. On success, navigates to the Functions or Logging tab as appropriate.
+/// The portal now owns the retry loop: it polls the client API directly for
+/// up to 5 seconds after opening the deep-link.  This handler therefore only
+/// needs to confirm receipt — no self-POST, no window manipulation.
+///
+/// Keeping the handler here (rather than removing it) means the deep-link
+/// type is still recognised and dispatched cleanly; future use-cases can
+/// extend it without protocol changes.
 async fn handle_tunnel(
-	app:     &tauri::AppHandle,
+	_app:    &tauri::AppHandle,
 	payload: serde_json::Value,
 ) -> Result<String, String> {
-	log::info!("Tunnel deep-link received — forwarding to local API");
-	crate::util::show_window(app);
-	crate::util::navigate(app, "logging");
-
-	// Build a reqwest client that:
-	// • Accepts invalid/self-signed certs  (our own *.client.fleetshell.com cert)
-	// • Short timeout so each attempt fails fast
-	let client = reqwest::Client::builder()
-		.danger_accept_invalid_certs(true)
-		.timeout(std::time::Duration::from_secs(3))
-		.build()
-		.map_err(|e| format!("HTTP client build failed: {e}"))?;
-
-	let https_url = format!(
-		"https://{}:{}/api/tunnel",
-		crate::server::API_HOST, crate::server::API_PORT,
+	log::info!(
+		"Tunnel deep-link received (target={:?}) — portal will connect directly",
+		payload.get("target").and_then(|v| v.as_str()),
 	);
-	let http_url = format!("http://127.0.0.1:{}/api/tunnel", crate::server::API_PORT);
-
-	// Retry loop: the API server starts concurrently; give it up to 5 s.
-	for attempt in 0..10_u32 {
-		if attempt > 0 {
-			tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-		}
-
-		for url in [https_url.as_str(), http_url.as_str()] {
-			match client.post(url).json(&payload).send().await {
-				Ok(resp) if resp.status().is_success() => {
-					log::info!("Tunnel deep-link: API call succeeded ({})", url);
-					// Navigate to Functions tab if a servicekey is present.
-					if let Some(sk) = payload.get("servicekey").and_then(|v| v.as_str()) {
-						app.emit("navigate", serde_json::json!({
-							"tab": "functions", "servicekey": sk
-						})).ok();
-					}
-					return Ok("Tunnel established via deep-link".to_string());
-				}
-				Ok(resp) => {
-					let status = resp.status();
-					let body   = resp.text().await.unwrap_or_default();
-					log::error!("Tunnel deep-link: API returned {}: {}", status, body);
-					return Err(format!("Tunnel API returned {}: {}", status, body));
-				}
-				Err(e) => {
-					log::debug!(
-						"Tunnel deep-link: attempt {}/10 on {} — {}",
-						attempt + 1, url, e,
-					);
-					// Connection-level error — try next URL or retry.
-				}
-			}
-		}
-	}
-
-	Err("Local API did not become ready within 5 seconds".to_string())
+	Ok("deep-link acknowledged; portal retrying directly".to_string())
 }
 
 // ── Enrollment orchestrator ───────────────────────────────────────────────────
