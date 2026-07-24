@@ -20,6 +20,7 @@ import { env }              from '$env/dynamic/private';
 import { error }            from '@sveltejs/kit';
 import { createReadStream } from 'node:fs';
 import { stat }             from 'node:fs/promises';
+import { basename }         from 'node:path';
 import { Readable }         from 'node:stream';
 import type { RequestHandler } from './$types';
 
@@ -80,7 +81,7 @@ export const GET: RequestHandler = async ({ params }) => {
 			// Use the *logical* name as the download filename so the browser
 			// always saves it as e.g. "fleetshell-client.exe" regardless of
 			// what the file is actually called on disk.
-			'Content-Disposition'       : `attachment; filename="${logicalName}"`,
+			'Content-Disposition'       : `attachment; filename="${basename(diskPath)}"`,
 			'Content-Length'            : String(fileStat.size),
 			// Prevent caches from serving stale binaries after an update.
 			'Cache-Control'             : 'no-store',

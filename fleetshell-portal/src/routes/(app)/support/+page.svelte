@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { GITHUB_RELEASE_URL } from '$lib/downloads';
 	// ── Phase type ────────────────────────────────────────────────────
 	/**
 	 * Enrollment phase state machine.
@@ -118,6 +119,92 @@
 		log('download button clicked — flipping card to enrollment steps');
 		flipped = true;
 		if (phase === 'front') phase = 'install';
+	}
+
+	// ── Installer download with ZScaler scan detection ────────────────────
+
+	type DownloadState = 'idle' | 'downloading' | 'zscaler' | 'error';
+	let dlState = $state<DownloadState>('idle');
+	let dlError = $state('');
+
+	/**
+	 * Fetch the installer via the Fetch API so we can inspect the response
+	 * before handing the bytes to the browser.
+	 *
+	 * A ZScaler sandbox scan returns text/html instead of
+	 * application/octet-stream.  We detect that using phrases from the actual
+	 * ZScaler scan page and show an actionable message with a GitHub fallback
+	 * instead of letting the browser silently save a broken file.
+	 */
+	async function downloadClient(): Promise<void> {
+		dlState = 'downloading';
+		dlError = '';
+
+		let resp: Response;
+		try {
+			resp = await fetch('/support/apps/fleetshell-client.exe');
+		} catch (err) {
+			dlState = 'error';
+			dlError = 'Network error — check your connection and try again.';
+			return;
+		}
+
+		const ct = resp.headers.get('content-type') ?? '';
+
+		// Extract the server-supplied filename (includes version, e.g.
+		// "fleetshell-client-0.4.0_x64-setup.exe") from Content-Disposition.
+		// Fall back to the logical URL name if the header is absent.
+		const cd       = resp.headers.get('content-disposition') ?? '';
+		const cdMatch  = cd.match(/filename="?([^"]+)"?/);
+		const filename = cdMatch?.[1] ?? 'fleetshell-client.exe';
+
+		// Any HTML response means something intercepted the download.
+		if (ct.includes('text/html')) {
+			let body = '';
+			try { body = await resp.text(); } catch { /* ignore */ }
+			const lc = body.toLowerCase();
+
+			const isZscaler =
+				lc.includes('being analyzed for your protection') ||
+				lc.includes('analysis can take up to') ||
+				lc.includes('if safe, your file downloads automatically') ||
+				lc.includes('zscaler');
+
+			if (isZscaler) {
+				dlState = 'zscaler';
+			} else {
+				dlState = 'error';
+				dlError = `Unexpected response (HTTP ${resp.status} — content-type: ${ct}).`;
+			}
+			return;
+		}
+
+		if (!resp.ok) {
+			dlState = 'error';
+			dlError = `Server returned HTTP ${resp.status} ${resp.statusText}.`;
+			return;
+		}
+
+		// Valid binary — save via Blob so we fully control the filename.
+		try {
+			const blob = await resp.blob();
+			const url  = URL.createObjectURL(blob);
+			const a    = document.createElement('a');
+			a.href     = url;
+			a.download = filename;
+			document.body.appendChild(a);
+			a.click();
+			document.body.removeChild(a);
+			setTimeout(() => URL.revokeObjectURL(url), 10_000);
+		} catch (err) {
+			dlState = 'error';
+			dlError = `Could not save the file: ${String(err)}`;
+			return;
+		}
+
+		// Success — flip card to enrollment steps.
+		dlState = 'idle';
+		onDownloadClick();
 	}
 
 	// ── Step 2: install confirmed ─────────────────────────────────────
@@ -352,11 +439,11 @@
 						flip side of this card.
 					</p>
 
-					<a
+					<button
 						class="dl-btn"
-						href="/support/apps/fleetshell-client.exe"
-						download
-						onclick={(e) => { e.stopPropagation(); onDownloadClick(); }}
+						type="button"
+						disabled={dlState === 'downloading'}
+						onclick={(e) => { e.stopPropagation(); downloadClient(); }}
 					>
 						<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
 						     stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -364,8 +451,42 @@
 							<polyline points="7 10 12 15 17 10"/>
 							<line x1="12" y1="15" x2="12" y2="3"/>
 						</svg>
-						Download FleetShell Client
-					</a>
+						{#if dlState === 'downloading'}
+							Checking…
+						{:else}
+							Download FleetShell Client
+						{/if}
+					</button>
+
+					{#if dlState === 'zscaler'}
+						<div class="dl-notice dl-notice-scan">
+							<strong>Security scanner is checking the file</strong>
+							<p>
+								Your organisation’s security policy (ZScaler) is scanning the
+								installer for threats. This can take <strong>up to 10 minutes</strong>.
+								If the file is safe the download will start automatically next
+								time you click the button — just wait a few minutes and retry.
+							</p>
+							{#if GITHUB_RELEASE_URL}
+								<p>Alternatively, download directly from GitHub where the file may already have been scanned and cleared:</p>
+								<a class="dl-notice-link" href={GITHUB_RELEASE_URL}
+								   target="_blank" rel="noopener noreferrer">Download from GitHub ↗</a>
+							{/if}
+							<button class="dl-notice-dismiss" type="button"
+							        onclick={() => dlState = 'idle'}>Dismiss</button>
+						</div>
+					{:else if dlState === 'error'}
+						<div class="dl-notice dl-notice-error">
+							<strong>Download failed</strong>
+							<p>{dlError}</p>
+							{#if GITHUB_RELEASE_URL}
+								<a class="dl-notice-link" href={GITHUB_RELEASE_URL}
+								   target="_blank" rel="noopener noreferrer">Try downloading from GitHub ↗</a>
+							{/if}
+							<button class="dl-notice-dismiss" type="button"
+							        onclick={() => dlState = 'idle'}>Dismiss</button>
+						</div>
+					{/if}
 				</div>
 
 				<!-- ── Back face ───────────────────────────────────── -->
@@ -1017,6 +1138,51 @@
 	.dl-btn:hover       { background: var(--bright-blue); text-decoration: none; }
 	.dl-btn-pending     { background: var(--orange); font-size: 0.85rem; padding: 7px 14px; }
 	.dl-btn-pending:hover { background: var(--bright-orange); }
+	.dl-btn:disabled    { opacity: 0.65; cursor: not-allowed; }
+
+	/* ── Download intercept notices (ZScaler / generic error) ────────────── */
+	.dl-notice {
+		margin-top    : 0.9rem;
+		padding       : 1rem 1.1rem;
+		border-radius : 8px;
+		font-size     : 0.85rem;
+		line-height   : 1.6;
+		display       : flex;
+		flex-direction: column;
+		gap           : 0.55rem;
+		text-align    : left;
+	}
+	.dl-notice > strong { display: block; font-size: 0.88rem; }
+	.dl-notice p      { margin: 0; color: var(--fg2); }
+	.dl-notice-scan  {
+		background: color-mix(in srgb, var(--yellow) 10%, var(--bg1));
+		border    : 1px solid var(--yellow);
+	}
+	.dl-notice-scan strong  { color: var(--yellow); }
+	.dl-notice-error {
+		background: color-mix(in srgb, var(--red) 10%, var(--bg1));
+		border    : 1px solid var(--red);
+	}
+	.dl-notice-error strong { color: var(--bright-red); }
+	.dl-notice-link {
+		color          : var(--aqua);
+		text-decoration: none;
+		font-weight    : 600;
+		font-size      : 0.85rem;
+	}
+	.dl-notice-link:hover { text-decoration: underline; }
+	.dl-notice-dismiss {
+		align-self   : flex-start;
+		background   : transparent;
+		border       : 1px solid var(--bg3);
+		border-radius: 4px;
+		padding      : 0.25rem 0.7rem;
+		font-size    : 0.78rem;
+		color        : var(--fg4);
+		cursor       : pointer;
+		font-family  : inherit;
+	}
+	.dl-notice-dismiss:hover { border-color: var(--fg3); color: var(--fg2); }
 
 	.btn-icon { width: 16px; height: 16px; flex-shrink: 0; }
 

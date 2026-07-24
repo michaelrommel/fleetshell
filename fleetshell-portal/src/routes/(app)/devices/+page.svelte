@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { PageData } from './$types';
+	import { CLIENT_API_BASE } from '$lib/client-api';
 
 	let { data }: { data: PageData } = $props();
 
@@ -19,7 +20,7 @@
 
 	interface PortRow {
 		ports:       string;
-		application: 'http' | 'https' | 'rdp' | 'vnc';
+		application: 'http' | 'https' | 'expert-i' | 'rdp' | 'vnc' | 'ssh';
 		guac:        boolean;
 		e2ecrypt:    boolean;
 		sni:         string;
@@ -39,13 +40,21 @@
 
 	/** True when the SNI field is meaningful for a given row. */
 	function sniEffective(row: PortRow): boolean {
-		return (row.application === 'http' || row.application === 'https') && !row.e2ecrypt;
+		return (row.application === 'http' || row.application === 'https' || row.application === 'expert-i') && !row.e2ecrypt;
 	}
 
-	type ConnectState = 'idle' | 'signing' | 'connecting' | 'done' | 'error';
+	type ConnectState = 'idle' | 'signing' | 'connecting' | 'launching' | 'done' | 'error';
 	let connectState = $state<ConnectState>('idle');
 	let connectMsg   = $state('');
 	let connectUrls  = $state<string[]>([]);
+
+	// Scrolls the result banner into view after a connect attempt.
+	let resultBanner: HTMLElement | undefined;
+	$effect(() => {
+		if (connectState === 'done' || connectState === 'error') {
+			resultBanner?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+		}
+	});;
 
 	const busy = $derived(connectState === 'signing' || connectState === 'connecting');
 
@@ -80,7 +89,7 @@
 		// 2. Forward the full tunnel request to the local FleetShell client.
 		connectState = 'connecting';
 		try {
-			const res = await fetch('https://127-0-0-1.client.fleetshell.com:8080/api/tunnel', {
+			const res = await fetch(`${CLIENT_API_BASE}/api/tunnel`, {
 				method  : 'POST',
 				headers : { 'Content-Type': 'application/json' },
 				body    : JSON.stringify({
@@ -108,8 +117,15 @@
 			connectMsg   = `Connected on port(s): ${(body.ports ?? []).join(', ')}`;
 			connectState = 'done';
 		} catch (err) {
-			connectState = 'error';
-			connectMsg   = String(err);
+			// TypeError = network-level failure: client not running, or browser
+			// blocked the request as mixed-content (HTTPS portal → HTTP client).
+			// In both cases, try to launch/wake the client via the custom scheme.
+			if (err instanceof TypeError) {
+				launchViaDeepLink(token);
+			} else {
+				connectState = 'error';
+				connectMsg   = String(err);
+			}
 		}
 	}
 
@@ -117,6 +133,42 @@
 		connectState = 'idle';
 		connectMsg   = '';
 		connectUrls  = [];
+	}
+
+	/**
+	 * Encode the full tunnel request as a fleetshell:// deep-link and open it.
+	 *
+	 * The OS will launch the FleetShell client if it is installed.  The client
+	 * decodes the payload, waits for its own API server to be ready, then
+	 * POSTs the tunnel request to itself — the tunnel starts automatically.
+	 *
+	 * If the client is already running but in HTTP mode (mixed-content block),
+	 * the second instance immediately forwards the URL to the running one.
+	 */
+	function launchViaDeepLink(token: string): void {
+		const envelope = {
+			type: 'tunnel',
+			payload: {
+				target,
+				token,
+				gateway,
+				servicekey : servicekey || undefined,
+				username   : username   || undefined,
+				password   : password   || undefined,
+				port_rows  : portRows.map(r => ({
+					ports      : r.ports,
+					application: r.application,
+					guac       : r.guac       || undefined,
+					e2ecrypt   : r.e2ecrypt   || undefined,
+					sni        : r.sni        || undefined,
+				})),
+			},
+		};
+		const encoded = btoa(JSON.stringify(envelope))
+			.replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+		window.location.href = `fleetshell://${encoded}`;
+		connectState = 'launching';
+		connectMsg   = '';
 	}
 </script>
 
@@ -257,8 +309,10 @@
 					>
 						<option value="https">HTTPS</option>
 						<option value="http">HTTP</option>
+						<option value="expert-i">Expert-i</option>
 						<option value="rdp">RDP</option>
 						<option value="vnc">VNC</option>
+						<option value="ssh">SSH</option>
 					</select>
 					<label class="pr-check" title="Open via Guacamole in a new browser tab (placeholder)">
 						<input type="checkbox" class="check-input" bind:checked={row.guac} disabled={busy} />
@@ -361,7 +415,7 @@
 					{/if}
 				</button>
 
-				{#if connectState === 'done' || connectState === 'error'}
+				{#if connectState === 'done' || connectState === 'error' || connectState === 'launching'}
 					<button
 						type="button"
 						class="reset-btn"
@@ -376,7 +430,7 @@
 
 		<!-- Result banner -->
 		{#if connectState === 'done'}
-			<div class="result-banner result-ok" role="status">
+			<div class="result-banner result-ok" role="status" bind:this={resultBanner}>
 				<span class="result-icon">✓</span>
 				<div class="result-body">
 					<span class="result-msg">{connectMsg}</span>
@@ -403,9 +457,26 @@
 				{/if}
 			</div>
 		{:else if connectState === 'error'}
-			<div class="result-banner result-err" role="alert">
+			<div class="result-banner result-err" role="alert" bind:this={resultBanner}>
 				<span class="result-icon">✕</span>
 				<span class="result-msg">{connectMsg}</span>
+			</div>
+		{:else if connectState === 'launching'}
+			<div class="result-banner result-launching" role="status" bind:this={resultBanner}>
+				<span class="result-icon">⟳</span>
+				<div class="result-body">
+					<span class="result-msg">
+						FleetShell client is not running. A launch command has been sent via the
+						<code>fleetshell://</code> protocol — if the client is installed it will
+						start and connect automatically. Otherwise install it from the
+						<a href="/support">Support</a> page.
+					</span>
+				</div>
+				<button
+					type="button"
+					class="open-btn"
+					onclick={resetConnect}
+				>Try again</button>
 			</div>
 		{/if}
 
@@ -676,21 +747,26 @@
 		margin-top   : 16px;
 	}
 
-	.result-ok  { background: color-mix(in srgb, var(--green)  15%, var(--bg0)); border: 1px solid var(--green);     }
-	.result-err { background: color-mix(in srgb, var(--red)    15%, var(--bg0)); border: 1px solid var(--bright-red); }
+	.result-ok      { background: color-mix(in srgb, var(--green)  15%, var(--bg0)); border: 1px solid var(--green);      }
+	.result-err     { background: color-mix(in srgb, var(--red)    15%, var(--bg0)); border: 1px solid var(--bright-red);  }
+	.result-launching { background: color-mix(in srgb, var(--yellow) 12%, var(--bg0)); border: 1px solid var(--yellow);  }
 
 	.result-icon {
 		font-size  : 1rem;
 		flex-shrink: 0;
 		margin-top : 1px;
 	}
-	.result-ok  .result-icon { color: var(--bright-green); }
-	.result-err .result-icon { color: var(--bright-red);   }
+	.result-ok       .result-icon { color: var(--bright-green); }
+	.result-err      .result-icon { color: var(--bright-red);   }
+	.result-launching .result-icon { color: var(--yellow);       }
 
 	.result-body { display: flex; flex-direction: column; gap: 8px; }
 
 	.result-msg { color: var(--fg2); }
-	.result-err .result-msg { color: var(--fg1); }
+	.result-err      .result-msg { color: var(--fg1); }
+	.result-launching .result-msg { color: var(--fg2); }
+	.result-launching a { color: var(--yellow); }
+	.result-launching code { color: var(--yellow); font-family: inherit; }
 
 	.url-list {
 		list-style  : none;
