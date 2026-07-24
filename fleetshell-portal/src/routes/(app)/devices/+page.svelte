@@ -58,13 +58,40 @@
 
 	const busy = $derived(connectState === 'signing' || connectState === 'connecting');
 
-	async function onConnect(e: Event) {
+	// Build the JSON body sent to the client API — used by both the direct
+	// connect attempt and the polling retries inside launchViaDeepLink.
+	function tunnelBody(token: string): string {
+		return JSON.stringify({
+			target,
+			token,
+			gateway,
+			servicekey : servicekey || undefined,
+			username   : username   || undefined,
+			password   : password   || undefined,
+			port_rows  : portRows.map(r => ({
+				ports      : r.ports,
+				application: r.application,
+				guac       : r.guac       || undefined,
+				e2ecrypt   : r.e2ecrypt   || undefined,
+				sni        : r.sni        || undefined,
+			})),
+		});
+	}
+
+	const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
+
+	async function onConnect(e: Event): Promise<void> {
 		e.preventDefault();
+		await doConnect();
+	}
+
+	// Extracted so the "Try again" button in the launching banner can call it
+	// directly without the user having to re-click the main Connect button.
+	async function doConnect(): Promise<void> {
 		connectState = 'signing';
 		connectMsg   = '';
 		connectUrls  = [];
 
-		// Collect all ports across rows for the JWT claim.
 		const allPorts = portRows.map(r => r.ports).filter(Boolean).join(',');
 
 		// 1. Sign the JWT server-side (JWT_SECRET never leaves the portal).
@@ -86,27 +113,13 @@
 			return;
 		}
 
-		// 2. Forward the full tunnel request to the local FleetShell client.
+		// 2. POST the tunnel request to the local FleetShell client.
 		connectState = 'connecting';
 		try {
 			const res = await fetch(`${CLIENT_API_BASE}/api/tunnel`, {
 				method  : 'POST',
 				headers : { 'Content-Type': 'application/json' },
-				body    : JSON.stringify({
-					target,
-					token,
-					gateway,
-					servicekey : servicekey || undefined,
-					username   : username   || undefined,
-					password   : password   || undefined,
-					port_rows  : portRows.map(r => ({
-						ports      : r.ports,
-						application: r.application,
-						guac       : r.guac       || undefined,
-						e2ecrypt   : r.e2ecrypt   || undefined,
-						sni        : r.sni        || undefined,
-					})),
-				}),
+				body    : tunnelBody(token),
 			});
 			if (!res.ok) {
 				const txt = await res.text();
@@ -117,11 +130,10 @@
 			connectMsg   = `Connected on port(s): ${(body.ports ?? []).join(', ')}`;
 			connectState = 'done';
 		} catch (err) {
-			// TypeError = network-level failure: client not running, or browser
-			// blocked the request as mixed-content (HTTPS portal → HTTP client).
-			// In both cases, try to launch/wake the client via the custom scheme.
+			// TypeError = network-level failure (client not running or
+			// mixed-content block).  Open the deep-link and poll.
 			if (err instanceof TypeError) {
-				launchViaDeepLink(token);
+				await launchViaDeepLink(token);
 			} else {
 				connectState = 'error';
 				connectMsg   = String(err);
@@ -129,29 +141,23 @@
 		}
 	}
 
-	function resetConnect() {
+	function resetConnect(): void {
 		connectState = 'idle';
 		connectMsg   = '';
 		connectUrls  = [];
 	}
 
 	/**
-	 * Encode the full tunnel request as a fleetshell:// deep-link and open it.
-	 *
-	 * The OS will launch the FleetShell client if it is installed.  The client
-	 * decodes the payload, waits for its own API server to be ready, then
-	 * POSTs the tunnel request to itself — the tunnel starts automatically.
-	 *
-	 * If the client is already running but in HTTP mode (mixed-content block),
-	 * the second instance immediately forwards the URL to the running one.
+	 * Open a fleetshell://tunnel deep-link to wake the client, then poll
+	 * the client API for up to 5 seconds.  If it becomes reachable in time
+	 * the tunnel is established automatically and the user never sees the
+	 * "launching" banner.  The banner is only shown as a last resort.
 	 */
-	function launchViaDeepLink(token: string): void {
+	async function launchViaDeepLink(token: string): Promise<void> {
 		const envelope = {
 			type: 'tunnel',
 			payload: {
-				target,
-				token,
-				gateway,
+				target, token, gateway,
 				servicekey : servicekey || undefined,
 				username   : username   || undefined,
 				password   : password   || undefined,
@@ -167,8 +173,41 @@
 		const encoded = btoa(JSON.stringify(envelope))
 			.replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
 		window.location.href = `fleetshell://${encoded}`;
+
+		// Poll for up to 5 seconds.  During this time connectState remains
+		// 'connecting' so the button stays disabled and shows "Connecting…"
+		const TIMEOUT_MS = 5_000;
+		const POLL_MS    = 750;
+		const deadline   = Date.now() + TIMEOUT_MS;
+
+		while (Date.now() < deadline) {
+			await sleep(POLL_MS);
+			try {
+				const res = await fetch(`${CLIENT_API_BASE}/api/tunnel`, {
+					method  : 'POST',
+					headers : { 'Content-Type': 'application/json' },
+					body    : tunnelBody(token),
+					signal  : AbortSignal.timeout(2_000),
+				});
+				if (res.ok) {
+					const body = await res.json();
+					connectUrls  = Array.isArray(body.urls) ? body.urls : [];
+					connectMsg   = `Connected on port(s): ${(body.ports ?? []).join(', ')}`;
+					connectState = 'done';
+					return;
+				}
+				// Client is up but returned an error — surface it immediately.
+				const txt    = await res.text();
+				connectState = 'error';
+				connectMsg   = `Client returned ${res.status}: ${txt}`;
+				return;
+			} catch {
+				// TypeError / AbortError — client not yet up, keep polling.
+			}
+		}
+
+		// Still unreachable after 5 s — show the manual fallback banner.
 		connectState = 'launching';
-		connectMsg   = '';
 	}
 </script>
 
@@ -475,7 +514,7 @@
 				<button
 					type="button"
 					class="open-btn"
-					onclick={resetConnect}
+					onclick={doConnect}
 				>Try again</button>
 			</div>
 		{/if}
