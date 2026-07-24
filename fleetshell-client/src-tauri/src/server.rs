@@ -6,7 +6,7 @@ use tauri::Emitter;
 use tower_http::cors::CorsLayer;
 
 /// Local port the API server binds to (127.0.0.1 only).
-pub const API_PORT: u16 = 8080;
+pub const API_PORT: u16 = 58596;
 
 /// Hostname callers should use when speaking HTTPS to the API server.
 ///
@@ -104,11 +104,20 @@ pub fn build_router(state: ApiState) -> Router {
     Router::new()
         .route("/api/tunnel",     post(tunnel_handler))
         .route("/api/deep-link",  post(deep_link_forward_handler))
+        .route("/api/show",       post(show_handler))
         .layer(CorsLayer::permissive())
         .with_state(state)
 }
 
 // ── Handlers ──────────────────────────────────────────────────────────────────
+
+/// Called by a second instance that started without a deep-link URL
+/// (e.g. double-clicked from the Start Menu).  Brings the existing window
+/// to the front so the user sees it, then returns 200 so the caller can exit.
+async fn show_handler(State(state): State<ApiState>) -> StatusCode {
+    crate::util::show_window(&state.app);
+    StatusCode::OK
+}
 
 type HandlerResult = Result<
     (StatusCode, Json<TunnelResponse>),
@@ -205,8 +214,7 @@ async fn tunnel_handler(
 
     // ── Phase 3: surface the window if needed ─────────────────────────────
     if let Some(ref sk) = req.servicekey {
-        log::info!("Service key present — opening Functions tab");
-        crate::util::show_window(&state.app);
+        log::info!("Service key present — notifying Functions tab");
         state.app.emit(
             "navigate",
             serde_json::json!({ "tab": "functions", "servicekey": sk }),

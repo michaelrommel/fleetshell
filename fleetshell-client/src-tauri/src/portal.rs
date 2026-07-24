@@ -35,7 +35,7 @@
 ///    fully enrolled.
 
 use serde::{Deserialize, Serialize};
-use tauri::Manager as _;  // for AppHandle::state()
+use tauri::{Emitter, Manager as _};  // Emitter for app.emit(), Manager for app.state()
 
 // ── Deep-link payload types ───────────────────────────────────────────────────
 
@@ -54,6 +54,14 @@ pub enum DeepLinkPayload {
 		/// Short-lived Bearer JWT issued by the portal.
 		/// Forwarded verbatim in `Authorization: Bearer <token>` headers.
 		token: Option<String>,
+	},
+	/// Tunnel request sent when the portal could not reach the client API
+	/// directly (client not running or mixed-content block).
+	///
+	/// `payload` is the raw `TunnelRequest` JSON — forwarded verbatim to the
+	/// local `/api/tunnel` endpoint once the API server is ready.
+	Tunnel {
+		payload: serde_json::Value,
 	},
 }
 
@@ -138,7 +146,82 @@ async fn dispatch(app: &tauri::AppHandle, url: &url::Url) -> Result<String, Stri
 			let cfg = crate::config::load(app);
 			handle_enroll(app, &cfg.portal_base_url, &id, token.as_deref()).await
 		}
+		DeepLinkPayload::Tunnel { payload } => {
+			handle_tunnel(app, payload).await
+		}
 	}
+}
+
+// ── Tunnel deep-link handler ─────────────────────────────────────────────────
+
+/// Handle a `fleetshell://tunnel/<payload>` deep-link.
+///
+/// The portal sends this when a direct HTTP POST to the client API fails
+/// (client not running, or browser mixed-content block).  The client:
+/// 1. Shows its window so the user knows something is happening.
+/// 2. Waits up to 5 seconds for the local API server to be ready (handles the
+///    race where this handler runs before the Axum server has finished binding).
+/// 3. POSTs the `TunnelRequest` JSON to its own `/api/tunnel` endpoint.
+/// 4. On success, navigates to the Functions or Logging tab as appropriate.
+async fn handle_tunnel(
+	app:     &tauri::AppHandle,
+	payload: serde_json::Value,
+) -> Result<String, String> {
+	log::info!("Tunnel deep-link received — forwarding to local API");
+	crate::util::show_window(app);
+	crate::util::navigate(app, "logging");
+
+	// Build a reqwest client that:
+	// • Accepts invalid/self-signed certs  (our own *.client.fleetshell.com cert)
+	// • Short timeout so each attempt fails fast
+	let client = reqwest::Client::builder()
+		.danger_accept_invalid_certs(true)
+		.timeout(std::time::Duration::from_secs(3))
+		.build()
+		.map_err(|e| format!("HTTP client build failed: {e}"))?;
+
+	let https_url = format!(
+		"https://{}:{}/api/tunnel",
+		crate::server::API_HOST, crate::server::API_PORT,
+	);
+	let http_url = format!("http://127.0.0.1:{}/api/tunnel", crate::server::API_PORT);
+
+	// Retry loop: the API server starts concurrently; give it up to 5 s.
+	for attempt in 0..10_u32 {
+		if attempt > 0 {
+			tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+		}
+
+		for url in [https_url.as_str(), http_url.as_str()] {
+			match client.post(url).json(&payload).send().await {
+				Ok(resp) if resp.status().is_success() => {
+					log::info!("Tunnel deep-link: API call succeeded ({})", url);
+					// Navigate to Functions tab if a servicekey is present.
+					if let Some(sk) = payload.get("servicekey").and_then(|v| v.as_str()) {
+						app.emit("navigate", serde_json::json!({
+							"tab": "functions", "servicekey": sk
+						})).ok();
+					}
+					return Ok("Tunnel established via deep-link".to_string());
+				}
+				Ok(resp) => {
+					let status = resp.status();
+					let body   = resp.text().await.unwrap_or_default();
+					log::error!("Tunnel deep-link: API returned {}: {}", status, body);
+					return Err(format!("Tunnel API returned {}: {}", status, body));
+				}
+				Err(e) => {
+					log::debug!(
+						"Tunnel deep-link: attempt {}/10 on {} — {}",
+						attempt + 1, url, e,
+					);
+					// Connection-level error — try next URL or retry.
+				}
+			}
+		}
+	}
+
+	Err("Local API did not become ready within 5 seconds".to_string())
 }
 
 // ── Enrollment orchestrator ───────────────────────────────────────────────────

@@ -79,28 +79,38 @@ async fn enrollment_login(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // ── Single-instance deep-link forwarding ────────────────────────────────────────────
+    // ── Single-instance guard ────────────────────────────────────────────────
     //
-    // On Windows, clicking a fleetshell:// link always spawns a NEW process
-    // with the URL as its sole argument.  If our API server is already bound
-    // on port 8080 another instance is running — forward the URL to it over
-    // HTTP and exit immediately so only one instance ever runs.
+    // Covers both a deep-link launch (fleetshell:// in argv) and a plain
+    // double-launch from the Start Menu (no argv URL).
     //
-    // If no instance is running (port 8080 unreachable) we fall through to
-    // the normal Tauri startup path.
+    // TCP-probe the API port first.  If something answers:
+    //   • deep-link  → forward the URL to the running instance and exit.
+    //   • normal     → ask the running instance to surface its window and exit.
+    //
+    // Fall through on probe failure or forward error so the user always
+    // gets a working client.
     let args: Vec<String> = std::env::args().collect();
-    if let Some(raw_url) = args.get(1).filter(|u| u.starts_with("fleetshell://")) {
-        eprintln!("[fleetshell] launched with deep-link arg: {raw_url}");
-        match try_forward_to_running_instance(raw_url) {
-            ForwardResult::Forwarded => {
-                eprintln!("[fleetshell] URL forwarded to running instance — exiting");
-                return;
+    let deep_link_url = args.get(1)
+        .filter(|u| u.starts_with("fleetshell://"))
+        .map(String::as_str);
+
+    if probe_api_port() {
+        eprintln!("[fleetshell] another instance detected on port {}", server::API_PORT);
+        match deep_link_url {
+            Some(url) => {
+                eprintln!("[fleetshell] deep-link launch — forwarding to running instance");
+                match forward_deep_link(url) {
+                    ForwardResult::Forwarded        => { eprintln!("[fleetshell] forwarded — exiting"); return; }
+                    ForwardResult::ForwardFailed(e) => { eprintln!("[fleetshell] forward failed ({e}) — handling locally"); }
+                }
             }
-            ForwardResult::NoRunningInstance => {
-                eprintln!("[fleetshell] no running instance found — starting normally");
-            }
-            ForwardResult::ForwardFailed(e) => {
-                eprintln!("[fleetshell] forward attempt failed ({e}) — handling locally");
+            None => {
+                eprintln!("[fleetshell] double-launch — asking running instance to show window");
+                if show_running_instance() {
+                    return;
+                }
+                eprintln!("[fleetshell] show request failed — continuing startup");
             }
         }
     }
@@ -176,16 +186,46 @@ pub fn run() {
             // Build the initial TLS acceptor from on-disk cert+key (if enrolled).
             // Wrapped in Arc<RwLock> so enrollment can hot-swap it without a restart.
             let cfg = config::load(app.handle());
+
+            log::info!(
+                "Startup: client_id={:?}  config_dir={}",
+                cfg.client_id,
+                app.handle().path().app_config_dir()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|_| "<unavailable>".to_string()),
+            );
+
             let initial_acceptor = cfg.client_id.as_deref().and_then(|id| {
-                let cert = config::load_cert(app.handle(), id)?;
-                let key  = config::load_key(app.handle(), id)?;
+                let cert_path = config::cert_path(app.handle(), id);
+                let key_path  = config::key_path(app.handle(), id);
+
+                log::info!("Startup: cert expected at {}", cert_path.display());
+                log::info!("Startup: key  expected at {}", key_path.display());
+
+                let cert = match config::load_cert(app.handle(), id) {
+                    Some(c) => c,
+                    None    => {
+                        // load_cert already logged the specific I/O error.
+                        log::warn!("Startup: certificate missing — API will start in plain HTTP mode");
+                        return None;
+                    }
+                };
+
+                let key = match config::load_key(app.handle(), id) {
+                    Some(k) => k,
+                    None    => {
+                        log::warn!("Startup: private key missing — API will start in plain HTTP mode");
+                        return None;
+                    }
+                };
+
                 match server::build_tls_acceptor(&cert, &key) {
                     Ok(a) => {
-                        log::info!("API server: TLS configured for client id={id}");
+                        log::info!("Startup: TLS acceptor built for client_id={id}");
                         Some(a)
                     }
                     Err(e) => {
-                        log::warn!("API server: TLS setup failed, falling back to plain HTTP: {e}");
+                        log::warn!("Startup: TLS acceptor build failed — API will start in plain HTTP mode: {e}");
                         None
                     }
                 }
@@ -277,70 +317,69 @@ pub fn run() {
         .expect("error while running tauri application");
 }
 
-// ── Single-instance forwarding helpers ───────────────────────────────────────────────────
+// ── Single-instance helpers ──────────────────────────────────────────────────
 
 enum ForwardResult {
-    /// URL was delivered to the already-running instance; this process should exit.
+    /// URL was delivered to the running instance; this process should exit.
     Forwarded,
-    /// No instance is running on port 8080; normal startup should proceed.
-    NoRunningInstance,
-    /// The port was open but the HTTP call failed; handle locally.
+    /// Forward attempt failed; handle the URL locally instead.
     ForwardFailed(String),
 }
 
-/// Try to forward a `fleetshell://` URL to an already-running instance by
-/// POSTing it to the local API server on port 8080.
+/// Returns `true` when a process is already listening on the API port.
 ///
-/// Tries HTTPS first (post-enrollment) then plain HTTP (pre-enrollment).
-/// Invalid certificates are accepted intentionally: the cert is issued for
-/// `*.client.fleetshell.com`, not for `127.0.0.1`, but we trust our own
-/// loopback listener.
-///
-/// Uses `reqwest::blocking` so this runs before the Tauri / tokio runtime
-/// is started.  The timeout is intentionally short (300 ms) so a stale port
-/// binding does not delay startup.
-fn try_forward_to_running_instance(raw_url: &str) -> ForwardResult {
+/// Uses a 300 ms TCP connection timeout so a stale wslrelay or unrelated
+/// service only blocks startup briefly if it happens to occupy the port.
+fn probe_api_port() -> bool {
     use std::net::TcpStream;
     use std::time::Duration;
-
-    // First check: is anything listening on our API port?
-    if TcpStream::connect_timeout(
+    TcpStream::connect_timeout(
         &format!("127.0.0.1:{}", server::API_PORT).parse().unwrap(),
         Duration::from_millis(300),
-    )
-    .is_err()
-    {
-        return ForwardResult::NoRunningInstance;
+    ).is_ok()
+}
+
+/// Ask the running instance to bring its window to the front.
+///
+/// POSTs to `POST /api/show` (HTTPS-first, HTTP fallback).  Returns `true`
+/// when the running instance acknowledged the request.
+fn show_running_instance() -> bool {
+    use std::time::Duration;
+    let https_url = format!("https://{}:{}/api/show", server::API_HOST, server::API_PORT);
+    let http_url  = format!("http://127.0.0.1:{}/api/show",              server::API_PORT);
+    for url in [https_url.as_str(), http_url.as_str()] {
+        if let Ok(resp) = reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(2))
+            .build()
+            .and_then(|c| c.post(url).send())
+        {
+            if resp.status().is_success() { return true; }
+        }
     }
+    false
+}
 
-    let body = serde_json::json!({ "url": raw_url });
-
-    // Try HTTPS first (running instance is enrolled), then plain HTTP
-    // (running instance not yet enrolled).
-    // HTTPS uses the DNS hostname so the wildcard cert validates correctly.
-    // HTTP falls back for pre-enrollment instances that haven't got a cert yet.
+/// Forward a `fleetshell://` URL to the running instance via `POST /api/deep-link`.
+///
+/// Tries HTTPS first (enrolled instance) then plain HTTP (pre-enrollment).
+/// Uses `reqwest::blocking` so this runs before the tokio runtime starts.
+fn forward_deep_link(raw_url: &str) -> ForwardResult {
+    use std::time::Duration;
+    let body      = serde_json::json!({ "url": raw_url });
     let https_url = format!("https://{}:{}/api/deep-link", server::API_HOST, server::API_PORT);
-    let http_url  = format!("http://127.0.0.1:{}/api/deep-link", server::API_PORT);
-
+    let http_url  = format!("http://127.0.0.1:{}/api/deep-link",              server::API_PORT);
     for url in [https_url.as_str(), http_url.as_str()] {
         let result = reqwest::blocking::Client::builder()
             .timeout(Duration::from_secs(2))
             .build()
             .and_then(|c| c.post(url).json(&body).send());
-
         match result {
             Ok(resp) if resp.status().is_success() => return ForwardResult::Forwarded,
-            Ok(resp) => {
-                return ForwardResult::ForwardFailed(
-                    format!("server returned HTTP {}", resp.status()),
-                );
-            }
-            // Connection-level or TLS error — try the next scheme.
+            Ok(resp) => return ForwardResult::ForwardFailed(
+                format!("server returned HTTP {}", resp.status()),
+            ),
             Err(_) => continue,
         }
     }
-
-    ForwardResult::ForwardFailed(
-        "forward attempts failed on both https and http".to_string(),
-    )
+    ForwardResult::ForwardFailed("both https and http forward attempts failed".to_string())
 }

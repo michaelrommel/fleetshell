@@ -5,12 +5,27 @@
 //! block page.  This module detects that page and automatically submits the bypass
 //! form so the user does not have to click a button.
 //!
+//! ## Enabling / disabling
+//!
+//! Set [`ENABLED`] to `true` to activate the bypass logic.  Once the gateway
+//! domain is whitelisted in the corporate ZScaler policy the constant can be
+//! set back to `false` — all bypass code is compiled away and call sites in
+//! `portal.rs` / `tunnel.rs` require no changes.
+//!
 //! The same bypass logic covers two transport layers used by the client:
 //!
 //! * **HTTP (reqwest)** — [`send_with_bypass`] wraps portal enrollment requests.
 //! * **Raw TCP/TLS (tunnel)** — [`handle_gateway_block`] is called from
 //!   `tunnel.rs` when the gateway response line starts with `"HTTP/"` instead
 //!   of the expected `"200 CONNECTED"`.
+
+/// Master switch for the ZScaler block-page bypass.
+///
+/// Set to `true` when ZScaler intercepts outbound connections to the gateway
+/// domain and the domain has not yet been whitelisted.  Set back to `false`
+/// once the domain is whitelisted — bypass logic becomes a no-op and does not
+/// interfere with normal operation.
+pub const ENABLED: bool = false;
 
 use tokio::io::AsyncRead;
 use tokio::io::AsyncReadExt as _;
@@ -104,6 +119,13 @@ pub async fn send_with_bypass<F>(
 where
 	F: Fn() -> reqwest::RequestBuilder,
 {
+	if !ENABLED {
+		return build()
+			.send()
+			.await
+			.map_err(|e| format!("Request failed: {e}"));
+	}
+
 	let resp = build()
 		.send()
 		.await
@@ -221,6 +243,15 @@ pub async fn handle_gateway_block<S>(
 where
 	S: AsyncRead + Unpin,
 {
+	if !ENABLED {
+		log::warn!(
+			"port {port} — gateway returned HTTP instead of tunnel protocol: '{first_line}' \
+			 (ZScaler bypass is disabled — set zscaler::ENABLED=true if interception is suspected)"
+		);
+		crate::util::navigate(app, "logging");
+		return;
+	}
+
 	log::warn!(
 		"port {port} — gateway returned HTTP instead of tunnel protocol: '{first_line}'; \
 		 possible ZScaler interception — draining response"

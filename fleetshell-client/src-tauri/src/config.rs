@@ -64,12 +64,20 @@ impl Default for AppConfig {
 
 /// Load config from disk, falling back to [`AppConfig::default`] on any error.
 pub fn load(app: &tauri::AppHandle) -> AppConfig {
-    match std::fs::read_to_string(config_path(app)) {
+    let path = config_path(app);
+    match std::fs::read_to_string(&path) {
         Ok(text) => toml::from_str(&text).unwrap_or_else(|e| {
-            log::warn!("Config parse error, using defaults: {}", e);
+            log::warn!("Config parse error at {} — using defaults: {}", path.display(), e);
             AppConfig::default()
         }),
-        Err(_) => AppConfig::default(),
+        Err(e) => {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                log::debug!("Config file not found at {} — using defaults (first run?)", path.display());
+            } else {
+                log::warn!("Config read error at {} — using defaults: {}", path.display(), e);
+            }
+            AppConfig::default()
+        }
     }
 }
 
@@ -106,14 +114,28 @@ pub fn save_cert(app: &tauri::AppHandle, id: &str, pem: &str) -> Result<(), Stri
 ///
 /// Returns `None` if the file does not exist (not yet enrolled) or cannot be read.
 pub fn load_cert(app: &tauri::AppHandle, id: &str) -> Option<String> {
-	std::fs::read_to_string(cert_path(app, id)).ok()
+	let path = cert_path(app, id);
+	match std::fs::read_to_string(&path) {
+		Ok(s)  => Some(s),
+		Err(e) => {
+			log::warn!("Certificate not readable at {} — {}", path.display(), e);
+			None
+		}
+	}
 }
 
 /// Load the persisted PEM private key for `id`.
 ///
 /// Returns `None` if the file does not exist or cannot be read.
 pub fn load_key(app: &tauri::AppHandle, id: &str) -> Option<String> {
-	std::fs::read_to_string(key_path(app, id)).ok()
+	let path = key_path(app, id);
+	match std::fs::read_to_string(&path) {
+		Ok(s)  => Some(s),
+		Err(e) => {
+			log::warn!("Private key not readable at {} — {}", path.display(), e);
+			None
+		}
+	}
 }
 
 /// Move all identity files for `id` into an `archive/` subdirectory.
@@ -161,7 +183,7 @@ fn config_path(app: &tauri::AppHandle) -> std::path::PathBuf {
 }
 
 /// Path for `<id>.pem` — the signed certificate issued by the portal.
-fn cert_path(app: &tauri::AppHandle, id: &str) -> std::path::PathBuf {
+pub fn cert_path(app: &tauri::AppHandle, id: &str) -> std::path::PathBuf {
 	app.path()
 		.app_config_dir()
 		.expect("app config dir unavailable")

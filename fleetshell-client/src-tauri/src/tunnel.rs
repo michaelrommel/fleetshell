@@ -307,7 +307,10 @@ async fn handle_connection(local: TcpStream, port: u16, cfg: PortConfig, state: 
 
     let payload = build_payload(&cfg, port, &state.gateway_path);
 
-    if !cfg.e2ecrypt.unwrap_or(false) && cfg.application.eq_ignore_ascii_case("https") {
+    if !cfg.e2ecrypt.unwrap_or(false)
+        && (cfg.application.eq_ignore_ascii_case("https")
+            || cfg.application.eq_ignore_ascii_case("expert-i"))
+    {
         // Clone the Arc<RwLock<...>> out of managed state so the tauri::State
         // borrow is released before the async .read().await.  TlsAcceptor is
         // Arc<ServerConfig> internally, so the subsequent clone is cheap.
@@ -508,10 +511,15 @@ pub fn launch_application(
     cfg:         &crate::config::AppConfig,
 ) -> Vec<String> {
     match application.to_lowercase().as_str() {
-        "http"  => vec![format!("http://{}:{}",  dns_host(bind_ip), port)],
-        "https" => vec![format!("https://{}:{}", dns_host(bind_ip), port)],
-        "rdp"   => { launch_rdp(port, bind_ip);      vec![] }
-        "vnc"   => { launch_vnc(port, bind_ip, cfg); vec![] }
+        "http"     => vec![format!("http://{}:{}",  dns_host(bind_ip), port)],
+        "https"    => vec![format!("https://{}:{}", dns_host(bind_ip), port)],
+        "expert-i" => vec![format!("https://{}:{}", dns_host(bind_ip), port)],
+        "rdp"      => { launch_rdp(port, bind_ip);      vec![] }
+        "vnc"      => { launch_vnc(port, bind_ip, cfg); vec![] }
+        "ssh"      => {
+            log::info!("SSH port {} — local launcher not yet implemented", port);
+            vec![]
+        }
         other   => {
             log::warn!("Unknown application type '{}' — no local app launched", other);
             vec![]
