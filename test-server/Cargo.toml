@@ -16,7 +16,7 @@ path = "src/main.rs"
 tokio        = { version = "1", features = ["full"] }
 
 # ── HTTP framework ────────────────────────────────────────────────────────────
-axum         = "0.8"
+axum         = { version = "0.8", features = ["ws"] }
 hyper        = { version = "1", features = ["http1", "server"] }
 hyper-util   = { version = "0.1", features = ["tokio"] }
 tower        = { version = "0.5", features = ["util"] }
