@@ -1,0 +1,12 @@
+[package]
+name        = "test-guac"
+version     = "0.1.0"
+edition     = "2021"
+description = "Smoke-test tool: connect to guacd and drive an RDP/VNC session handshake"
+
+[[bin]]
+name = "test-guac"
+path = "src/main.rs"
+
+# No external dependencies — pure std so the binary stays tiny and compiles fast.
+[dependencies]
