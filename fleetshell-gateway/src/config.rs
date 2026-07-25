@@ -50,6 +50,15 @@ pub struct Config {
     ///
     /// Default: `0.0.0.0:8080`.
     pub health_addr: String,
+
+    /// Address of the guacd daemon running in the same container.
+    ///
+    /// guacd is started by `run.sh` and bound to the loopback interface only;
+    /// this address is never reachable from outside the container.
+    ///
+    /// Set via the `GUACD_ADDR` environment variable (exported by `run.sh`).
+    /// Default: `127.0.0.1:4822`.
+    pub guacd_addr: String,
 }
 
 impl Config {
@@ -84,6 +93,9 @@ impl Config {
 
             health_addr: std::env::var("GATEWAY_HEALTH_ADDR")
                 .unwrap_or_else(|_| "0.0.0.0:8080".to_string()),
+
+            guacd_addr: std::env::var("GUACD_ADDR")
+                .unwrap_or_else(|_| "127.0.0.1:4822".to_string()),
         }
     }
 }

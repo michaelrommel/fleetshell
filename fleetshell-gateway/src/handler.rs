@@ -18,6 +18,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::auth;
 use crate::config::Config;
+use crate::guac;
 use crate::transform;
 
 // ── Wire types ────────────────────────────────────────────────────────────────
@@ -55,6 +56,32 @@ pub struct HandshakePayload {
     /// Has no effect in e2ecrypt passthrough mode — the gateway never sees
     /// HTTP headers when relaying raw bytes.
     pub sni:         Option<String>,
+
+    /// When `true`, route through the local guacd daemon instead of opening
+    /// a raw TCP connection to the target.  guacd speaks Guacamole protocol
+    /// to the client while translating to native RDP or VNC on the device.
+    /// `application` must be `"rdp"` or `"vnc"`.
+    pub guac:        Option<bool>,
+
+    /// RDP / VNC username supplied by the portal from its device database.
+    /// Only meaningful when `guac` is `true`.
+    pub username:    Option<String>,
+
+    /// RDP / VNC password supplied by the portal from its device database.
+    /// Only meaningful when `guac` is `true`.
+    /// Never written to logs.
+    pub password:    Option<String>,
+
+    /// Requested display width in pixels for Guacamole sessions.
+    /// Defaults to 1280 when absent.
+    pub width:       Option<u32>,
+
+    /// Requested display height in pixels for Guacamole sessions.
+    /// Defaults to 800 when absent.
+    pub height:      Option<u32>,
+
+    /// Dots per inch for Guacamole sessions.  Defaults to 96 when absent.
+    pub dpi:         Option<u32>,
 }
 
 // ── Handler ───────────────────────────────────────────────────────────────────
@@ -124,9 +151,14 @@ where
         path        = %payload.path,
         sni         = ?payload.sni,
         servicekey  = ?payload.servicekey,
+        guac        = ?payload.guac,
+        username    = ?payload.username,
+        width       = ?payload.width,
+        height      = ?payload.height,
+        dpi         = ?payload.dpi,
         "handshake payload"
     );
-    // Token value is intentionally not logged to avoid leaking credentials.
+    // Token and password are intentionally not logged to avoid leaking credentials.
     info!(%peer, token_len = payload.token.len(), "JWT token received (not logged)");
 
     // ── 4. Validate JWT + authorise target / port ────────────────────────
@@ -190,6 +222,83 @@ where
             send_line(&mut writer_half, b"503 UNREACHABLE\n").await;
         }
         writer_half.shutdown().await.ok();
+        return;
+    }
+
+    // ── 4c. Guacamole mode: connect via guacd instead of raw TCP ─────────────
+    //
+    // When `guac: true` the gateway hands off to the local guacd daemon.
+    // guacd performs the native RDP / VNC handshake with the target and
+    // speaks the Guacamole text protocol back to the client.  After the
+    // guacd opening handshake the connection becomes a raw byte relay of
+    // Guacamole instructions — structurally identical to e2ecrypt mode
+    // but with guacd as the "upstream" instead of the target device.
+    if payload.guac.unwrap_or(false) {
+        let params = match payload.application.as_str() {
+            "rdp" => guac::ConnectionParams::Rdp(guac::RdpParams {
+                hostname:    payload.target.clone(),
+                port:        payload.port,
+                username:    payload.username.clone().unwrap_or_default(),
+                password:    payload.password.clone(),
+                width:       payload.width.unwrap_or(1280),
+                height:      payload.height.unwrap_or(800),
+                dpi:         payload.dpi.unwrap_or(96),
+                ignore_cert: true,
+                ..Default::default()
+            }),
+            "vnc" => guac::ConnectionParams::Vnc(guac::VncParams {
+                hostname: payload.target.clone(),
+                port:     payload.port,
+                password: payload.password.clone(),
+                width:    payload.width.unwrap_or(1280),
+                height:   payload.height.unwrap_or(800),
+                dpi:      payload.dpi.unwrap_or(96),
+            }),
+            other => {
+                warn!(%peer, application = %other,
+                    "guac mode requested for unsupported application");
+                send_line(&mut writer_half, b"400 BAD REQUEST\n").await;
+                writer_half.shutdown().await.ok();
+                return;
+            }
+        };
+
+        let session = match guac::connect(&config.guacd_addr, params).await {
+            Ok(s) => s,
+            Err(e) => {
+                error!(%peer, "guacd connect failed: {e}");
+                send_line(&mut writer_half, b"502 BAD GATEWAY\n").await;
+                writer_half.shutdown().await.ok();
+                return;
+            }
+        };
+
+        info!(%peer,
+            connection_id = %session.connection_id,
+            "guacd handshake complete — entering Guacamole relay");
+        send_line(&mut writer_half, b"200 CONNECTED\n").await;
+
+        let mut client = tokio::io::join(reader, writer_half);
+        let mut guacd  = session.stream;
+
+        match tokio::io::copy_bidirectional(&mut client, &mut guacd).await {
+            Ok((to_guacd, from_guacd)) => {
+                info!(%peer, to_guacd, from_guacd,
+                    "Guacamole session closed cleanly");
+            }
+            Err(e) => {
+                use std::io::ErrorKind::{
+                    BrokenPipe, ConnectionAborted, ConnectionReset, UnexpectedEof,
+                };
+                match e.kind() {
+                    ConnectionReset | ConnectionAborted
+                    | BrokenPipe    | UnexpectedEof => {
+                        debug!(%peer, "Guacamole session ended ({})", e.kind());
+                    }
+                    _ => info!(%peer, "Guacamole session ended: {e}"),
+                }
+            }
+        }
         return;
     }
 

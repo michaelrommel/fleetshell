@@ -35,6 +35,7 @@
 
 mod auth;
 mod config;
+mod guac;
 mod handler;
 mod health;
 mod tls;
@@ -65,7 +66,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // ── Load configuration ───────────────────────────────────────────────────
     let cfg = config::Config::from_env();
-    info!(listen_addr = %cfg.listen_addr, "configuration loaded");
+    info!(listen_addr = %cfg.listen_addr, guacd_addr = %cfg.guacd_addr, "configuration loaded");
 
     // ── Build TLS acceptor (only when gateway-level TLS is enabled) ──────────
     //

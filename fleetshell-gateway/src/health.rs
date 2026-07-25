@@ -55,7 +55,8 @@ pub async fn serve(addr: String) {
 					}
 
 					// DEBUG only — invisible at the default INFO level.
-					debug!(%peer, "health check probe served");
+					// Health probes are intentionally not logged — they arrive
+					// every few seconds from the NLB and would drown out real events.
 				});
 			}
 			Err(e) => {
