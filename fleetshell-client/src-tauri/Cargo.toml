@@ -1,6 +1,6 @@
 [package]
 name = "fleetshell-client"
-version = "0.10.0"
+version = "0.11.0"
 description = "FleetShell desktop client"
 authors = []
 license = ""
@@ -29,9 +29,10 @@ tauri-plugin-log       = "2"
 tauri-plugin-deep-link = "2"
 
 # ── Async web server ────────────────────────────────────────────────────────
-axum          = { version = "0.8", features = ["json", "macros"] }
+axum          = { version = "0.8", features = ["json", "macros", "ws"] }
 tokio         = { version = "1",   features = ["full"] }
 tower-http    = { version = "0.6", features = ["cors"] }
+futures-util  = { version = "0.3", default-features = false, features = ["sink"] }
 
 # ── Config persistence
 toml          = "0.8"

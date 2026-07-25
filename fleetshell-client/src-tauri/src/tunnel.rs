@@ -26,12 +26,22 @@ pub struct PortConfig {
 	pub servicekey:  Option<String>,
 	/// Protocol the device speaks — "http", "https", "rdp", "vnc".
 	pub application: String,
-	/// Placeholder for future Guacamole integration — not yet acted on.
+	/// When `true`, route through guacd for a browser-based Guacamole session.
 	pub guac:        Option<bool>,
 	/// `true` = raw TLS relay; `false`/absent = HTTP proxy mode (default).
 	pub e2ecrypt:    Option<bool>,
 	/// SNI hostname for proxy-mode HTTP/S upstream connections.
 	pub sni:         Option<String>,
+	/// RDP / VNC username (from the portal device database).
+	pub username:    Option<String>,
+	/// RDP / VNC password (from the portal device database). Never logged.
+	pub password:    Option<String>,
+	/// Requested display width in pixels for Guacamole sessions.
+	pub width:       Option<u32>,
+	/// Requested display height in pixels for Guacamole sessions.
+	pub height:      Option<u32>,
+	/// Dots per inch for Guacamole sessions.
+	pub dpi:         Option<u32>,
 }
 
 impl PortConfig {
@@ -45,6 +55,11 @@ impl PortConfig {
 			guac:        row.guac,
 			e2ecrypt:    row.e2ecrypt,
 			sni:         row.sni.clone(),
+			username:    req.username.clone(),
+			password:    req.password.clone(),
+			width:       req.width,
+			height:      req.height,
+			dpi:         req.dpi,
 		}
 	}
 }
@@ -124,7 +139,7 @@ pub fn parse_gateway(gateway: &str) -> (String, u16) {
 /// the server certificate is not checked.  Use this only during local
 /// development against a gateway that presents a self-signed certificate.
 /// **Never set this variable in production.**
-fn make_tls_connector() -> Result<TlsConnector, Box<dyn std::error::Error + Send + Sync>> {
+pub(crate) fn make_tls_connector() -> Result<TlsConnector, Box<dyn std::error::Error + Send + Sync>> {
     let skip_verify = std::env::var("GATEWAY_SKIP_TLS_VERIFY")
         .map(|v| !v.is_empty() && v != "0")
         .unwrap_or(false);
@@ -352,7 +367,7 @@ async fn handle_connection(local: TcpStream, port: u16, cfg: PortConfig, state: 
 // ── Handshake + bidirectional forwarding ──────────────────────────────────────
 
 /// Build the JSON payload sent to the gateway on first connect.
-fn build_payload(cfg: &PortConfig, port: u16, gateway_path: &str) -> Vec<u8> {
+pub(crate) fn build_payload(cfg: &PortConfig, port: u16, gateway_path: &str) -> Vec<u8> {
     let json = serde_json::json!({
         "target":      cfg.target,
         "application": cfg.application,
@@ -363,6 +378,12 @@ fn build_payload(cfg: &PortConfig, port: u16, gateway_path: &str) -> Vec<u8> {
         "sni":         cfg.sni,
         "path":        gateway_path,
         "e2ecrypt":    cfg.e2ecrypt,
+        "guac":        cfg.guac,
+        "username":    cfg.username,
+        "password":    cfg.password,
+        "width":       cfg.width,
+        "height":      cfg.height,
+        "dpi":         cfg.dpi,
     });
     let mut bytes = json.to_string().into_bytes();
     bytes.push(b'\n');
@@ -475,7 +496,7 @@ where
 
 /// Read bytes from `reader` until `\n` or EOF, up to `max_bytes`.
 /// Returns the line without the trailing newline.
-async fn read_line<R: AsyncRead + Unpin>(
+pub(crate) async fn read_line<R: AsyncRead + Unpin>(
     reader:    &mut R,
     max_bytes: usize,
 ) -> std::io::Result<String> {
@@ -570,34 +591,32 @@ pub async fn probe_target(
 
 // ── Local application launcher ────────────────────────────────────────────────
 
-/// Prepare the local end of a tunnel for the given `application` type.
+/// Return the browser URL for an http / https / expert-i tunnel.
+/// Returns `None` for application types that use native apps (rdp/vnc/ssh).
+pub fn get_tunnel_url(application: &str, port: u16, bind_ip: &str) -> Option<String> {
+    match application.to_lowercase().as_str() {
+        "http"     => Some(format!("http://{}:{}",  dns_host(bind_ip), port)),
+        "https"    => Some(format!("https://{}:{}", dns_host(bind_ip), port)),
+        "expert-i" => Some(format!("https://{}:{}", dns_host(bind_ip), port)),
+        _          => None,
+    }
+}
+
+/// Launch the native application for an rdp / vnc / ssh tunnel.
 ///
-/// - `"http"` / `"https"` — returns a URL the caller can open in a browser.
-/// - `"rdp"`  — writes a temp `.rdp` file and launches `mstsc.exe`.
-/// - `"vnc"`  — writes a temp `.tigervnc` file and launches the first available
-///              VNC viewer (`tvnviewer`, `vncviewer`, `vncviewer64`).
-///
-/// Returns a (possibly empty) list of URLs that the API caller may act on.
-pub fn launch_application(
+/// Called from `POST /api/launch` so the user triggers the launch explicitly
+/// rather than having it fire automatically on connect.
+pub fn launch_native(
     application: &str,
     port:        u16,
     bind_ip:     &str,
     cfg:         &crate::config::AppConfig,
-) -> Vec<String> {
+) {
     match application.to_lowercase().as_str() {
-        "http"     => vec![format!("http://{}:{}",  dns_host(bind_ip), port)],
-        "https"    => vec![format!("https://{}:{}", dns_host(bind_ip), port)],
-        "expert-i" => vec![format!("https://{}:{}", dns_host(bind_ip), port)],
-        "rdp"      => { launch_rdp(port, bind_ip);      vec![] }
-        "vnc"      => { launch_vnc(port, bind_ip, cfg); vec![] }
-        "ssh"      => {
-            log::info!("SSH port {} — local launcher not yet implemented", port);
-            vec![]
-        }
-        other   => {
-            log::warn!("Unknown application type '{}' — no local app launched", other);
-            vec![]
-        }
+        "rdp" => launch_rdp(port, bind_ip),
+        "vnc" => launch_vnc(port, bind_ip, cfg),
+        "ssh" => log::info!("SSH port {} — native launcher not yet implemented", port),
+        other => log::warn!("launch_native: unrecognised application '{}'", other),
     }
 }
 

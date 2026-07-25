@@ -1,5 +1,5 @@
 /// Axum HTTP server — router, shared state, and API handlers.
-use axum::{extract::State, http::StatusCode, routing::post, Json, Router};
+use axum::{extract::State, http::StatusCode, routing::{get, post}, Json, Router};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tauri::Emitter;
@@ -73,20 +73,41 @@ pub struct TunnelRequest {
     /// Per-port connection settings.  One row can cover multiple ports via
     /// a range or comma list; every port in the row shares the same settings.
     pub port_rows:  Vec<PortRow>,
-    /// Username for RDP/VNC config file injection — stored, not yet used.
+    /// Username for RDP/VNC credentials (from portal device database).
     pub username:   Option<String>,
-    /// Password for RDP/VNC config file injection — stored, not yet used.
+    /// Password for RDP/VNC credentials (from portal device database).
     pub password:   Option<String>,
+    /// Requested display width in pixels for Guacamole sessions.
+    pub width:      Option<u32>,
+    /// Requested display height in pixels for Guacamole sessions.
+    pub height:     Option<u32>,
+    /// Dots per inch for Guacamole sessions (default 96).
+    pub dpi:        Option<u32>,
 }
 
 #[derive(Debug, Serialize)]
 struct TunnelResponse {
     status: &'static str,
     /// Ports that tunnel listeners were spawned for.
-    ports:  Vec<u16>,
-    /// For http/https applications: URLs the caller can open directly.
-    /// Empty for rdp/vnc (the local app is launched automatically).
-    urls:   Vec<String>,
+    ports:   Vec<u16>,
+    /// For http/https/expert-i rows: URLs the caller can open directly.
+    /// For guac rows: the wss:// WebSocket URL for the session page.
+    /// Empty for rdp/vnc/ssh rows without guac (use POST /api/launch instead).
+    urls:    Vec<String>,
+    /// Loopback IP of the slot assigned to this tunnel (e.g. `"127.0.0.2"`).
+    /// The portal passes this back to POST /api/launch when opening a native app.
+    bind_ip: String,
+}
+
+/// Request body for `POST /api/launch`.
+#[derive(Debug, Deserialize)]
+struct LaunchRequest {
+    /// Loopback IP the tunnel was bound on (from the tunnel response `bind_ip`).
+    bind_ip:     String,
+    /// Port number.
+    port:        u16,
+    /// Application type: `"rdp"`, `"vnc"`, `"ssh"`.
+    application: String,
 }
 
 /// Request body for `POST /api/probe`.
@@ -113,9 +134,16 @@ struct ProbeResponse {
 
 #[derive(Clone)]
 pub struct ApiState {
-    pub app:          tauri::AppHandle,
-    pub gateway_path: Arc<String>,
-    pub slot_manager: Arc<crate::slot::SlotManager>,
+    pub app:           tauri::AppHandle,
+    pub gateway_path:  Arc<String>,
+    pub slot_manager:  Arc<crate::slot::SlotManager>,
+    /// Pending Guacamole sessions created by `tunnel_handler` and consumed
+    /// by the `/guac-ws` WebSocket handler.  Each entry lives until the
+    /// browser opens the WebSocket (at which point it is removed) or until
+    /// the client restarts.
+    pub guac_sessions: Arc<tokio::sync::RwLock<
+        std::collections::HashMap<String, crate::guac_proxy::GuacSession>
+    >>,
 }
 
 // ── Router ────────────────────────────────────────────────────────────────────
@@ -123,9 +151,11 @@ pub struct ApiState {
 pub fn build_router(state: ApiState) -> Router {
     Router::new()
         .route("/api/tunnel",     post(tunnel_handler))
-        .route("/api/deep-link",  post(deep_link_forward_handler))
-        .route("/api/show",       post(show_handler))
-        .route("/api/probe",      post(probe_handler))
+        .route("/api/launch",      post(launch_handler))
+        .route("/api/deep-link",   post(deep_link_forward_handler))
+        .route("/api/show",        post(show_handler))
+        .route("/api/probe",       post(probe_handler))
+        .route("/guac-ws",         get(crate::guac_proxy::guac_ws_handler))
         .layer(CorsLayer::permissive())
         .with_state(state)
 }
@@ -228,6 +258,56 @@ async fn tunnel_handler(
         flat.iter().map(|(p, _)| *p).collect::<Vec<_>>(),
     );
 
+    // ── Guacamole mode: browser-based RDP / VNC via guacd ────────────────
+    //
+    // When any port row carries `guac: true` the whole request is treated as
+    // a Guacamole session.  We skip the slot/TCP-listener machinery, create
+    // a pending session record, and return a WebSocket URL for the browser
+    // to connect to.  The `/guac-ws` handler picks up the session record and
+    // drives the gateway handshake + bidirectional relay.
+    if flat.iter().any(|(_, row)| row.guac.unwrap_or(false)) {
+        // Use the first guac port (typically the only one — 3389 for RDP, 5900 for VNC).
+        let (port, row) = flat.into_iter()
+            .find(|(_, r)| r.guac.unwrap_or(false))
+            .unwrap();
+
+        let session = crate::guac_proxy::GuacSession {
+            target:      req.target.clone(),
+            port,
+            token:       req.token.clone(),
+            protocol:    row.application.clone(),
+            username:    req.username.clone().unwrap_or_default(),
+            password:    req.password.clone().unwrap_or_default(),
+            width:       req.width.unwrap_or(1280),
+            height:      req.height.unwrap_or(800),
+            dpi:         req.dpi.unwrap_or(96),
+            gateway:     req.gateway.clone(),
+        };
+
+        // Sequential counter — simple, no extra dep.
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static SEQ: AtomicU64 = AtomicU64::new(1);
+        let session_id = format!("g{:016x}", SEQ.fetch_add(1, Ordering::Relaxed));
+
+        state.guac_sessions.write().await.insert(session_id.clone(), session);
+
+        let ws_url = format!(
+            "wss://{}:{}/guac-ws?session={}",
+            API_HOST, API_PORT, session_id,
+        );
+        log::info!("Guacamole session {} created — {}", session_id, ws_url);
+
+        return Ok((
+            StatusCode::OK,
+            Json(TunnelResponse {
+                status:  "connected",
+                ports:   vec![port],
+                urls:    vec![ws_url],
+                bind_ip: String::new(), // guac sessions have no slot IP
+            }),
+        ));
+    }
+
     // ── Claim a free connection slot ──────────────────────────────────────
     let slot = match state.slot_manager.claim().await {
         Some(s) => s,
@@ -269,13 +349,16 @@ async fn tunnel_handler(
         }
     }
 
-    // ── Phase 2: launch local applications and collect URLs ───────────────
+    // ── Phase 2: collect browser URLs (no auto-launch) ────────────────────
+    //
+    // Native applications (RDP, VNC, SSH) are NOT launched here.
+    // The portal calls POST /api/launch explicitly when the user clicks
+    // the Open button, passing back the bind_ip returned in this response.
     let mut urls: Vec<String> = Vec::new();
     for (port, row, _) in &listeners {
-        let port_urls = crate::tunnel::launch_application(
-            &row.application, *port, &slot.ip, &cfg,
-        );
-        urls.extend(port_urls);
+        if let Some(url) = crate::tunnel::get_tunnel_url(&row.application, *port, &slot.ip) {
+            urls.push(url);
+        }
     }
 
     // ── Phase 3: surface the window if needed ─────────────────────────────
@@ -328,11 +411,30 @@ async fn tunnel_handler(
     Ok((
         StatusCode::OK,
         Json(TunnelResponse {
-            status: "connected",
-            ports:  bound_ports,
+            status:  "connected",
+            ports:   bound_ports,
             urls,
+            bind_ip: slot.ip.clone(),
         }),
     ))
+}
+
+/// Launch a native application for an already-established tunnel.
+///
+/// Called by the portal when the user explicitly clicks an Open button in
+/// the connection result box.  The `bind_ip` from the tunnel response tells
+/// us which slot IP the listener is bound on.
+async fn launch_handler(
+    State(state): State<ApiState>,
+    Json(req):    Json<LaunchRequest>,
+) -> StatusCode {
+    log::info!(
+        "Launch request: application={} bind_ip={} port={}",
+        req.application, req.bind_ip, req.port,
+    );
+    let cfg = crate::config::load(&state.app);
+    crate::tunnel::launch_native(&req.application, req.port, &req.bind_ip, &cfg);
+    StatusCode::OK
 }
 
 /// Receives a `fleetshell://` URL forwarded from a second instance that found

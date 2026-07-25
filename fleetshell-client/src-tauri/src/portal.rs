@@ -35,7 +35,7 @@
 ///    fully enrolled.
 
 use serde::{Deserialize, Serialize};
-use tauri::{Emitter, Manager as _};  // Emitter for app.emit(), Manager for app.state()
+use tauri::Manager as _;  // Manager for app.state()
 
 // ── Deep-link payload types ───────────────────────────────────────────────────
 

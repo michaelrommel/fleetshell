@@ -31,12 +31,6 @@ pub fn slot_ip(idx: usize) -> String {
 	format!("127.0.0.{}", idx + 2)
 }
 
-/// DNS hostname for slot `idx`; matches the `*.client.fleetshell.com` wildcard cert.
-/// Slot 0 → `"127-0-0-2.client.fleetshell.com"`.
-pub fn slot_hostname(idx: usize) -> String {
-	format!("127-0-0-{}.client.fleetshell.com", idx + 2)
-}
-
 /// Current Unix time in whole seconds — sufficient precision for idle detection.
 pub fn now_secs() -> u64 {
 	std::time::SystemTime::now()
@@ -48,9 +42,6 @@ pub fn now_secs() -> u64 {
 // ── Slot state ────────────────────────────────────────────────────────────────
 
 struct SlotData {
-	/// Updated to [`now_secs()`] whenever bytes pass through any tunnel on this slot.
-	last_active: Arc<AtomicU64>,
-
 	/// Handles for accept-loop tasks and individual tunnel-connection tasks.
 	///
 	/// The idle-monitor task's handle is intentionally **not** stored here so
@@ -105,7 +96,6 @@ impl SlotManager {
 				let last_active  = Arc::new(AtomicU64::new(now_secs()));
 				let task_handles = Arc::new(Mutex::new(Vec::new()));
 				*entry = Some(SlotData {
-					last_active:  last_active.clone(),
 					task_handles: task_handles.clone(),
 				});
 				return Some(SlotHandle {

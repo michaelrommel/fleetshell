@@ -1,4 +1,5 @@
 mod config;
+mod guac_proxy;
 mod portal;
 mod server;
 mod slot;
@@ -177,9 +178,12 @@ pub fn run() {
             }
             // ── Axum API server ───────────────────────────────────────────
             let api_state = server::ApiState {
-                app:          app.handle().clone(),
-                gateway_path: Arc::new(server::DEFAULT_GATEWAY_PATH.to_string()),
-                slot_manager: slot::SlotManager::new(),
+                app:           app.handle().clone(),
+                gateway_path:  Arc::new(server::DEFAULT_GATEWAY_PATH.to_string()),
+                slot_manager:  slot::SlotManager::new(),
+                guac_sessions: Arc::new(tokio::sync::RwLock::new(
+                    std::collections::HashMap::new()
+                )),
             };
             let router = server::build_router(api_state);
 
