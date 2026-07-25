@@ -166,6 +166,33 @@ where
         }
     }
 
+    // ── 4b. Probe mode: check reachability without forwarding data ───────────
+    //
+    // The client sends `application: "probe"` to ask whether a target device
+    // is currently accepting connections, before opening a real tunnel.
+    // We attempt a TCP connect with a 3-second timeout, report the result,
+    // and close — no data is forwarded.
+    if payload.application.eq_ignore_ascii_case("probe") {
+        let target_addr = format!("{}:{}", payload.target, payload.port);
+        let reachable = tokio::time::timeout(
+            std::time::Duration::from_secs(3),
+            TcpStream::connect(&target_addr),
+        )
+        .await
+        .map(|r| r.is_ok())
+        .unwrap_or(false); // timeout counts as unreachable
+
+        if reachable {
+            info!(%peer, %target_addr, "probe: target reachable");
+            send_line(&mut writer_half, b"200 REACHABLE\n").await;
+        } else {
+            info!(%peer, %target_addr, "probe: target unreachable or timed out");
+            send_line(&mut writer_half, b"503 UNREACHABLE\n").await;
+        }
+        writer_half.shutdown().await.ok();
+        return;
+    }
+
     // ── 5. Connect to target (before accepting, so we can report failure) ─
     let target_addr = format!("{}:{}", payload.target, payload.port);
     let mut target = match TcpStream::connect(&target_addr).await {
