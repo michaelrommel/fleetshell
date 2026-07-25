@@ -58,11 +58,16 @@ use tauri::Manager as _;  // for AppHandle::state()
 /// Stored in the per-slot axum router's State; no separate session map needed.
 #[derive(Debug)]
 pub struct GuacSessionParams {
-	pub target:      String,
-	pub port:        u16,
-	pub token:       String,
-	pub protocol:    String,
-	pub username:    String,
+	pub target:   String,
+	/// Target service port forwarded to the gateway (e.g. 22 for SSH).
+	pub port:     u16,
+	/// Local WebSocket listener port on the slot IP.
+	/// Equals `port` for most protocols; remapped for browser-blocked ports
+	/// (e.g. SSH 22 → 8022).
+	pub ws_port:  u16,
+	pub token:    String,
+	pub protocol: String,
+	pub username: String,
 	/// Never logged.
 	pub password:    String,
 	pub width:       u32,
@@ -79,17 +84,24 @@ pub struct GuacSessionParams {
 
 #[derive(Clone)]
 struct GuacRouterState {
-	params:    Arc<GuacSessionParams>,
-	api_state: ApiState,
+	params:              Arc<GuacSessionParams>,
+	api_state:           ApiState,
+	/// Persists the guacd connection_id across WebSocket reconnects for
+	/// this slot.  `None` = first connection; `Some` = reconnect.
+	live_connection_id:  Arc<tokio::sync::Mutex<Option<String>>>,
 }
 
 // ── Per-slot router ───────────────────────────────────────────────────────────
 
-fn build_guac_router(params: Arc<GuacSessionParams>, api_state: ApiState) -> Router {
+fn build_guac_router(
+	params:             Arc<GuacSessionParams>,
+	api_state:          ApiState,
+	live_connection_id: Arc<tokio::sync::Mutex<Option<String>>>,
+) -> Router {
 	Router::new()
 		.route("/guac-ws", ws_upgrade(guac_ws_handler))
 		.layer(CorsLayer::permissive())
-		.with_state(GuacRouterState { params, api_state })
+		.with_state(GuacRouterState { params, api_state, live_connection_id })
 }
 
 // ── Per-slot server ───────────────────────────────────────────────────────────
@@ -108,9 +120,19 @@ pub async fn run_guac_slot(
 		.state::<crate::server::TlsState>()
 		.0.clone();
 
+	// Persists the guacd connection_id returned by the gateway across
+	// WebSocket reconnects so the gateway can resume the parked session.
+	let live_connection_id: Arc<tokio::sync::Mutex<Option<String>>> =
+		Arc::new(tokio::sync::Mutex::new(None));
+
 	log::info!(
-		"guac slot {} — listening on {} port {}",
-		params.slot_idx, params.target, params.port,
+		"guac slot {} — {}:{} (target port {})",
+		params.slot_idx,
+		crate::tunnel::dns_host(
+			&crate::slot::slot_ip(params.slot_idx)
+		),
+		params.ws_port,
+		params.port,
 	);
 
 	loop {
@@ -120,10 +142,12 @@ pub async fn run_guac_slot(
 		};
 
 		let acceptor_opt = tls_state.read().await.clone();
-		let router       = build_guac_router(params.clone(), api_state.clone());
+		let router       = build_guac_router(
+			params.clone(),
+			api_state.clone(),
+			live_connection_id.clone(),
+		);
 
-		// Serve the connection inline (not spawned) so that aborting this
-		// task also terminates the active WebSocket session.
 		match acceptor_opt {
 			Some(acceptor) => {
 				match acceptor.accept(stream).await {
@@ -141,7 +165,6 @@ pub async fn run_guac_slot(
 		}
 	}
 }
-
 // ── WebSocket upgrade handler ─────────────────────────────────────────────────
 
 async fn guac_ws_handler(
@@ -153,21 +176,31 @@ async fn guac_ws_handler(
 		state.params.slot_idx, state.params.target, state.params.port,
 	);
 	ws.protocols(["guacamole"])
-		.on_upgrade(move |socket| handle_guac_ws(socket, state.params, state.api_state))
+		.on_upgrade(move |socket| {
+			handle_guac_ws(
+				socket,
+				state.params,
+				state.api_state,
+				state.live_connection_id,
+			)
+		})
 		.into_response()
 }
 
 // ── Inner handler ─────────────────────────────────────────────────────────────
 
 async fn handle_guac_ws(
-	socket:    WebSocket,
-	params:    Arc<GuacSessionParams>,
-	api_state: ApiState,
+	socket:             WebSocket,
+	params:             Arc<GuacSessionParams>,
+	api_state:          ApiState,
+	live_connection_id: Arc<tokio::sync::Mutex<Option<String>>>,
 ) {
+	use std::sync::atomic::Ordering;
+
 	let (gw_host, gw_port) = crate::tunnel::parse_gateway(&params.gateway);
 	let gw_addr = format!("{}:{}", gw_host, gw_port);
 
-	// ── TLS connect to gateway ────────────────────────────────────────────
+	// ── TLS connect to gateway ────────────────────────────────────────────────────────
 	let tcp = match tokio::net::TcpStream::connect(&gw_addr).await {
 		Ok(s)  => s,
 		Err(e) => { log::error!("guac slot {} gateway TCP failed ({}): {}", params.slot_idx, gw_addr, e); return; }
@@ -178,21 +211,26 @@ async fn handle_guac_ws(
 	};
 	let server_name = match rustls::pki_types::ServerName::try_from(gw_host.as_str()) {
 		Ok(n)  => n.to_owned(),
-		Err(e) => { log::error!("guac slot {} invalid gateway hostname '{}': {}", params.slot_idx, gw_host, e); return; }
+		Err(e) => { log::error!("guac slot {} invalid gateway hostname \'{}\': {}", params.slot_idx, gw_host, e); return; }
 	};
 	let mut tls = match connector.connect(server_name, tcp).await {
 		Ok(s)  => s,
 		Err(e) => { log::error!("guac slot {} TLS handshake failed: {}", params.slot_idx, e); return; }
 	};
 
-	// ── Gateway JSON handshake ────────────────────────────────────────────
-	let payload = build_gateway_payload(&params, &api_state.gateway_path);
+	// ── Gateway JSON handshake ────────────────────────────────────────────────────────
+	// Read any existing connection_id from the slot state (set by a
+	// previous WebSocket session on this slot).
+	let current_cid = live_connection_id.lock().await.clone();
+	let payload = build_gateway_payload(&params, &api_state.gateway_path, current_cid.as_deref());
 	if tls.write_all(&payload).await.is_err() || tls.flush().await.is_err() {
 		log::error!("guac slot {} handshake write failed", params.slot_idx);
 		return;
 	}
 
-	// ── Read gateway status ───────────────────────────────────────────────
+	// ── Read gateway status ─────────────────────────────────────────────────────────
+	// New response format: "200 CONNECTED $uuid"
+	// The connection_id is stored so the next WebSocket can reconnect.
 	let status = match crate::tunnel::read_line(&mut tls, 1024).await {
 		Ok(s)  => s,
 		Err(e) => { log::error!("guac slot {} failed to read gateway status: {}", params.slot_idx, e); return; }
@@ -209,12 +247,22 @@ async fn handle_guac_ws(
 		return;
 	}
 
-	// ── Bridge ────────────────────────────────────────────────────────────
+	// Parse connection_id from "200 CONNECTED $uuid" and persist it for
+	// the next WebSocket session on this slot (reconnect).
+	if let Some(cid) = status.trim().split_whitespace().nth(2).map(String::from) {
+		log::info!("guac slot {} connection_id={}", params.slot_idx, cid);
+		*live_connection_id.lock().await = Some(cid);
+	}
+
+	// ── Bridge ──────────────────────────────────────────────────────────────
 	log::info!("guac slot {} relay started", params.slot_idx);
 	bridge(socket, tls, params.last_active.clone()).await;
 	log::info!("guac slot {} relay ended", params.slot_idx);
-}
 
+	// Reset the idle clock so the reconnect window is a full idle_timeout
+	// period, regardless of how long the previous session was idle.
+	params.last_active.store(crate::slot::now_secs(), Ordering::Relaxed);
+}
 // ── Bridge ────────────────────────────────────────────────────────────────────
 
 /// Bridge a browser WebSocket to the raw TCP stream from the gateway.
@@ -338,21 +386,26 @@ fn is_guac_ping(text: &str) -> bool {
 }
 
 /// Build the newline-terminated JSON handshake sent to the gateway.
-fn build_gateway_payload(params: &GuacSessionParams, gateway_path: &str) -> Vec<u8> {
+fn build_gateway_payload(
+	params:        &GuacSessionParams,
+	gateway_path:  &str,
+	connection_id: Option<&str>,
+) -> Vec<u8> {
 	let json = serde_json::json!({
-		"target":      params.target,
-		"application": params.protocol,
-		"port":        params.port,
-		"token":       params.token,
-		"guac":        true,
-		"username":    params.username,
-		"password":    params.password,
-		"width":       params.width,
-		"height":      params.height,
-		"dpi":         params.dpi,
-		"gateway":     params.gateway,
-		"path":        gateway_path,
-		"e2ecrypt":    false,
+		"target":        params.target,
+		"application":   params.protocol,
+		"port":          params.port,
+		"token":         params.token,
+		"guac":          true,
+		"username":      params.username,
+		"password":      params.password,
+		"width":         params.width,
+		"height":        params.height,
+		"dpi":           params.dpi,
+		"gateway":       params.gateway,
+		"path":          gateway_path,
+		"e2ecrypt":      false,
+		"connection_id": connection_id,
 	});
 	let mut bytes = json.to_string().into_bytes();
 	bytes.push(b'\n');

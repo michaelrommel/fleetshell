@@ -207,6 +207,26 @@ async fn probe_handler(
     }
 }
 
+/// Return the local WebSocket listener port for a guac session.
+///
+/// Ports below 1024 are remapped to `50000 + port` for two reasons:
+///
+/// 1. **OS privileges** — macOS and Linux require root to bind ports below
+///    1024; the fleetshell-client runs as a normal user.
+/// 2. **Browser blocking** — browsers refuse WebSocket connections to several
+///    well-known low ports (22, 21, 25 …) per the Fetch spec bad-port list.
+///
+/// The original service port is still sent in the JSON handshake to the
+/// gateway — only the local TCP listener uses the remapped port.
+///
+/// Examples: SSH 22 → 50022, HTTPS 443 → 50443, RDP 3389 → 3389 (unchanged).
+fn guac_ws_port(service_port: u16) -> u16 {
+    if service_port < 1024 {
+        50000 + service_port
+    } else {
+        service_port
+    }
+}
 type HandlerResult = Result<
     (StatusCode, Json<TunnelResponse>),
     (StatusCode, Json<serde_json::Value>),
@@ -280,11 +300,16 @@ async fn tunnel_handler(
         let last_active  = slot.last_active.clone();
         let task_handles = slot.task_handles.clone();
 
-        // Bind the per-slot HTTP/WebSocket listener on the slot IP:port.
-        let listener = match tokio::net::TcpListener::bind((slot_ip.as_str(), port)).await {
+        // Remap privileged ports (< 1024) to 50000+port: macOS/Linux require
+        // root for ports below 1024, and browsers block several low ports.
+        // The gateway still receives the original service port.
+        let ws_port = guac_ws_port(port);
+
+        // Bind the per-slot HTTP/WebSocket listener on the slot IP:ws_port.
+        let listener = match tokio::net::TcpListener::bind((slot_ip.as_str(), ws_port)).await {
             Ok(l)  => l,
             Err(e) => {
-                let msg = format!("Failed to bind {}:{}: {}", slot_ip, port, e);
+                let msg = format!("Failed to bind {}:{}: {}", slot_ip, ws_port, e);
                 log::error!("{}", msg);
                 state.slot_manager.release(slot_idx).await;
                 crate::util::navigate(&state.app, "logging");
@@ -297,7 +322,8 @@ async fn tunnel_handler(
 
         let params = std::sync::Arc::new(crate::guac_proxy::GuacSessionParams {
             target:      req.target.clone(),
-            port,
+            port,       // service port forwarded to the gateway
+            ws_port,    // local WebSocket listener port (may differ for blocked ports)
             token:       req.token.clone(),
             protocol:    row.application.clone(),
             username:    req.username.clone().unwrap_or_default(),
@@ -334,11 +360,11 @@ async fn tunnel_handler(
 
         let ws_url = format!(
             "wss://{}:{}/guac-ws",
-            crate::tunnel::dns_host(&slot_ip), port,
+            crate::tunnel::dns_host(&slot_ip), ws_port,
         );
         log::info!(
-            "Guacamole session created — slot {} ({}) — {}",
-            slot_idx, slot_ip, ws_url,
+            "Guacamole session created — slot {} ({}) port {} (ws:{}) — {}",
+            slot_idx, slot_ip, port, ws_port, ws_url,
         );
 
         return Ok((
