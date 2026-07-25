@@ -89,6 +89,26 @@ struct TunnelResponse {
     urls:   Vec<String>,
 }
 
+/// Request body for `POST /api/probe`.
+#[derive(Debug, Deserialize)]
+struct ProbeRequest {
+    /// Final destination IP / hostname on the gateway side.
+    target:  String,
+    /// Single port to test.
+    port:    u16,
+    /// Gateway address ("host" or "host:port").
+    gateway: String,
+    /// JWT authorising the probe (same token as used for the tunnel).
+    token:   String,
+}
+
+/// Response body for `POST /api/probe`.
+#[derive(Debug, Serialize)]
+struct ProbeResponse {
+    reachable: bool,
+    message:   String,
+}
+
 // ── Shared state injected into every handler ──────────────────────────────────
 
 #[derive(Clone)]
@@ -105,6 +125,7 @@ pub fn build_router(state: ApiState) -> Router {
         .route("/api/tunnel",     post(tunnel_handler))
         .route("/api/deep-link",  post(deep_link_forward_handler))
         .route("/api/show",       post(show_handler))
+        .route("/api/probe",      post(probe_handler))
         .layer(CorsLayer::permissive())
         .with_state(state)
 }
@@ -117,6 +138,51 @@ pub fn build_router(state: ApiState) -> Router {
 async fn show_handler(State(state): State<ApiState>) -> StatusCode {
     crate::util::show_window(&state.app);
     StatusCode::OK
+}
+
+/// Asks the gateway to perform a TCP reachability check against `target:port`
+/// before the portal opens a browser tab.  Lets the user know immediately
+/// if a device is offline rather than waiting for the browser to time out.
+async fn probe_handler(
+    State(state): State<ApiState>,
+    Json(req):    Json<ProbeRequest>,
+) -> Json<ProbeResponse> {
+    log::info!(
+        "Probe request: target={}:{} via {}",
+        req.target, req.port, req.gateway,
+    );
+    match crate::tunnel::probe_target(
+        &req.target,
+        req.port,
+        &req.gateway,
+        &req.token,
+        &state.gateway_path,
+    ).await {
+        Ok(true) => {
+            log::info!("Probe: {}:{} reachable", req.target, req.port);
+            Json(ProbeResponse {
+                reachable: true,
+                message: format!("{}:{} is reachable", req.target, req.port),
+            })
+        }
+        Ok(false) => {
+            log::info!("Probe: {}:{} unreachable", req.target, req.port);
+            Json(ProbeResponse {
+                reachable: false,
+                message: format!(
+                    "{}:{} did not respond — the device is likely offline or unreachable from the gateway",
+                    req.target, req.port,
+                ),
+            })
+        }
+        Err(e) => {
+            log::warn!("Probe error for {}:{}: {}", req.target, req.port, e);
+            Json(ProbeResponse {
+                reachable: false,
+                message: format!("Gateway probe failed: {e}"),
+            })
+        }
+    }
 }
 
 type HandlerResult = Result<

@@ -494,6 +494,80 @@ async fn read_line<R: AsyncRead + Unpin>(
     Ok(String::from_utf8_lossy(&buf).into_owned())
 }
 
+// ── Gateway probe ─────────────────────────────────────────────────────────────────
+
+/// Ask the gateway to perform a TCP reachability check against `target:port`.
+///
+/// Sends a `"probe"` application handshake over the same TLS channel used by
+/// normal tunnel connections.  The gateway attempts a TCP connect with a
+/// 3-second timeout and responds with a single status line:
+///
+/// - `"200 REACHABLE"`   — the target accepted the SYN
+/// - `"503 UNREACHABLE"` — connection refused or timeout
+///
+/// Returns:
+/// - `Ok(true)`  — target reachable
+/// - `Ok(false)` — target unreachable
+/// - `Err(…)`   — could not reach the gateway, or unexpected response
+pub async fn probe_target(
+    target:       &str,
+    port:         u16,
+    gateway:      &str,
+    token:        &str,
+    gateway_path: &str,
+) -> Result<bool, String> {
+    let (gw_host, gw_port) = parse_gateway(gateway);
+    let gw_addr = format!("{}:{}", gw_host, gw_port);
+
+    let tcp = TcpStream::connect(&gw_addr)
+        .await
+        .map_err(|e| format!("Gateway connect failed: {e}"))?;
+
+    let connector = make_tls_connector()
+        .map_err(|e| format!("TLS setup failed: {e}"))?;
+
+    let server_name = rustls::pki_types::ServerName::try_from(gw_host.as_str())
+        .map_err(|e| format!("Invalid gateway hostname '{gw_host}': {e}"))?;
+
+    let mut tls = connector
+        .connect(server_name.to_owned(), tcp)
+        .await
+        .map_err(|e| format!("TLS handshake with gateway failed: {e}"))?;
+
+    let payload = serde_json::json!({
+        "target":      target,
+        "application": "probe",
+        "port":        port,
+        "token":       token,
+        "gateway":     gateway,
+        "path":        gateway_path,
+    });
+    let mut bytes = payload.to_string().into_bytes();
+    bytes.push(b'\n');
+
+    tls.write_all(&bytes)
+        .await
+        .map_err(|e| format!("Probe write failed: {e}"))?;
+    tls.flush()
+        .await
+        .map_err(|e| format!("Probe flush failed: {e}"))?;
+
+    let response = read_line(&mut tls, 64)
+        .await
+        .map_err(|e| format!("Probe read failed: {e}"))?;
+    let upper = response.trim().to_uppercase();
+
+    if upper.starts_with("200") {
+        Ok(true)
+    } else if upper.starts_with("503") {
+        Ok(false)
+    } else if upper.starts_with("401") || upper.starts_with("403") {
+        Err(format!("Gateway rejected probe: {response}"))
+    } else {
+        Err(format!("Unexpected probe response: {response}"))
+    }
+}
+
 // ── Local application launcher ────────────────────────────────────────────────
 
 /// Prepare the local end of a tunnel for the given `application` type.
