@@ -248,8 +248,7 @@ async fn tunnel_handler(
         ));
     }
 
-    // Flatten all rows into (port, PortRow) pairs so every port carries its
-    // own application / e2ecrypt / sni settings.
+    // Flatten all rows into (port, PortRow) pairs.
     let mut flat: Vec<(u16, PortRow)> = Vec::new();
     for row in &req.port_rows {
         for port in crate::tunnel::parse_ports(&row.ports) {
@@ -270,19 +269,20 @@ async fn tunnel_handler(
         flat.iter().map(|(p, _)| *p).collect::<Vec<_>>(),
     );
 
-    // ── Guacamole mode: browser-based RDP / VNC via guacd ────────────────────
-    //
-    // Claim a real slot so the session appears in the Functions tab and the
-    // idle monitor works identically to a raw TCP tunnel.  A dedicated
-    // HTTP/WebSocket server is spawned on the slot IP:port; the browser
-    // connects there instead of to the main API port.
-    if flat.iter().any(|(_, row)| row.guac.unwrap_or(false)) {
-        let (port, row) = flat.into_iter()
-            .find(|(_, r)| r.guac.unwrap_or(false))
-            .unwrap();
+    // Partition into guac rows (browser-based, per-slot WS server) and
+    // regular rows (raw TCP tunnel, shared slot).
+    let (guac_flat, regular_flat): (Vec<_>, Vec<_>) = flat
+        .into_iter()
+        .partition(|(_, r)| r.guac.unwrap_or(false));
 
-        // Claim a slot — provides the loopback IP, last_active counter, and
-        // task_handles for idle monitoring and clean shutdown.
+    let mut all_ports: Vec<u16>   = Vec::new();
+    let mut all_urls:  Vec<String> = Vec::new();
+    let mut bind_ip = String::new(); // used by POST /api/launch for native apps
+
+    // ── Guacamole rows (first one; multiple guac rows not yet supported) ──
+    if let Some((port, row)) = guac_flat.into_iter().next() {
+        let ws_port = guac_ws_port(port);
+
         let slot = match state.slot_manager.claim().await {
             Some(s) => s,
             None => {
@@ -300,12 +300,6 @@ async fn tunnel_handler(
         let last_active  = slot.last_active.clone();
         let task_handles = slot.task_handles.clone();
 
-        // Remap privileged ports (< 1024) to 50000+port: macOS/Linux require
-        // root for ports below 1024, and browsers block several low ports.
-        // The gateway still receives the original service port.
-        let ws_port = guac_ws_port(port);
-
-        // Bind the per-slot HTTP/WebSocket listener on the slot IP:ws_port.
         let listener = match tokio::net::TcpListener::bind((slot_ip.as_str(), ws_port)).await {
             Ok(l)  => l,
             Err(e) => {
@@ -322,8 +316,8 @@ async fn tunnel_handler(
 
         let params = std::sync::Arc::new(crate::guac_proxy::GuacSessionParams {
             target:      req.target.clone(),
-            port,       // service port forwarded to the gateway
-            ws_port,    // local WebSocket listener port (may differ for blocked ports)
+            port,
+            ws_port,
             token:       req.token.clone(),
             protocol:    row.application.clone(),
             username:    req.username.clone().unwrap_or_default(),
@@ -336,26 +330,18 @@ async fn tunnel_handler(
             last_active: last_active.clone(),
         });
 
-        // Spawn the per-slot server.  Running inline (not spawn-then-forget)
-        // means aborting via task_handles also kills any active WebSocket session.
-        let state_c = state.clone();
-        let handle  = tokio::spawn(
-            crate::guac_proxy::run_guac_slot(listener, params, state_c)
+        let handle = tokio::spawn(
+            crate::guac_proxy::run_guac_slot(listener, params, state.clone())
         );
         task_handles.lock().unwrap().push(handle);
 
-        // Notify the Functions tab.
         state.app.emit("slot-update", serde_json::json!({
             "idx": slot_idx, "status": "active", "progress": 1.0,
         })).ok();
 
-        // Idle monitor — same as for raw TCP tunnels.
         tokio::spawn(crate::slot::run_idle_monitor(
-            state.app.clone(),
-            slot_idx,
-            last_active,
-            cfg.idle_timeout,
-            state.slot_manager.clone(),
+            state.app.clone(), slot_idx, last_active,
+            cfg.idle_timeout, state.slot_manager.clone(),
         ));
 
         let ws_url = format!(
@@ -367,124 +353,105 @@ async fn tunnel_handler(
             slot_idx, slot_ip, port, ws_port, ws_url,
         );
 
-        return Ok((
-            StatusCode::OK,
-            Json(TunnelResponse {
-                status:  "connected",
-                ports:   vec![port],
-                urls:    vec![ws_url],
-                bind_ip: slot_ip,
-            }),
-        ));
+        all_ports.push(port);
+        all_urls.push(ws_url);
     }
 
-    // ── Claim a free connection slot ──────────────────────────────────────
-    let slot = match state.slot_manager.claim().await {
-        Some(s) => s,
-        None => {
-            let msg = "All 16 connection slots are in use".to_string();
-            log::error!("{}", msg);
-            return Err((
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(serde_json::json!({ "error": msg })),
-            ));
-        }
-    };
-
-    log::info!("Tunnel request: assigned slot {} ({})", slot.idx + 2, slot.ip);
-
-    // ── Phase 1: pre-bind ALL listeners on the slot IP ────────────────────
-    //
-    // Every port must bind successfully before any task is spawned.
-    // On any failure the slot is released immediately.
-    let mut listeners: Vec<(u16, PortRow, tokio::net::TcpListener)> =
-        Vec::with_capacity(flat.len());
-
-    for (port, row) in flat {
-        match tokio::net::TcpListener::bind((slot.ip.as_str(), port)).await {
-            Ok(l) => {
-                log::info!("port {} app={} — bound on {}", port, row.application, slot.ip);
-                listeners.push((port, row, l));
-            }
-            Err(e) => {
-                let msg = format!("Failed to bind {}:{}: {}", slot.ip, port, e);
+    // ── Regular TCP-tunnel rows ───────────────────────────────────────────
+    if !regular_flat.is_empty() {
+        let slot = match state.slot_manager.claim().await {
+            Some(s) => s,
+            None => {
+                let msg = "All 16 connection slots are in use".to_string();
                 log::error!("{}", msg);
-                state.slot_manager.release(slot.idx).await;
-                crate::util::navigate(&state.app, "logging");
                 return Err((
-                    StatusCode::CONFLICT,
+                    StatusCode::SERVICE_UNAVAILABLE,
                     Json(serde_json::json!({ "error": msg })),
                 ));
             }
+        };
+
+        log::info!("Tunnel request: assigned slot {} ({})", slot.idx + 2, slot.ip);
+
+        // Phase 1: pre-bind ALL listeners before spawning any tasks.
+        let mut listeners: Vec<(u16, PortRow, tokio::net::TcpListener)> =
+            Vec::with_capacity(regular_flat.len());
+
+        for (port, row) in regular_flat {
+            match tokio::net::TcpListener::bind((slot.ip.as_str(), port)).await {
+                Ok(l) => {
+                    log::info!("port {} app={} — bound on {}", port, row.application, slot.ip);
+                    listeners.push((port, row, l));
+                }
+                Err(e) => {
+                    let msg = format!("Failed to bind {}:{}: {}", slot.ip, port, e);
+                    log::error!("{}", msg);
+                    state.slot_manager.release(slot.idx).await;
+                    crate::util::navigate(&state.app, "logging");
+                    return Err((
+                        StatusCode::CONFLICT,
+                        Json(serde_json::json!({ "error": msg })),
+                    ));
+                }
+            }
         }
-    }
 
-    // ── Phase 2: collect browser URLs (no auto-launch) ────────────────────
-    //
-    // Native applications (RDP, VNC, SSH) are NOT launched here.
-    // The portal calls POST /api/launch explicitly when the user clicks
-    // the Open button, passing back the bind_ip returned in this response.
-    let mut urls: Vec<String> = Vec::new();
-    for (port, row, _) in &listeners {
-        if let Some(url) = crate::tunnel::get_tunnel_url(&row.application, *port, &slot.ip) {
-            urls.push(url);
+        // Phase 2: collect browser URLs (native apps are launched on demand).
+        for (port, row, _) in &listeners {
+            if let Some(url) = crate::tunnel::get_tunnel_url(&row.application, *port, &slot.ip) {
+                all_urls.push(url);
+            }
         }
+
+        all_ports.extend(listeners.iter().map(|(p, _, _)| *p));
+        bind_ip = slot.ip.clone();
+
+        // Phase 3: servicekey notification.
+        if let Some(ref sk) = req.servicekey {
+            log::info!("Service key present — notifying Functions tab");
+            state.app.emit(
+                "navigate",
+                serde_json::json!({ "tab": "functions", "servicekey": sk }),
+            ).ok();
+        }
+
+        // Phase 4: slot-update.
+        state.app.emit("slot-update", serde_json::json!({
+            "idx":      slot.idx,
+            "status":   "active",
+            "progress": 1.0_f64,
+        })).ok();
+
+        // Phase 5: spawn one accept-loop task per port.
+        let task_handles = slot.task_handles.clone();
+        let last_active  = slot.last_active.clone();
+
+        for (port, row, listener) in listeners {
+            let port_cfg  = crate::tunnel::PortConfig::from_request(&req, &row);
+            let state_c   = state.clone();
+            let last_c    = last_active.clone();
+            let handles_c = task_handles.clone();
+
+            let accept_handle = tokio::spawn(
+                crate::tunnel::run_accept_loop(listener, port, port_cfg, state_c, last_c, handles_c),
+            );
+            task_handles.lock().unwrap().push(accept_handle);
+        }
+
+        // Phase 6: idle monitor.
+        tokio::spawn(crate::slot::run_idle_monitor(
+            state.app.clone(), slot.idx, last_active,
+            cfg.idle_timeout, state.slot_manager.clone(),
+        ));
     }
-
-    // ── Phase 3: surface the window if needed ─────────────────────────────
-    if let Some(ref sk) = req.servicekey {
-        log::info!("Service key present — notifying Functions tab");
-        state.app.emit(
-            "navigate",
-            serde_json::json!({ "tab": "functions", "servicekey": sk }),
-        ).ok();
-    }
-
-    // ── Phase 4: notify the frontend that the slot is now active ──────────
-    state.app.emit("slot-update", serde_json::json!({
-        "idx":      slot.idx,
-        "status":   "active",
-        "progress": 1.0_f64,
-    })).ok();
-
-    // ── Phase 5: spawn one accept-loop task per port ──────────────────────
-    let bound_ports: Vec<u16> = listeners.iter().map(|(p, _, _)| *p).collect();
-    let task_handles = slot.task_handles.clone();
-    let last_active  = slot.last_active.clone();
-
-    for (port, row, listener) in listeners {
-        let port_cfg  = crate::tunnel::PortConfig::from_request(&req, &row);
-        let state_c   = state.clone();
-        let last_c    = last_active.clone();
-        let handles_c = task_handles.clone();
-
-        let accept_handle = tokio::spawn(
-            crate::tunnel::run_accept_loop(listener, port, port_cfg, state_c, last_c, handles_c),
-        );
-
-        // Register the accept-loop handle so release() can abort it.
-        task_handles.lock().unwrap().push(accept_handle);
-    }
-
-    // ── Phase 6: start the idle monitor ───────────────────────────────────
-    //
-    // The monitor's handle is intentionally NOT stored in task_handles so
-    // that release() does not abort it before it emits the "free" event.
-    tokio::spawn(crate::slot::run_idle_monitor(
-        state.app.clone(),
-        slot.idx,
-        last_active,
-        cfg.idle_timeout,
-        state.slot_manager.clone(),
-    ));
 
     Ok((
         StatusCode::OK,
         Json(TunnelResponse {
             status:  "connected",
-            ports:   bound_ports,
-            urls,
-            bind_ip: slot.ip.clone(),
+            ports:   all_ports,
+            urls:    all_urls,
+            bind_ip,
         }),
     ))
 }
