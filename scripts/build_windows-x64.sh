@@ -78,7 +78,7 @@ if $BUNDLE; then
 
   # Copy the installer into dist/
   INSTALLER=$(find "$REPO_ROOT/target/$TARGET/release/bundle/nsis" \
-                   -name "*-setup.exe" 2>/dev/null | sort | tail -1)
+                   -name "*-setup.exe" 2>/dev/null | sort -V | tail -1)
   if [[ -n "$INSTALLER" ]]; then
     cp "$INSTALLER" "$DIST/"
     echo ""
