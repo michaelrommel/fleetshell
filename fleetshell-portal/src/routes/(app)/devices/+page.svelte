@@ -23,24 +23,59 @@
 		application: 'http' | 'https' | 'expert-i' | 'rdp' | 'vnc' | 'ssh';
 		guac:        boolean;
 		e2ecrypt:    boolean;
+		open:        boolean;
 		sni:         string;
+		/** Display width in pixels — only sent when guac is true. */
+		width:       number;
+		/** Display height in pixels — only sent when guac is true. */
+		height:      number;
+		/** Dots per inch — only sent when guac is true. */
+		dpi:         number;
 	}
 
 	let portRows = $state<PortRow[]>([
-		{ ports: '443', application: 'https', guac: false, e2ecrypt: false, sni: '' },
+		{ ports: '443', application: 'https', guac: false, e2ecrypt: false, open: true, sni: '', width: 1920, height: 1080, dpi: 96 },
 	]);
 
 	function addRow(): void {
-		portRows = [...portRows, { ports: '', application: 'https', guac: false, e2ecrypt: false, sni: '' }];
+		portRows = [...portRows, { ports: '', application: 'https', guac: false, e2ecrypt: false, open: true, sni: '', width: 1920, height: 1080, dpi: 96 }];
 	}
 
 	function removeRow(i: number): void {
 		if (portRows.length > 1) portRows = portRows.filter((_, idx) => idx !== i);
 	}
 
+	/** True when Guacamole makes sense for a given application type. */
+	function guacApplicable(row: PortRow): boolean {
+		return row.application === 'rdp' || row.application === 'vnc' || row.application === 'ssh';
+	}
+
 	/** True when the SNI field is meaningful for a given row. */
 	function sniEffective(row: PortRow): boolean {
+		if (row.guac) return false;   // guacd addresses target directly
 		return (row.application === 'http' || row.application === 'https' || row.application === 'expert-i') && !row.e2ecrypt;
+	}
+
+	/** True when the Width / Height / DPI sub-row should be shown. */
+	function showGuacParams(row: PortRow): boolean {
+		return row.guac && guacApplicable(row);
+	}
+
+	/**
+	 * Called when the application selector changes.
+	 * - Clears guac if the new application does not support it.
+	 * - Forces e2ecrypt on for rdp/vnc/ssh (native protocol, must be passthrough).
+	 * - Clears e2ecrypt when switching back to http/https (free choice again).
+	 */
+	function onAppChange(row: PortRow): void {
+		if (guacApplicable(row)) {
+			// Native protocol — passthrough required when not using guacd.
+			if (!row.guac) row.e2ecrypt = true;
+		} else {
+			// Browser-native protocol — guac never applies.
+			row.guac     = false;
+			row.e2ecrypt = false;
+		}
 	}
 
 	type ConnectState = 'idle' | 'signing' | 'connecting' | 'launching' | 'done' | 'error';
@@ -48,11 +83,17 @@
 	let connectMsg   = $state('');
 	let connectUrls    = $state<string[]>([]);
 	let connectedToken = $state<string | null>(null);
-	let probeState     = $state<'idle' | 'checking' | 'unreachable'>('idle');
-	let probeMsg       = $state('');
+	/** Loopback slot IP returned by the client (e.g. "127.0.0.2"). */
+	let connectedBindIp = $state<string>('');
+	/** Snapshot of the port rows at connect time — used to build result buttons. */
+	let connectedRows  = $state<PortRow[]>([]);
+	let probeState = $state<'idle' | 'checking' | 'unreachable'>('idle');
+	let probeMsg   = $state('');
+	/** Which result button triggered the current probe (null when idle). */
+	let probeBtn   = $state<ResultButton | null>(null);
 
 	// Scrolls the result banner into view after a connect attempt.
-	let resultBanner: HTMLElement | undefined;
+	let resultBanner: HTMLElement | undefined = $state();
 	$effect(() => {
 		if (connectState === 'done' || connectState === 'error') {
 			resultBanner?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -64,6 +105,8 @@
 	// Build the JSON body sent to the client API — used by both the direct
 	// connect attempt and the polling retries inside launchViaDeepLink.
 	function tunnelBody(token: string): string {
+		// Extract display params from the first guac-enabled row (if any).
+		const guacRow = portRows.find(r => r.guac && guacApplicable(r));
 		return JSON.stringify({
 			target,
 			token,
@@ -71,17 +114,169 @@
 			servicekey : servicekey || undefined,
 			username   : username   || undefined,
 			password   : password   || undefined,
+			width      : guacRow?.width  ?? undefined,
+			height     : guacRow?.height ?? undefined,
+			dpi        : guacRow?.dpi    ?? undefined,
 			port_rows  : portRows.map(r => ({
 				ports      : r.ports,
 				application: r.application,
 				guac       : r.guac       || undefined,
-				e2ecrypt   : r.e2ecrypt   || undefined,
+				// e2ecrypt is mutually exclusive with guac — omit when guac is set.
+				e2ecrypt   : (!r.guac && r.e2ecrypt) ? true : undefined,
 				sni        : r.sni        || undefined,
 			})),
 		});
 	}
 
 	const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
+
+	// ── Result box: open buttons ─────────────────────────────────────────────────────
+
+	interface ResultButton {
+		label:   string;
+		kind:    'url' | 'guac' | 'launch';
+		url:     string;   // for 'url' and 'guac'
+		app:     string;   // for 'launch'
+		port:    number;   // for 'launch'
+	}
+
+	/** Parse the first port from a port spec string. */
+	function firstPort(spec: string): number {
+		const part = spec.split(',')[0].trim();
+		const n    = parseInt(part.split('-')[0]);
+		return isNaN(n) ? 0 : n;
+	}
+
+	/** Extract the port from a URL like https://127-0-0-2.client.fleetshell.com:443 */
+	function portFromUrl(url: string): number {
+		try { return parseInt(new URL(url).port) || 0; }
+		catch { return 0; }
+	}
+
+	/** Find the row whose port spec covers a given port number. */
+	function rowForPort(port: number, rows: PortRow[]): PortRow | undefined {
+		return rows.find(r => {
+			for (const part of r.ports.split(',')) {
+				const t = part.trim();
+				if (t.includes('-')) {
+					const [s, e] = t.split('-').map(Number);
+					if (port >= s && port <= e) return true;
+				} else if (parseInt(t) === port) return true;
+			}
+			return false;
+		});
+	}
+
+	/**
+	 * Build the list of result buttons from the tunnel response.
+	 * Only rows with `open` checked produce a button.
+	 */
+	const resultButtons = $derived<ResultButton[]>((() => {
+		if (connectState !== 'done') return [];
+		const buttons: ResultButton[] = [];
+
+		for (const url of connectUrls) {
+			if (url.startsWith('wss://') || url.startsWith('ws://')) {
+				// Guacamole session URL — find the guac row.
+				const row = connectedRows.find(r => r.guac && guacApplicable(r));
+				if (!row?.open) continue;
+				buttons.push({
+					label: `Open ${row.application.toUpperCase()} Session`,
+					kind:  'guac',
+					url,
+					app:   row.application,
+					port:  firstPort(row.ports), // used for the probe
+				});
+			} else {
+				// http / https / expert-i URL
+				const port = portFromUrl(url);
+				const row  = rowForPort(port, connectedRows);
+				if (!row?.open) continue;
+				const label = `${row.application.toUpperCase()} :${port}`;
+				buttons.push({ label, kind: 'url', url, app: row.application, port });
+			}
+		}
+
+		// Native-app rows (rdp/vnc/ssh, no guac) with open checked.
+		// These never produce a URL — the client only returns URLs for http/https.
+		for (const row of connectedRows) {
+			if (!row.open) continue;
+			if (row.guac || !guacApplicable(row)) continue; // handled above
+			const port = firstPort(row.ports);
+			if (!port) continue;
+			buttons.push({
+				label: `Open ${row.application.toUpperCase()} :${port}`,
+				kind:  'launch',
+				url:   '',
+				app:   row.application,
+				port,
+			});
+		}
+
+		return buttons;
+	})());
+
+	/** Execute a result button's action without probing first. */
+	async function executeItem(btn: ResultButton): Promise<void> {
+		if (btn.kind === 'guac') {
+			window.open(`/session?ws=${encodeURIComponent(btn.url)}`, '_blank');
+		} else if (btn.kind === 'launch') {
+			try {
+				await fetch(`${CLIENT_API_BASE}/api/launch`, {
+					method : 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body   : JSON.stringify({
+						bind_ip    : connectedBindIp,
+						port       : btn.port,
+						application: btn.app,
+					}),
+				});
+			} catch (e) {
+				console.error('launch failed', e);
+			}
+		} else {
+			window.open(btn.url, '_blank', 'noopener,noreferrer');
+		}
+	}
+
+	/**
+	 * Probe the target port through the gateway, then execute the action.
+	 * All three button kinds are probed — nothing actually reaches the device
+	 * until the user acts, so a failed probe saves the user from seeing a
+	 * broken application or a session error page.
+	 */
+	async function openItem(btn: ResultButton): Promise<void> {
+		if (!connectedToken) {
+			await executeItem(btn); return;
+		}
+		probeState = 'checking';
+		probeMsg   = '';
+		probeBtn   = btn;
+		try {
+			const res = await fetch(`${CLIENT_API_BASE}/api/probe`, {
+				method : 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body   : JSON.stringify({
+					target, port: btn.port, gateway, token: connectedToken,
+				}),
+				signal: AbortSignal.timeout(7_000),
+			});
+			if (!res.ok) {
+				// Probe endpoint error — open anyway rather than blocking the user.
+				await executeItem(btn); probeState = 'idle'; probeBtn = null; return;
+			}
+			const data = await res.json();
+			if (data.reachable) {
+				await executeItem(btn); probeState = 'idle'; probeBtn = null;
+			} else {
+				probeMsg   = data.message ?? 'Target device did not respond.';
+				probeState = 'unreachable';
+			}
+		} catch {
+			// Network error (client offline?) — open anyway.
+			await executeItem(btn); probeState = 'idle'; probeBtn = null;
+		}
+	}
 
 	async function onConnect(e: Event): Promise<void> {
 		e.preventDefault();
@@ -134,11 +329,16 @@
 				throw new Error(`Client returned ${res.status}: ${txt}`);
 			}
 			const body = await res.json();
-			connectUrls    = Array.isArray(body.urls) ? body.urls : [];
-			connectMsg     = `Gateway tunnel open on port(s): ${(body.ports ?? []).join(', ')}`;
-			connectState   = 'done';
-			connectedToken = token;
-			probeState     = 'idle';
+			connectUrls     = Array.isArray(body.urls) ? body.urls : [];
+			connectedBindIp = body.bind_ip ?? '';
+			connectedRows   = portRows.map(r => ({ ...r })); // snapshot
+			connectedToken  = token;
+			probeState      = 'idle';
+			const portList  = (body.ports ?? []).join(', ');
+			connectMsg = connectedBindIp
+				? `Tunnel open via ${gateway} \u00b7 slot ${connectedBindIp} \u00b7 port(s): ${portList}`
+				: `Tunnel open via ${gateway} \u00b7 port(s): ${portList}`;
+			connectState    = 'done';
 		} catch (err) {
 			// TypeError = network-level failure (client not running or
 			// mixed-content block).  Open the deep-link and poll.
@@ -152,12 +352,15 @@
 	}
 
 	function resetConnect(): void {
-		connectState   = 'idle';
-		connectMsg     = '';
-		connectUrls    = [];
-		connectedToken = null;
-		probeState     = 'idle';
-		probeMsg       = '';
+		connectState    = 'idle';
+		connectMsg      = '';
+		connectUrls     = [];
+		connectedToken  = null;
+		connectedBindIp = '';
+		connectedRows   = [];
+		probeState      = 'idle';
+		probeMsg        = '';
+		probeBtn        = null;
 	}
 
 	function parseFirstPort(spec: string): number {
@@ -375,6 +578,7 @@
 					<span>Application</span>
 					<span class="col-center">Guac</span>
 					<span class="col-center">E2E</span>
+					<span class="col-center">Open</span>
 					<span>SNI <span class="optional">(optional)</span></span>
 					<span></span>
 				</div>
@@ -392,6 +596,7 @@
 					<select
 						class="pr-input pr-select"
 						bind:value={row.application}
+						onchange={() => onAppChange(row)}
 						disabled={busy}
 					>
 						<option value="https">HTTPS</option>
@@ -401,11 +606,44 @@
 						<option value="vnc">VNC</option>
 						<option value="ssh">SSH</option>
 					</select>
-					<label class="pr-check" title="Open via Guacamole in a new browser tab (placeholder)">
-						<input type="checkbox" class="check-input" bind:checked={row.guac} disabled={busy} />
+					<label
+						class="pr-check"
+						title={guacApplicable(row)
+							? 'Open via Guacamole in a new browser tab'
+							: 'Guacamole not applicable — browser handles this protocol natively'}
+					>
+						<input
+							type="checkbox"
+							class="check-input"
+							bind:checked={row.guac}
+							disabled={busy || !guacApplicable(row)}
+						/>
 					</label>
-					<label class="pr-check" title="Pass TLS bytes end-to-end; browser sees device certificate directly">
-						<input type="checkbox" class="check-input" bind:checked={row.e2ecrypt} disabled={busy} />
+					<label
+						class="pr-check"
+						title={row.guac
+							? 'E2E not applicable — guacd handles the upstream connection'
+							: guacApplicable(row)
+								? 'Required — native protocol must be relayed byte-for-byte'
+								: 'Pass TLS bytes end-to-end; browser sees device certificate directly'}
+					>
+						<input
+							type="checkbox"
+							class="check-input"
+							bind:checked={row.e2ecrypt}
+							disabled={busy || row.guac || guacApplicable(row)}
+						/>
+					</label>
+					<label
+						class="pr-check"
+						title="Show an Open button in the result box for this row"
+					>
+						<input
+							type="checkbox"
+							class="check-input"
+							bind:checked={row.open}
+							disabled={busy}
+						/>
 					</label>
 					<input
 						class="pr-input"
@@ -413,7 +651,7 @@
 						type="text"
 						placeholder="device.example.com"
 						bind:value={row.sni}
-						disabled={busy}
+						disabled={busy || !sniEffective(row)}
 						autocomplete="off"
 						spellcheck="false"
 					/>
@@ -426,6 +664,35 @@
 						aria-label="Remove row"
 					>✕</button>
 				</div>
+				{#if showGuacParams(row)}
+				<div class="port-row-guac">
+					<span class="guac-param-label">Width</span>
+					<input
+						class="guac-param-input"
+						type="number"
+						min="640" max="7680" step="1"
+						bind:value={row.width}
+						disabled={busy}
+					/>
+					<span class="guac-param-label">Height</span>
+					<input
+						class="guac-param-input"
+						type="number"
+						min="480" max="4320" step="1"
+						bind:value={row.height}
+						disabled={busy}
+					/>
+					<span class="guac-param-label">DPI</span>
+					<input
+						class="guac-param-input guac-param-dpi"
+						type="number"
+						min="72" max="288" step="1"
+						bind:value={row.dpi}
+						disabled={busy}
+					/>
+					<span class="guac-param-hint">px — Guacamole display size</span>
+				</div>
+				{/if}
 				{/each}
 				<button
 					type="button"
@@ -521,46 +788,47 @@
 				<span class="result-icon">✓</span>
 				<div class="result-body">
 					<span class="result-msg">{connectMsg}</span>
-					{#if connectUrls.length > 0}
-						<ul class="url-list">
-							{#each connectUrls as url}
-								<li>
-									<a class="url-link" href={url} target="_blank" rel="noopener noreferrer">
-										{url}
-									</a>
-								</li>
+					{#if resultButtons.length > 0}
+						<div class="result-buttons">
+							{#each resultButtons as btn}
+								<button
+									type="button"
+									class="result-open-btn"
+									class:result-open-btn--guac={btn.kind === 'guac'}
+									class:result-open-btn--launch={btn.kind === 'launch'}
+									disabled={probeState === 'checking' && probeBtn?.label === btn.label}
+									onclick={() => openItem(btn)}
+								>
+									{#if probeState === 'checking' && probeBtn?.label === btn.label}
+										Checking…
+									{:else}
+										{btn.label}
+									{/if}
+								</button>
 							{/each}
-						</ul>
-						<span class="url-hint">Click a link or “Open” to connect to the target device. If the device is offline the browser will show “site can’t be reached”.</span>
+						</div>
 					{/if}
-				</div>
-				{#if connectUrls.length > 0}
-					{#if probeState === 'unreachable'}
-						<div class="probe-fail">
+					{#if probeState === 'unreachable' && probeBtn}
+						<div class="probe-warn">
 							<strong>⚠ Device not reachable</strong>
 							<span>{probeMsg}</span>
-							<span class="probe-fail-btns">
+							<span class="probe-warn-btns">
 								<button type="button" class="probe-btn probe-btn-open"
-									onclick={() => { connectUrls.forEach(u => window.open(u, '_blank')); probeState = 'idle'; }}>
-									Open anyway
-								</button>
+									onclick={async () => {
+										const b = probeBtn!;
+										probeState = 'idle'; probeBtn = null;
+										await executeItem(b);
+									}}>Open anyway</button>
 								<button type="button" class="probe-btn probe-btn-retry"
-									onclick={openWithProbe}>
-									Retry check
-								</button>
+									onclick={async () => {
+										const b = probeBtn!;
+										probeState = 'idle'; probeBtn = null;
+										await openItem(b);
+									}}>Retry check</button>
 							</span>
 						</div>
-					{:else}
-						<button
-							type="button"
-							class="open-btn"
-							disabled={probeState === 'checking'}
-							onclick={openWithProbe}
-						>
-							{#if probeState === 'checking'}Checking…{:else}Open{/if}
-						</button>
 					{/if}
-				{/if}
+				</div>
 			</div>
 		{:else if connectState === 'error'}
 			<div class="result-banner result-err" role="alert" bind:this={resultBanner}>
@@ -724,11 +992,6 @@
 		gap           : 6px;
 	}
 
-	/* The transform checkbox occupies the second column and centres vertically */
-	.field-check {
-		justify-content: flex-end;
-	}
-
 	.field-label {
 		font-size  : 0.78rem;
 		font-weight: 600;
@@ -763,43 +1026,12 @@
 	.field-input::placeholder { color: var(--bg4); }
 	.field-input:disabled     { opacity: 0.5; cursor: not-allowed; }
 
-	.field-select {
-		appearance      : none;
-		background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%237c6f64' d='M6 8 0 0h12z'/%3E%3C/svg%3E");
-		background-repeat  : no-repeat;
-		background-position: right 12px center;
-		padding-right      : 36px;
-		cursor             : pointer;
-	}
-	.field-select option { background: var(--bg1); }
-
-	/* ── Checkbox ────────────────────────────────────────────────────────── */
-	.check-label {
-		display    : flex;
-		align-items: center;
-		gap        : 10px;
-		cursor     : pointer;
-		padding    : 10px 14px;
-		background : var(--bg1);
-		border     : 1px solid var(--bg3);
-		border-radius: 3px;
-	}
-	.check-label:has(.check-input:disabled) { opacity: 0.5; cursor: not-allowed; }
-
 	.check-input {
 		width        : 15px;
 		height       : 15px;
 		accent-color : var(--bright-blue);
 		flex-shrink  : 0;
 		cursor       : inherit;
-	}
-
-	.check-text {
-		font-size     : 0.85rem;
-		color         : var(--fg4);
-		line-height   : 1.5;
-		text-transform: none;
-		letter-spacing: normal;
 	}
 
 	/* ── Action row ──────────────────────────────────────────────────────── */
@@ -874,43 +1106,57 @@
 	.result-launching a { color: var(--yellow); }
 	.result-launching code { color: var(--yellow); font-family: inherit; }
 
-	.url-list {
-		list-style  : none;
-		padding     : 0;
-		margin      : 0;
-		display     : flex;
-		flex-direction: column;
-		gap         : 4px;
+
+	/* ── Result buttons ─────────────────────────────────────────────────────── */
+	.result-buttons {
+		display  : flex;
+		flex-wrap: wrap;
+		gap      : 8px;
+		margin-top: 10px;
 	}
 
-	.url-link {
-		color          : var(--bright-blue);
-		text-decoration: none;
-		font-family    : monospace;
-		font-size      : 0.88rem;
+	.result-open-btn {
+		background   : var(--green);
+		color        : var(--fg0);
+		border       : none;
+		border-radius: 3px;
+		padding      : 7px 18px;
+		font-family  : inherit;
+		font-size    : 0.88rem;
+		font-weight  : 600;
+		cursor       : pointer;
+		white-space  : nowrap;
+		transition   : background 0.15s;
+		width        : auto;
 	}
-	.url-link:hover { text-decoration: underline; }
+	.result-open-btn:hover         { background: var(--bright-green); color: var(--bg-hard); }
+	.result-open-btn--guac         { background: var(--blue); }
+	.result-open-btn--guac:hover   { background: var(--bright-blue); color: var(--fg0); }
+	.result-open-btn--launch       { background: var(--orange); }
+	.result-open-btn--launch:hover { background: var(--bright-orange); color: var(--fg0); }
 
-	/* ── Device reachability probe ─────────────────────────────────────────── */
-	.probe-fail {
+	/* ── Device reachability warning (inside result box) ─────────────────── */
+	.probe-warn {
 		display       : flex;
 		flex-direction: column;
-		gap           : 0.45rem;
-		padding       : 0.7rem 0.9rem;
-		border-radius : 6px;
+		gap           : 0.4rem;
+		padding       : 0.65rem 0.9rem;
+		border-radius : 3px;
 		font-size     : 0.82rem;
 		line-height   : 1.5;
 		background    : color-mix(in srgb, var(--orange) 12%, var(--bg0));
 		border        : 1px solid var(--orange);
 		color         : var(--fg2);
 	}
-	.probe-fail strong { color: var(--bright-orange); font-size: 0.85rem; }
-	.probe-fail-btns   { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+	.probe-warn strong { color: var(--bright-orange); font-size: 0.84rem; }
+
+	.probe-warn-btns { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 2px; }
+
 	.probe-btn {
 		background   : transparent;
 		border       : 1px solid var(--bg3);
-		border-radius: 4px;
-		padding      : 0.2rem 0.65rem;
+		border-radius: 3px;
+		padding      : 3px 10px;
 		font-size    : 0.78rem;
 		color        : var(--fg4);
 		cursor       : pointer;
@@ -920,32 +1166,6 @@
 	.probe-btn-open:hover  { color: var(--orange); border-color: var(--orange); }
 	.probe-btn-retry:hover { color: var(--aqua);   border-color: var(--aqua);   }
 
-	.url-hint {
-		font-size  : 0.8rem;
-		color      : var(--fg4);
-		line-height: 1.5;
-	}
-
-	/* ── Open button (inside success banner) ────────────────────────────────── */
-	.open-btn {
-		margin-left  : auto;
-		flex-shrink  : 0;
-		align-self   : center;
-		background   : var(--green);
-		color        : var(--fg0);
-		border       : none;
-		border-radius: 3px;
-		padding      : 8px 22px;
-		font-family  : inherit;
-		font-size    : 0.9rem;
-		font-weight  : 600;
-		cursor       : pointer;
-		white-space  : nowrap;
-		transition   : background 0.15s;
-		width        : auto;
-	}
-	.open-btn:hover  { background: var(--bright-green); color: var(--bg-hard); }
-	.open-btn:active { background: var(--aqua); }
 
 	/* ── Port rows ─────────────────────────────────────────────────────────── */
 	.port-rows {
@@ -957,7 +1177,7 @@
 	.port-row-head,
 	.port-row {
 		display              : grid;
-		grid-template-columns: 140px 110px 52px 52px 1fr 32px;
+		grid-template-columns: 140px 110px 52px 52px 52px 1fr 32px;
 		align-items          : stretch;
 	}
 
@@ -1052,4 +1272,45 @@
 	}
 	.pr-add:hover:not(:disabled) { background: var(--bg1); color: var(--bright-aqua); }
 	.pr-add:disabled              { opacity: 0.5; cursor: not-allowed; }
+	/* ── Guac display params sub-row ────────────────────────────────────── */
+	.port-row-guac {
+		display    : flex;
+		align-items: center;
+		gap        : 8px;
+		padding    : 6px 10px;
+		border-top : 1px dashed var(--bg3);
+		background : color-mix(in srgb, var(--bright-aqua) 5%, var(--bg0));
+	}
+
+	.guac-param-label {
+		font-size     : 0.72rem;
+		font-weight   : 600;
+		color         : var(--bright-aqua);
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		white-space   : nowrap;
+	}
+
+	.guac-param-input {
+		width        : 72px;
+		background   : var(--bg1);
+		color        : var(--fg1);
+		border       : 1px solid var(--bg3);
+		border-radius: 3px;
+		padding      : 4px 8px;
+		font-family  : inherit;
+		font-size    : 0.88rem;
+		outline      : none;
+		transition   : border-color 0.12s;
+	}
+	.guac-param-input:focus { border-color: var(--bright-aqua); }
+	.guac-param-input:disabled { opacity: 0.5; cursor: not-allowed; }
+
+	.guac-param-dpi { width: 52px; }
+
+	.guac-param-hint {
+		font-size : 0.75rem;
+		color     : var(--bg4);
+		margin-left: 4px;
+	}
 </style>

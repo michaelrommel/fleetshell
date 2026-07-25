@@ -22,6 +22,7 @@
 		"vite": "^8.0.16"
 	},
 	"dependencies": {
+		"guacamole-common-js": "^1.5.0",
 		"redis": "^6.1.0"
 	}
 }
