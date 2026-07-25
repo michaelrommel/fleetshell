@@ -626,7 +626,7 @@ pub fn launch_native(
 /// The wildcard cert (`*.client.fleetshell.com`) covers every name in this
 /// range and each hostname resolves to the corresponding loopback address,
 /// so the returned URL can be opened directly in a browser without warnings.
-fn dns_host(bind_ip: &str) -> String {
+pub(crate) fn dns_host(bind_ip: &str) -> String {
     bind_ip.replace('.', "-") + ".client.fleetshell.com"
 }
 

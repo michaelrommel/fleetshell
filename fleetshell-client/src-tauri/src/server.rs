@@ -1,5 +1,5 @@
 /// Axum HTTP server — router, shared state, and API handlers.
-use axum::{extract::State, http::StatusCode, routing::{get, post}, Json, Router};
+use axum::{extract::State, http::StatusCode, routing::post, Json, Router};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tauri::Emitter;
@@ -134,16 +134,9 @@ struct ProbeResponse {
 
 #[derive(Clone)]
 pub struct ApiState {
-    pub app:           tauri::AppHandle,
-    pub gateway_path:  Arc<String>,
-    pub slot_manager:  Arc<crate::slot::SlotManager>,
-    /// Pending Guacamole sessions created by `tunnel_handler` and consumed
-    /// by the `/guac-ws` WebSocket handler.  Each entry lives until the
-    /// browser opens the WebSocket (at which point it is removed) or until
-    /// the client restarts.
-    pub guac_sessions: Arc<tokio::sync::RwLock<
-        std::collections::HashMap<String, crate::guac_proxy::GuacSession>
-    >>,
+    pub app:          tauri::AppHandle,
+    pub gateway_path: Arc<String>,
+    pub slot_manager: Arc<crate::slot::SlotManager>,
 }
 
 // ── Router ────────────────────────────────────────────────────────────────────
@@ -155,7 +148,6 @@ pub fn build_router(state: ApiState) -> Router {
         .route("/api/deep-link",   post(deep_link_forward_handler))
         .route("/api/show",        post(show_handler))
         .route("/api/probe",       post(probe_handler))
-        .route("/guac-ws",         get(crate::guac_proxy::guac_ws_handler))
         .layer(CorsLayer::permissive())
         .with_state(state)
 }
@@ -258,20 +250,52 @@ async fn tunnel_handler(
         flat.iter().map(|(p, _)| *p).collect::<Vec<_>>(),
     );
 
-    // ── Guacamole mode: browser-based RDP / VNC via guacd ────────────────
+    // ── Guacamole mode: browser-based RDP / VNC via guacd ────────────────────
     //
-    // When any port row carries `guac: true` the whole request is treated as
-    // a Guacamole session.  We skip the slot/TCP-listener machinery, create
-    // a pending session record, and return a WebSocket URL for the browser
-    // to connect to.  The `/guac-ws` handler picks up the session record and
-    // drives the gateway handshake + bidirectional relay.
+    // Claim a real slot so the session appears in the Functions tab and the
+    // idle monitor works identically to a raw TCP tunnel.  A dedicated
+    // HTTP/WebSocket server is spawned on the slot IP:port; the browser
+    // connects there instead of to the main API port.
     if flat.iter().any(|(_, row)| row.guac.unwrap_or(false)) {
-        // Use the first guac port (typically the only one — 3389 for RDP, 5900 for VNC).
         let (port, row) = flat.into_iter()
             .find(|(_, r)| r.guac.unwrap_or(false))
             .unwrap();
 
-        let session = crate::guac_proxy::GuacSession {
+        // Claim a slot — provides the loopback IP, last_active counter, and
+        // task_handles for idle monitoring and clean shutdown.
+        let slot = match state.slot_manager.claim().await {
+            Some(s) => s,
+            None => {
+                let msg = "All 16 connection slots are in use".to_string();
+                log::error!("{}", msg);
+                return Err((
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    Json(serde_json::json!({ "error": msg })),
+                ));
+            }
+        };
+
+        let slot_idx     = slot.idx;
+        let slot_ip      = slot.ip.clone();
+        let last_active  = slot.last_active.clone();
+        let task_handles = slot.task_handles.clone();
+
+        // Bind the per-slot HTTP/WebSocket listener on the slot IP:port.
+        let listener = match tokio::net::TcpListener::bind((slot_ip.as_str(), port)).await {
+            Ok(l)  => l,
+            Err(e) => {
+                let msg = format!("Failed to bind {}:{}: {}", slot_ip, port, e);
+                log::error!("{}", msg);
+                state.slot_manager.release(slot_idx).await;
+                crate::util::navigate(&state.app, "logging");
+                return Err((
+                    StatusCode::CONFLICT,
+                    Json(serde_json::json!({ "error": msg })),
+                ));
+            }
+        };
+
+        let params = std::sync::Arc::new(crate::guac_proxy::GuacSessionParams {
             target:      req.target.clone(),
             port,
             token:       req.token.clone(),
@@ -282,20 +306,40 @@ async fn tunnel_handler(
             height:      req.height.unwrap_or(800),
             dpi:         req.dpi.unwrap_or(96),
             gateway:     req.gateway.clone(),
-        };
+            slot_idx,
+            last_active: last_active.clone(),
+        });
 
-        // Sequential counter — simple, no extra dep.
-        use std::sync::atomic::{AtomicU64, Ordering};
-        static SEQ: AtomicU64 = AtomicU64::new(1);
-        let session_id = format!("g{:016x}", SEQ.fetch_add(1, Ordering::Relaxed));
+        // Spawn the per-slot server.  Running inline (not spawn-then-forget)
+        // means aborting via task_handles also kills any active WebSocket session.
+        let state_c = state.clone();
+        let handle  = tokio::spawn(
+            crate::guac_proxy::run_guac_slot(listener, params, state_c)
+        );
+        task_handles.lock().unwrap().push(handle);
 
-        state.guac_sessions.write().await.insert(session_id.clone(), session);
+        // Notify the Functions tab.
+        state.app.emit("slot-update", serde_json::json!({
+            "idx": slot_idx, "status": "active", "progress": 1.0,
+        })).ok();
+
+        // Idle monitor — same as for raw TCP tunnels.
+        tokio::spawn(crate::slot::run_idle_monitor(
+            state.app.clone(),
+            slot_idx,
+            last_active,
+            cfg.idle_timeout,
+            state.slot_manager.clone(),
+        ));
 
         let ws_url = format!(
-            "wss://{}:{}/guac-ws?session={}",
-            API_HOST, API_PORT, session_id,
+            "wss://{}:{}/guac-ws",
+            crate::tunnel::dns_host(&slot_ip), port,
         );
-        log::info!("Guacamole session {} created — {}", session_id, ws_url);
+        log::info!(
+            "Guacamole session created — slot {} ({}) — {}",
+            slot_idx, slot_ip, ws_url,
+        );
 
         return Ok((
             StatusCode::OK,
@@ -303,7 +347,7 @@ async fn tunnel_handler(
                 status:  "connected",
                 ports:   vec![port],
                 urls:    vec![ws_url],
-                bind_ip: String::new(), // guac sessions have no slot IP
+                bind_ip: slot_ip,
             }),
         ));
     }
@@ -550,7 +594,7 @@ pub async fn serve_adaptive(
 ///
 /// Generic over the I/O stream type so the same code path handles both plain
 /// TCP and TLS streams without boxing.
-async fn serve_connection<S>(
+pub(crate) async fn serve_connection<S>(
     io:        hyper_util::rt::TokioIo<S>,
     router:    axum::Router,
     peer_addr: std::net::SocketAddr,

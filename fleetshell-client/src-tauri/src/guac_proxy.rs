@@ -1,198 +1,239 @@
-//! Guacamole WebSocket proxy — bridges the browser (guacamole-common-js) to
-//! the fleetshell-gateway's guac mode.
+//! Guacamole slot server and WebSocket proxy.
 //!
-//! # Flow
+//! Each guac session claims a slot IP (127.0.0.x) from the SlotManager and
+//! binds its own HTTP/WebSocket server on that IP:port.  The slot is
+//! displayed in the Functions tab, monitored by the idle timer, and released
+//! on disconnect or timeout — exactly like raw TCP tunnel sessions.
+//!
+//! # Architecture
 //!
 //! ```text
-//! Browser (guacamole-common-js)
-//!   │  WebSocket TEXT frames (raw Guacamole instruction text)
-//!   ▼
-//! /guac-ws?session=<id>  (this module)
-//!   │  look up GuacSession, consume it
-//!   │  TLS TCP connect to gateway
-//!   │  send JSON handshake: { guac: true, target, port, token, ... }
-//!   │  read "200 CONNECTED\n"
-//!   │  bridge: WS text ↔ raw TCP bytes
-//!   │  intercept 0.,4.ping,...; — echo back, never forward to gateway
-//!   ▼
-//! fleetshell-gateway (guac branch in handler.rs)
-//!   │  connects to local guacd, runs select→args→connect→ready
-//!   ▼
-//! guacd → RDP/VNC device
+//! Portal → POST /api/tunnel (guac:true, target=172.16.28.109, port=3389)
+//!
+//!   tunnel_handler
+//!     → SlotManager::claim()          → slot 0 (127.0.0.2)
+//!     → TcpListener::bind(127.0.0.2:3389)
+//!     → spawn run_guac_slot()         (per-slot HTTP/WS server)
+//!     → spawn run_idle_monitor()
+//!     → emit slot-update active
+//!     → return wss://127-0-0-2.client.fleetshell.com:3389/guac-ws
+//!
+//!   Browser connects to that URL
+//!     → run_guac_slot() accepts TCP, handles TLS, upgrades WebSocket
+//!     → guac_ws_handler() → handle_guac_ws() → bridge()
+//!
+//!   bridge()
+//!     → TLS connect to gateway
+//!     → JSON handshake { guac:true, ... }
+//!     → 200 CONNECTED
+//!     → relay WS text ↔ raw TCP bytes (last_active updated on every read)
+//!
+//!   On idle timeout or tab close:
+//!     → task_handles abort() kills run_guac_slot (and any live session)
+//!     → slot released, Functions tab updated
 //! ```
 
+use std::sync::Arc;
+use std::sync::atomic::Ordering;
+
 use axum::{
+	Router,
 	extract::{
-		Query,
 		State,
 		ws::{Message, WebSocket, WebSocketUpgrade},
 	},
-	http::StatusCode,
 	response::IntoResponse,
+	routing::get as ws_upgrade,
 };
 use futures_util::{SinkExt, StreamExt};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tower_http::cors::CorsLayer;
 
 use crate::server::ApiState;
+use tauri::Manager as _;  // for AppHandle::state()
 
-// ── Pending session record ────────────────────────────────────────────────────
+// ── Session parameters ────────────────────────────────────────────────────────
 
-/// Connection parameters for one pending Guacamole session.
-///
-/// Created by `tunnel_handler` when `guac: true` is set, stored in
-/// `ApiState::guac_sessions`, and consumed by [`guac_ws_handler`] the moment
-/// the browser opens the WebSocket.
-#[derive(Debug, Clone)]
-pub struct GuacSession {
-	pub target:   String,
-	pub port:     u16,
-	pub token:    String,
-	pub protocol: String,
-	pub username: String,
+/// All parameters needed to open a Guacamole session.
+/// Stored in the per-slot axum router's State; no separate session map needed.
+#[derive(Debug)]
+pub struct GuacSessionParams {
+	pub target:      String,
+	pub port:        u16,
+	pub token:       String,
+	pub protocol:    String,
+	pub username:    String,
 	/// Never logged.
-	pub password: String,
-	pub width:    u32,
-	pub height:   u32,
-	pub dpi:      u32,
-	pub gateway:  String,
+	pub password:    String,
+	pub width:       u32,
+	pub height:      u32,
+	pub dpi:         u32,
+	pub gateway:     String,
+	/// Slot index — for log messages and Tauri events.
+	pub slot_idx:    usize,
+	/// Shared with the idle monitor; updated on every byte that flows.
+	pub last_active: Arc<std::sync::atomic::AtomicU64>,
 }
 
-// ── WebSocket upgrade handler (axum route) ────────────────────────────────────
+// ── Per-slot router state ─────────────────────────────────────────────────────
 
-#[derive(serde::Deserialize)]
-pub struct GuacWsParams {
-	session: String,
+#[derive(Clone)]
+struct GuacRouterState {
+	params:    Arc<GuacSessionParams>,
+	api_state: ApiState,
 }
 
-/// `GET /guac-ws?session=<id>`
+// ── Per-slot router ───────────────────────────────────────────────────────────
+
+fn build_guac_router(params: Arc<GuacSessionParams>, api_state: ApiState) -> Router {
+	Router::new()
+		.route("/guac-ws", ws_upgrade(guac_ws_handler))
+		.layer(CorsLayer::permissive())
+		.with_state(GuacRouterState { params, api_state })
+}
+
+// ── Per-slot server ───────────────────────────────────────────────────────────
+
+/// Accept connections on `listener` and serve the Guacamole WebSocket handler.
 ///
-/// Upgrades to WebSocket (subprotocol `guacamole`), looks up the pending
-/// session record, then hands off to [`handle_guac_ws`].
-pub async fn guac_ws_handler(
-	ws:            WebSocketUpgrade,
-	State(state):  State<ApiState>,
-	Query(params): Query<GuacWsParams>,
-) -> impl IntoResponse {
-	// Look up — and immediately remove — the pending session so it can only
-	// be claimed once.
-	let session = state.guac_sessions
-		.write().await
-		.remove(&params.session);
-
-	let session = match session {
-		Some(s) => s,
-		None    => {
-			log::warn!("guac-ws: unknown session id '{}'", params.session);
-			return StatusCode::NOT_FOUND.into_response();
-		}
-	};
+/// The entire accept loop and every connection it spawns run within the calling
+/// task.  When the idle monitor aborts the task handle, both the listener and
+/// any active WebSocket session are cancelled immediately — no lingering tasks.
+pub async fn run_guac_slot(
+	listener:  tokio::net::TcpListener,
+	params:    Arc<GuacSessionParams>,
+	api_state: ApiState,
+) {
+	let tls_state = api_state.app
+		.state::<crate::server::TlsState>()
+		.0.clone();
 
 	log::info!(
-		"guac-ws: session {} accepted -- target={}:{} protocol={}",
-		params.session, session.target, session.port, session.protocol,
+		"guac slot {} — listening on {} port {}",
+		params.slot_idx, params.target, params.port,
 	);
 
+	loop {
+		let (stream, peer_addr) = match listener.accept().await {
+			Ok(p)  => p,
+			Err(e) => { log::error!("guac slot {} accept error: {}", params.slot_idx, e); break; }
+		};
+
+		let acceptor_opt = tls_state.read().await.clone();
+		let router       = build_guac_router(params.clone(), api_state.clone());
+
+		// Serve the connection inline (not spawned) so that aborting this
+		// task also terminates the active WebSocket session.
+		match acceptor_opt {
+			Some(acceptor) => {
+				match acceptor.accept(stream).await {
+					Ok(tls) => crate::server::serve_connection(
+						hyper_util::rt::TokioIo::new(tls), router, peer_addr,
+					).await,
+					Err(e) => log::warn!("guac slot {} TLS failed: {}", params.slot_idx, e),
+				}
+			}
+			None => {
+				crate::server::serve_connection(
+					hyper_util::rt::TokioIo::new(stream), router, peer_addr,
+				).await;
+			}
+		}
+	}
+}
+
+// ── WebSocket upgrade handler ─────────────────────────────────────────────────
+
+async fn guac_ws_handler(
+	ws:           WebSocketUpgrade,
+	State(state): State<GuacRouterState>,
+) -> impl IntoResponse {
+	log::info!(
+		"guac slot {} — browser connected (target={}:{})",
+		state.params.slot_idx, state.params.target, state.params.port,
+	);
 	ws.protocols(["guacamole"])
-		.on_upgrade(move |socket| handle_guac_ws(socket, session, state))
+		.on_upgrade(move |socket| handle_guac_ws(socket, state.params, state.api_state))
 		.into_response()
 }
 
 // ── Inner handler ─────────────────────────────────────────────────────────────
 
-async fn handle_guac_ws(socket: WebSocket, session: GuacSession, state: ApiState) {
-	let (gw_host, gw_port) = crate::tunnel::parse_gateway(&session.gateway);
+async fn handle_guac_ws(
+	socket:    WebSocket,
+	params:    Arc<GuacSessionParams>,
+	api_state: ApiState,
+) {
+	let (gw_host, gw_port) = crate::tunnel::parse_gateway(&params.gateway);
 	let gw_addr = format!("{}:{}", gw_host, gw_port);
 
-	// ── 1. TCP connect to gateway ─────────────────────────────────────────
+	// ── TLS connect to gateway ────────────────────────────────────────────
 	let tcp = match tokio::net::TcpStream::connect(&gw_addr).await {
 		Ok(s)  => s,
-		Err(e) => {
-			log::error!("guac-ws: gateway TCP connect failed ({}): {}", gw_addr, e);
-			return;
-		}
+		Err(e) => { log::error!("guac slot {} gateway TCP failed ({}): {}", params.slot_idx, gw_addr, e); return; }
 	};
-
-	// ── 2. TLS handshake ──────────────────────────────────────────────────
 	let connector = match crate::tunnel::make_tls_connector() {
 		Ok(c)  => c,
-		Err(e) => {
-			log::error!("guac-ws: TLS setup failed: {}", e);
-			return;
-		}
+		Err(e) => { log::error!("guac slot {} TLS setup failed: {}", params.slot_idx, e); return; }
 	};
-
 	let server_name = match rustls::pki_types::ServerName::try_from(gw_host.as_str()) {
 		Ok(n)  => n.to_owned(),
-		Err(e) => {
-			log::error!("guac-ws: invalid gateway hostname '{}': {}", gw_host, e);
-			return;
-		}
+		Err(e) => { log::error!("guac slot {} invalid gateway hostname '{}': {}", params.slot_idx, gw_host, e); return; }
 	};
-
 	let mut tls = match connector.connect(server_name, tcp).await {
 		Ok(s)  => s,
-		Err(e) => {
-			log::error!("guac-ws: TLS handshake failed: {}", e);
-			return;
-		}
+		Err(e) => { log::error!("guac slot {} TLS handshake failed: {}", params.slot_idx, e); return; }
 	};
 
-	// ── 3. Send gateway JSON handshake ────────────────────────────────────
-	let payload = build_gateway_payload(&session, &state.gateway_path);
-	if let Err(e) = tls.write_all(&payload).await {
-		log::error!("guac-ws: handshake write failed: {}", e);
-		return;
-	}
-	if let Err(e) = tls.flush().await {
-		log::error!("guac-ws: handshake flush failed: {}", e);
+	// ── Gateway JSON handshake ────────────────────────────────────────────
+	let payload = build_gateway_payload(&params, &api_state.gateway_path);
+	if tls.write_all(&payload).await.is_err() || tls.flush().await.is_err() {
+		log::error!("guac slot {} handshake write failed", params.slot_idx);
 		return;
 	}
 
-	// ── 4. Read gateway status line ───────────────────────────────────────
+	// ── Read gateway status ───────────────────────────────────────────────
 	let status = match crate::tunnel::read_line(&mut tls, 1024).await {
 		Ok(s)  => s,
-		Err(e) => {
-			log::error!("guac-ws: failed to read gateway status: {}", e);
-			return;
-		}
+		Err(e) => { log::error!("guac slot {} failed to read gateway status: {}", params.slot_idx, e); return; }
 	};
 	let upper = status.trim().to_uppercase();
-	log::info!("guac-ws: gateway status '{}'", status.trim());
+	log::info!("guac slot {} gateway: '{}'", params.slot_idx, status.trim());
 
 	if upper.starts_with("401") || upper.starts_with("403") {
-		log::error!("guac-ws: gateway auth rejected: {}", status.trim());
+		log::error!("guac slot {} gateway auth rejected: {}", params.slot_idx, status.trim());
 		return;
 	}
 	if !upper.starts_with("200") || !upper.contains("CONNECTED") {
-		log::error!("guac-ws: gateway refused: {}", status.trim());
+		log::error!("guac slot {} gateway refused: {}", params.slot_idx, status.trim());
 		return;
 	}
 
-	// ── 5. Bridge WebSocket ↔ TLS TCP ─────────────────────────────────────
-	log::info!("guac-ws: relay started — target={}:{}", session.target, session.port);
-	bridge(socket, tls).await;
-	log::info!("guac-ws: relay ended — target={}:{}", session.target, session.port);
+	// ── Bridge ────────────────────────────────────────────────────────────
+	log::info!("guac slot {} relay started", params.slot_idx);
+	bridge(socket, tls, params.last_active.clone()).await;
+	log::info!("guac slot {} relay ended", params.slot_idx);
 }
 
 // ── Bridge ────────────────────────────────────────────────────────────────────
 
-/// Bridge a browser WebSocket to the raw TCP stream returned by the gateway
-/// after `200 CONNECTED`.
+/// Bridge a browser WebSocket to the raw TCP stream from the gateway.
 ///
-/// The Guacamole protocol is text-based: the browser sends `TEXT` frames
-/// whose payload is one or more Guacamole instructions, and receives the
-/// same from the gateway side.  No WebSocket framing changes are needed
-/// on the gateway side — raw bytes in = raw bytes out.
+/// Every byte that flows updates `last_active` so the idle monitor sees
+/// real traffic and does not time out an active session.
+///
+/// # Instruction-boundary flushing
+///
+/// guacamole-common-js requires every WebSocket TEXT message to end at a
+/// complete Guacamole instruction (`…;`).  Raw reads return arbitrary byte
+/// counts that can split instructions mid-stream.  We buffer in `carry` and
+/// only send complete instructions per WebSocket message.
 ///
 /// # Ping intercept
 ///
-/// guacamole-common-js sends a keepalive every 500 ms:
-/// `0.,4.ping,<timestamp>;`
-///
-/// The opcode is the empty string (`0.`).  This must be **echoed back to the
-/// browser** and **not forwarded to the gateway or guacd** — without the echo
-/// the browser marks the tunnel UNSTABLE after ~1.5 s and closes it after 15 s.
-async fn bridge<G>(socket: WebSocket, gateway: G)
+/// guacamole-common-js sends `0.,4.ping,<ts>;` every 500 ms.  This must be
+/// echoed back to the browser and NOT forwarded to the gateway/guacd.
+async fn bridge<G>(socket: WebSocket, gateway: G, last_active: Arc<std::sync::atomic::AtomicU64>)
 where
 	G: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
 {
@@ -201,21 +242,12 @@ where
 
 	let (mut ws_tx, mut ws_rx) = socket.split();
 
-	// Channel that merges two sources of outgoing browser messages:
-	//   • ping echoes (browser→gateway direction intercepts them here)
-	//   • drawing instructions (gateway→browser direction sends here)
 	let (to_browser, mut from_senders) =
 		tokio::sync::mpsc::unbounded_channel::<String>();
 
-	// ── Task A: gateway → browser ─────────────────────────────────────────────────────
-	//
-	// guacamole-common-js requires every WebSocket TEXT message to end at
-	// a complete Guacamole instruction boundary (i.e. at a ';').  A raw
-	// read() call returns an arbitrary byte count that can split an
-	// instruction mid-stream; the browser parser then fails with
-	// "Incomplete instruction".  We accumulate in `carry` and only flush
-	// up to the last complete instruction boundary per read.
-	let gw_tx = to_browser.clone();
+	// ── Task A: gateway → browser ─────────────────────────────────────────
+	let gw_tx        = to_browser.clone();
+	let last_active_a = last_active.clone();
 	let gw_task = tokio::spawn(async move {
 		let mut buf   = vec![0u8; 65536];
 		let mut carry: Vec<u8> = Vec::new();
@@ -223,6 +255,7 @@ where
 			match gw_r.read(&mut buf).await {
 				Ok(0) | Err(_) => break,
 				Ok(n) => {
+					last_active_a.store(crate::slot::now_secs(), Ordering::Relaxed);
 					carry.extend_from_slice(&buf[..n]);
 					if let Some(end) = last_instruction_end(&carry) {
 						let to_send: Vec<u8> = carry.drain(..end).collect();
@@ -236,13 +269,14 @@ where
 	});
 
 	// ── Task B: browser → gateway (with ping intercept) ───────────────────
-	let ping_tx = to_browser.clone();
+	let ping_tx       = to_browser.clone();
+	let last_active_b = last_active.clone();
 	let browser_task = tokio::spawn(async move {
 		while let Some(msg) = ws_rx.next().await {
 			match msg {
 				Ok(Message::Text(text)) => {
+					last_active_b.store(crate::slot::now_secs(), Ordering::Relaxed);
 					if is_guac_ping(&text) {
-						// Echo ping back without forwarding.
 						ping_tx.send(text.to_string()).ok();
 						continue;
 					}
@@ -250,25 +284,19 @@ where
 					if gw_w.flush().await.is_err() { break; }
 				}
 				Ok(Message::Binary(b)) => {
-					// Guacamole should only use text frames; handle binary
-					// defensively by forwarding raw bytes.
 					if gw_w.write_all(&b).await.is_err() { break; }
 					if gw_w.flush().await.is_err() { break; }
 				}
 				Ok(Message::Close(_)) | Err(_) => break,
-				_ => {} // Ping/Pong handled by axum automatically.
+				_ => {}
 			}
 		}
 	});
 
-	// Drop the spare sender so the channel closes when both tasks end.
 	drop(to_browser);
 
-	// ── Main loop: forward merged output to the browser ───────────────────
 	while let Some(text) = from_senders.recv().await {
-		if ws_tx.send(Message::Text(text.into())).await.is_err() {
-			break;
-		}
+		if ws_tx.send(Message::Text(text.into())).await.is_err() { break; }
 	}
 
 	gw_task.abort();
@@ -277,83 +305,52 @@ where
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/// Find the byte offset just past the last **complete** Guacamole instruction
-/// in `buf`, or `None` if no complete instruction is present.
-///
-/// Walks the buffer using the Guacamole length-prefix wire format so that `;`
-/// characters inside element values (e.g. in base64 image blobs) are never
-/// mistaken for instruction terminators.
+/// Find the byte offset just past the last complete Guacamole instruction in
+/// `buf`, using length-prefix parsing so `;` inside values is never mistaken
+/// for a terminator.
 fn last_instruction_end(buf: &[u8]) -> Option<usize> {
 	let mut last_end: Option<usize> = None;
 	let mut pos = 0usize;
-
 	loop {
-		// Try to parse one complete instruction starting at `pos`.
 		loop {
-			// ── length prefix (decimal digits terminated by '.') ──────────────
 			let len_start = pos;
-			while pos < buf.len() && buf[pos].is_ascii_digit() {
-				pos += 1;
-			}
-			if pos == len_start || pos >= buf.len() || buf[pos] != b'.' {
-				return last_end; // incomplete or malformed
-			}
-			let len: usize = match std::str::from_utf8(&buf[len_start..pos])
-				.ok()
-				.and_then(|s| s.parse().ok())
-			{
-				Some(n) => n,
-				None    => return last_end,
+			while pos < buf.len() && buf[pos].is_ascii_digit() { pos += 1; }
+			if pos == len_start || pos >= buf.len() || buf[pos] != b'.' { return last_end; }
+			let len: usize = match std::str::from_utf8(&buf[len_start..pos]).ok().and_then(|s| s.parse().ok()) {
+				Some(n) => n, None => return last_end,
 			};
-			pos += 1; // skip '.'
-
-			// ── element value (exactly `len` bytes) ──────────────────────────
-			if pos + len > buf.len() {
-				return last_end; // value incomplete
-			}
+			pos += 1;
+			if pos + len > buf.len() { return last_end; }
 			pos += len;
-
-			// ── separator: ',' more elements | ';' end of instruction ──────
-			if pos >= buf.len() {
-				return last_end;
-			}
+			if pos >= buf.len() { return last_end; }
 			match buf[pos] {
-				b',' => { pos += 1; } // another element follows
-				b';' => {
-					pos += 1;
-					last_end = Some(pos); // instruction complete
-					break; // inner loop: try next instruction
-				}
-				_ => return last_end, // malformed byte
+				b',' => { pos += 1; }
+				b';' => { pos += 1; last_end = Some(pos); break; }
+				_    => return last_end,
 			}
 		}
-		// Outer loop: attempt the next instruction.
 	}
 }
 
-/// Returns `true` if `text` is a Guacamole tunnel keepalive ping.
-///
-/// guacamole-common-js sends `0.,4.ping,<timestamp>;` every 500 ms using the
-/// empty-string opcode (internal data channel).  It must be echoed back and
-/// must not be forwarded to guacd.
+/// `true` if `text` is a Guacamole keepalive ping — must be echoed, never forwarded.
 fn is_guac_ping(text: &str) -> bool {
 	text.starts_with("0.,4.ping,")
 }
 
-/// Build the newline-terminated JSON handshake line sent to the gateway.
-fn build_gateway_payload(session: &GuacSession, gateway_path: &str) -> Vec<u8> {
+/// Build the newline-terminated JSON handshake sent to the gateway.
+fn build_gateway_payload(params: &GuacSessionParams, gateway_path: &str) -> Vec<u8> {
 	let json = serde_json::json!({
-		"target":      session.target,
-		"application": session.protocol,
-		"port":        session.port,
-		"token":       session.token,
+		"target":      params.target,
+		"application": params.protocol,
+		"port":        params.port,
+		"token":       params.token,
 		"guac":        true,
-		"username":    session.username,
-		"password":    session.password,
-		"width":       session.width,
-		"height":      session.height,
-		"dpi":         session.dpi,
-		"gateway":     session.gateway,
+		"username":    params.username,
+		"password":    params.password,
+		"width":       params.width,
+		"height":      params.height,
+		"dpi":         params.dpi,
+		"gateway":     params.gateway,
 		"path":        gateway_path,
 		"e2ecrypt":    false,
 	});
