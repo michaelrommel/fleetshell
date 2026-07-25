@@ -2,6 +2,7 @@
 resolver = "2"
 
 members = [
-    "fleetshell-client/src-tauri",
-    "fleetshell-gateway",
+	"fleetshell-client/src-tauri",
+	"fleetshell-gateway",
+	"test-guac",
 ]
