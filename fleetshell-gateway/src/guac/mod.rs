@@ -16,5 +16,5 @@
 pub mod connection;
 pub mod protocol;
 
-pub use connection::{connect, ConnectionParams, GuacdError, GuacdSession, RdpParams, VncParams};
+pub use connection::{connect, ConnectionParams, GuacdError, GuacdSession, RdpParams, SshParams, VncParams};
 pub use protocol::Instruction;

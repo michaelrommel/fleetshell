@@ -104,11 +104,49 @@ impl Default for VncParams {
 	}
 }
 
+/// Parameters for an SSH session.
+///
+/// guacd renders a full terminal emulator on the Guacamole canvas.
+/// Width, height, and DPI are converted to a character-cell grid internally.
+#[derive(Debug, Clone)]
+pub struct SshParams {
+	/// Hostname or IP address of the SSH server.
+	pub hostname: String,
+	/// SSH port.  Default: 22.
+	pub port:     u16,
+	/// SSH username.
+	pub username: String,
+	/// Password (optional — leave `None` to rely on key-based auth if
+	/// configured on the server, or to trigger an interactive prompt).
+	pub password: Option<String>,
+	/// Terminal canvas width in pixels.
+	pub width:  u32,
+	/// Terminal canvas height in pixels.
+	pub height: u32,
+	/// Dots per inch (affects character cell sizing).
+	pub dpi: u32,
+}
+
+impl Default for SshParams {
+	fn default() -> Self {
+		Self {
+			hostname: String::new(),
+			port:     22,
+			username: String::new(),
+			password: None,
+			width:    1280,
+			height:   800,
+			dpi:      96,
+		}
+	}
+}
+
 /// Union of supported Guacamole connection types.
 #[derive(Debug, Clone)]
 pub enum ConnectionParams {
 	Rdp(RdpParams),
 	Vnc(VncParams),
+	Ssh(SshParams),
 }
 
 impl ConnectionParams {
@@ -117,6 +155,7 @@ impl ConnectionParams {
 		match self {
 			Self::Rdp(_) => "rdp",
 			Self::Vnc(_) => "vnc",
+			Self::Ssh(_) => "ssh",
 		}
 	}
 
@@ -124,6 +163,7 @@ impl ConnectionParams {
 		match self {
 			Self::Rdp(p) => (p.width, p.height, p.dpi),
 			Self::Vnc(p) => (p.width, p.height, p.dpi),
+			Self::Ssh(p) => (p.width, p.height, p.dpi),
 		}
 	}
 
@@ -152,6 +192,16 @@ impl ConnectionParams {
 				m.insert("hostname", p.hostname.clone());
 				m.insert("port",     p.port.to_string());
 				m.insert("password", p.password.clone().unwrap_or_default());
+				m.insert("width",    p.width.to_string());
+				m.insert("height",   p.height.to_string());
+				m.insert("dpi",      p.dpi.to_string());
+			}
+			Self::Ssh(p) => {
+				m.insert("hostname", p.hostname.clone());
+				m.insert("port",     p.port.to_string());
+				m.insert("username", p.username.clone());
+				m.insert("password", p.password.clone().unwrap_or_default());
+				// guacd uses pixel dimensions to compute character-cell grid.
 				m.insert("width",    p.width.to_string());
 				m.insert("height",   p.height.to_string());
 				m.insert("dpi",      p.dpi.to_string());

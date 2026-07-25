@@ -3,6 +3,7 @@
 /// All fields have sensible defaults for local development. Set the
 /// `JWT_SECRET` variable to something strong in every real deployment.
 
+use std::sync::Arc;
 #[derive(Debug, Clone)]
 pub struct Config {
     /// TCP address to listen on. Default: `0.0.0.0:8443`.
@@ -29,9 +30,25 @@ pub struct Config {
     /// environments where the upstream presents a CA-signed certificate.
     pub upstream_tls_accept_invalid_certs: bool,
 
-    /// Whether the gateway handles TLS on its own listening socket.
+    /// Live guacd TCP streams parked after a client WebSocket disconnect.
     ///
-    /// **Default: `false`** — in the standard deployment an AWS NLB terminates
+    /// Keyed by the guacd `connection_id` (`$uuid` from the `ready`
+    /// instruction).  A reconnecting client sends the same id back; the
+    /// gateway unparks the stream and resumes the session.  Entries are
+    /// removed on reconnect or when the grace-period timer fires.
+    ///
+    /// Shared across all handler tasks via `Arc<Mutex<_>>`.
+    pub parked_sessions: Arc<tokio::sync::Mutex<
+        std::collections::HashMap<String, tokio::net::TcpStream>
+    >>,
+
+    /// How long (seconds) to keep a guacd session parked after the browser
+    /// WebSocket closes, waiting for a reconnect.
+    ///
+    /// Set via `GUAC_RECONNECT_GRACE_SECS`.  Default: 30.
+    pub reconnect_grace_secs: u64,
+
+    /// Whether the gateway handles TLS on its own listening socket.
     /// TLS (ACM certificate for `gateway.fleetshell.com`) and forwards plain
     /// TCP to the container fleet.  No certificate management is needed on the
     /// containers, and all containers in a scale-out group are identical.
@@ -96,6 +113,15 @@ impl Config {
 
             guacd_addr: std::env::var("GUACD_ADDR")
                 .unwrap_or_else(|_| "127.0.0.1:4822".to_string()),
+
+            parked_sessions: Arc::new(tokio::sync::Mutex::new(
+                std::collections::HashMap::new()
+            )),
+
+            reconnect_grace_secs: std::env::var("GUAC_RECONNECT_GRACE_SECS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(30),
         }
     }
 }

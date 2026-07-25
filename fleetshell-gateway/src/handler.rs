@@ -10,9 +10,10 @@
 ///    error status line and close.
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use serde::Deserialize;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 use tracing::{debug, error, info, warn};
 
@@ -60,7 +61,7 @@ pub struct HandshakePayload {
     /// When `true`, route through the local guacd daemon instead of opening
     /// a raw TCP connection to the target.  guacd speaks Guacamole protocol
     /// to the client while translating to native RDP or VNC on the device.
-    /// `application` must be `"rdp"` or `"vnc"`.
+    /// `application` must be `"rdp"`, `"vnc"`, or `"ssh"`.
     pub guac:        Option<bool>,
 
     /// RDP / VNC username supplied by the portal from its device database.
@@ -82,6 +83,17 @@ pub struct HandshakePayload {
 
     /// Dots per inch for Guacamole sessions.  Defaults to 96 when absent.
     pub dpi:         Option<u32>,
+
+    /// Opaque identifier of a parked guacd session to resume.
+    ///
+    /// When the browser reloads, the client re-sends the `connection_id`
+    /// returned in the previous `200 CONNECTED` response.  The gateway
+    /// matches this to a parked guacd stream and bridges the new client
+    /// directly — skipping the guacd opening handshake and preserving the
+    /// running RDP/VNC session.
+    ///
+    /// `None` on the first connect (new session); `Some` on reconnect.
+    pub connection_id:  Option<String>,
 }
 
 // ── Handler ───────────────────────────────────────────────────────────────────
@@ -227,13 +239,36 @@ where
 
     // ── 4c. Guacamole mode: connect via guacd instead of raw TCP ─────────────
     //
-    // When `guac: true` the gateway hands off to the local guacd daemon.
-    // guacd performs the native RDP / VNC handshake with the target and
-    // speaks the Guacamole text protocol back to the client.  After the
-    // guacd opening handshake the connection becomes a raw byte relay of
-    // Guacamole instructions — structurally identical to e2ecrypt mode
-    // but with guacd as the "upstream" instead of the target device.
+    // The response line carries the guacd connection_id so the client can
+    // reconnect to the same session after a WebSocket drop:
+    //
+    //   200 CONNECTED $cf9dace0-fffd-4bef-97cc-ff3db89c18c8\n
+    //
+    // On reconnect the client sends the same id back in `connection_id`.
+    // The gateway unparks the live guacd TcpStream and bridges the new
+    // client to it, skipping the opening handshake entirely.
     if payload.guac.unwrap_or(false) {
+
+        // ── Reconnect path ───────────────────────────────────────────────────────────
+        if let Some(ref cid) = payload.connection_id {
+            let parked = config.parked_sessions.lock().await.remove(cid);
+            if let Some(mut guacd) = parked {
+                info!(%peer, connection_id = %cid, "guacd reconnect — resuming parked session");
+                let resp = format!("200 CONNECTED {}\n", cid);
+                send_line(&mut writer_half, resp.as_bytes()).await;
+                let mut client = tokio::io::join(reader, writer_half);
+                if relay_guac(&mut client, &mut guacd).await {
+                    park_session(&config, cid.clone(), guacd, peer).await;
+                } else {
+                    info!(%peer, connection_id = %cid, "guacd session ended");
+                }
+                return;
+            }
+            // Grace period expired or unknown id — fall through to new session.
+            info!(%peer, connection_id = %cid, "parked session not found — starting new session");
+        }
+
+        // ── New session path ──────────────────────────────────────────────────────────
         let params = match payload.application.as_str() {
             "rdp" => guac::ConnectionParams::Rdp(guac::RdpParams {
                 hostname:    payload.target.clone(),
@@ -249,6 +284,15 @@ where
             "vnc" => guac::ConnectionParams::Vnc(guac::VncParams {
                 hostname: payload.target.clone(),
                 port:     payload.port,
+                password: payload.password.clone(),
+                width:    payload.width.unwrap_or(1280),
+                height:   payload.height.unwrap_or(800),
+                dpi:      payload.dpi.unwrap_or(96),
+            }),
+            "ssh" => guac::ConnectionParams::Ssh(guac::SshParams {
+                hostname: payload.target.clone(),
+                port:     payload.port,
+                username: payload.username.clone().unwrap_or_default(),
                 password: payload.password.clone(),
                 width:    payload.width.unwrap_or(1280),
                 height:   payload.height.unwrap_or(800),
@@ -276,32 +320,23 @@ where
         info!(%peer,
             connection_id = %session.connection_id,
             "guacd handshake complete — entering Guacamole relay");
-        send_line(&mut writer_half, b"200 CONNECTED\n").await;
+
+        // Include the connection_id in the response so the client can
+        // send it back on reconnect.
+        let resp = format!("200 CONNECTED {}\n", session.connection_id);
+        send_line(&mut writer_half, resp.as_bytes()).await;
 
         let mut client = tokio::io::join(reader, writer_half);
         let mut guacd  = session.stream;
 
-        match tokio::io::copy_bidirectional(&mut client, &mut guacd).await {
-            Ok((to_guacd, from_guacd)) => {
-                info!(%peer, to_guacd, from_guacd,
-                    "Guacamole session closed cleanly");
-            }
-            Err(e) => {
-                use std::io::ErrorKind::{
-                    BrokenPipe, ConnectionAborted, ConnectionReset, UnexpectedEof,
-                };
-                match e.kind() {
-                    ConnectionReset | ConnectionAborted
-                    | BrokenPipe    | UnexpectedEof => {
-                        debug!(%peer, "Guacamole session ended ({})", e.kind());
-                    }
-                    _ => info!(%peer, "Guacamole session ended: {e}"),
-                }
-            }
+        if relay_guac(&mut client, &mut guacd).await {
+            // Client disconnected; guacd is still alive — park for reconnect.
+            park_session(&config, session.connection_id, guacd, peer).await;
+        } else {
+            info!(%peer, "Guacamole session ended by guacd");
         }
         return;
     }
-
     // ── 5. Connect to target (before accepting, so we can report failure) ─
     let target_addr = format!("{}:{}", payload.target, payload.port);
     let mut target = match TcpStream::connect(&target_addr).await {
@@ -392,6 +427,61 @@ where
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+/// Bidirectional relay between `client` and `guacd`.
+///
+/// Returns `true` if the **client** side closed the connection and guacd is
+/// still alive (the session should be parked for reconnect).
+/// Returns `false` if **guacd** closed the connection (session ended cleanly).
+async fn relay_guac<C, G>(client: &mut C, guacd: &mut G) -> bool
+where
+    C: AsyncRead + AsyncWrite + Unpin,
+    G: AsyncRead + AsyncWrite + Unpin,
+{
+    let mut buf_c = vec![0u8; 16_384];
+    let mut buf_g = vec![0u8; 16_384];
+    loop {
+        tokio::select! {
+            res = client.read(&mut buf_c) => match res {
+                Ok(0) | Err(_) => return true,   // client closed
+                Ok(n) => { if guacd.write_all(&buf_c[..n]).await.is_err() { return false; } }
+            },
+            res = guacd.read(&mut buf_g) => match res {
+                Ok(0) | Err(_) => return false,  // guacd ended the session
+                Ok(n) => { if client.write_all(&buf_g[..n]).await.is_err() { return true; } }
+            },
+        }
+    }
+}
+
+/// Park a live guacd stream for `reconnect_grace_secs` seconds.
+///
+/// If a client reconnects within that window it will find the stream in
+/// `config.parked_sessions` and resume the session without a new handshake.
+/// If nobody reconnects, the timer task removes the entry and the stream drops.
+async fn park_session(
+    config:        &Arc<Config>,
+    connection_id: String,
+    guacd:         TcpStream,
+    peer:          SocketAddr,
+) {
+    let grace = config.reconnect_grace_secs;
+    info!(%peer, %connection_id,
+        "parking guacd session for {grace}s (client disconnected)");
+
+    let parked = Arc::clone(&config.parked_sessions);
+    let id     = connection_id.clone();
+
+    config.parked_sessions.lock().await.insert(connection_id, guacd);
+
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(grace)).await;
+        if parked.lock().await.remove(&id).is_some() {
+            info!(connection_id = %id, "parked guacd session expired ({grace}s)");
+        }
+        // If already removed by a reconnect, this is a silent no-op.
+    });
+}
 
 /// Write `data` to `writer` and flush.  Errors are logged and swallowed —
 /// a best-effort reply is all we can offer at this point.

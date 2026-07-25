@@ -12,7 +12,7 @@
 ///   `INFO` level.
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
 /// Canned HTTP/1.1 response returned for every health probe.
 const RESPONSE: &[u8] = b"\
@@ -43,7 +43,7 @@ pub async fn serve(addr: String) {
 
 	loop {
 		match listener.accept().await {
-			Ok((mut stream, peer)) => {
+			Ok((mut stream, _peer)) => {
 				tokio::spawn(async move {
 					// Drain the incoming request — we don't care about the
 					// path or headers, any HTTP request gets 200 back.
