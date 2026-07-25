@@ -46,7 +46,10 @@
 	type ConnectState = 'idle' | 'signing' | 'connecting' | 'launching' | 'done' | 'error';
 	let connectState = $state<ConnectState>('idle');
 	let connectMsg   = $state('');
-	let connectUrls  = $state<string[]>([]);
+	let connectUrls    = $state<string[]>([]);
+	let connectedToken = $state<string | null>(null);
+	let probeState     = $state<'idle' | 'checking' | 'unreachable'>('idle');
+	let probeMsg       = $state('');
 
 	// Scrolls the result banner into view after a connect attempt.
 	let resultBanner: HTMLElement | undefined;
@@ -103,6 +106,11 @@
 				body    : JSON.stringify({ target, ports: allPorts, gateway }),
 			});
 			if (!res.ok) {
+				if (res.status === 401) {
+					// Session expired — redirect to login.
+					window.location.href = '/login';
+					return;
+				}
 				const txt = await res.text();
 				throw new Error(`Sign failed (${res.status}): ${txt}`);
 			}
@@ -126,9 +134,11 @@
 				throw new Error(`Client returned ${res.status}: ${txt}`);
 			}
 			const body = await res.json();
-			connectUrls  = Array.isArray(body.urls) ? body.urls : [];
-			connectMsg   = `Connected on port(s): ${(body.ports ?? []).join(', ')}`;
-			connectState = 'done';
+			connectUrls    = Array.isArray(body.urls) ? body.urls : [];
+			connectMsg     = `Gateway tunnel open on port(s): ${(body.ports ?? []).join(', ')}`;
+			connectState   = 'done';
+			connectedToken = token;
+			probeState     = 'idle';
 		} catch (err) {
 			// TypeError = network-level failure (client not running or
 			// mixed-content block).  Open the deep-link and poll.
@@ -142,9 +152,45 @@
 	}
 
 	function resetConnect(): void {
-		connectState = 'idle';
-		connectMsg   = '';
-		connectUrls  = [];
+		connectState   = 'idle';
+		connectMsg     = '';
+		connectUrls    = [];
+		connectedToken = null;
+		probeState     = 'idle';
+		probeMsg       = '';
+	}
+
+	function parseFirstPort(spec: string): number {
+		const n = parseInt(spec.split(',')[0].split('-')[0].trim());
+		return isNaN(n) ? 443 : n;
+	}
+
+	async function openWithProbe(): Promise<void> {
+		if (!connectedToken) {
+			connectUrls.forEach(u => window.open(u, '_blank')); return;
+		}
+		probeState = 'checking';
+		probeMsg   = '';
+		const port = parseFirstPort(portRows[0]?.ports ?? '443');
+		try {
+			const res = await fetch(`${CLIENT_API_BASE}/api/probe`, {
+				method : 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body   : JSON.stringify({ target, port, gateway, token: connectedToken }),
+				signal : AbortSignal.timeout(7_000),
+			});
+			if (!res.ok) {
+				connectUrls.forEach(u => window.open(u, '_blank')); probeState = 'idle'; return;
+			}
+			const data = await res.json();
+			if (data.reachable) {
+				connectUrls.forEach(u => window.open(u, '_blank')); probeState = 'idle';
+			} else {
+				probeMsg = data.message ?? 'Target device did not respond.'; probeState = 'unreachable';
+			}
+		} catch {
+			connectUrls.forEach(u => window.open(u, '_blank')); probeState = 'idle';
+		}
 	}
 
 	/**
@@ -191,9 +237,11 @@
 				});
 				if (res.ok) {
 					const body = await res.json();
-					connectUrls  = Array.isArray(body.urls) ? body.urls : [];
-					connectMsg   = `Connected on port(s): ${(body.ports ?? []).join(', ')}`;
-					connectState = 'done';
+					connectUrls    = Array.isArray(body.urls) ? body.urls : [];
+					connectMsg     = `Gateway tunnel open on port(s): ${(body.ports ?? []).join(', ')}`;
+					connectState   = 'done';
+					connectedToken = token;
+					probeState     = 'idle';
 					return;
 				}
 				// Client is up but returned an error — surface it immediately.
@@ -483,16 +531,35 @@
 								</li>
 							{/each}
 						</ul>
+						<span class="url-hint">Click a link or “Open” to connect to the target device. If the device is offline the browser will show “site can’t be reached”.</span>
 					{/if}
 				</div>
 				{#if connectUrls.length > 0}
-					<button
-						type="button"
-						class="open-btn"
-						onclick={() => connectUrls.forEach(u => window.open(u, '_blank'))}
-					>
-						Open
-					</button>
+					{#if probeState === 'unreachable'}
+						<div class="probe-fail">
+							<strong>⚠ Device not reachable</strong>
+							<span>{probeMsg}</span>
+							<span class="probe-fail-btns">
+								<button type="button" class="probe-btn probe-btn-open"
+									onclick={() => { connectUrls.forEach(u => window.open(u, '_blank')); probeState = 'idle'; }}>
+									Open anyway
+								</button>
+								<button type="button" class="probe-btn probe-btn-retry"
+									onclick={openWithProbe}>
+									Retry check
+								</button>
+							</span>
+						</div>
+					{:else}
+						<button
+							type="button"
+							class="open-btn"
+							disabled={probeState === 'checking'}
+							onclick={openWithProbe}
+						>
+							{#if probeState === 'checking'}Checking…{:else}Open{/if}
+						</button>
+					{/if}
 				{/if}
 			</div>
 		{:else if connectState === 'error'}
@@ -823,6 +890,41 @@
 		font-size      : 0.88rem;
 	}
 	.url-link:hover { text-decoration: underline; }
+
+	/* ── Device reachability probe ─────────────────────────────────────────── */
+	.probe-fail {
+		display       : flex;
+		flex-direction: column;
+		gap           : 0.45rem;
+		padding       : 0.7rem 0.9rem;
+		border-radius : 6px;
+		font-size     : 0.82rem;
+		line-height   : 1.5;
+		background    : color-mix(in srgb, var(--orange) 12%, var(--bg0));
+		border        : 1px solid var(--orange);
+		color         : var(--fg2);
+	}
+	.probe-fail strong { color: var(--bright-orange); font-size: 0.85rem; }
+	.probe-fail-btns   { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+	.probe-btn {
+		background   : transparent;
+		border       : 1px solid var(--bg3);
+		border-radius: 4px;
+		padding      : 0.2rem 0.65rem;
+		font-size    : 0.78rem;
+		color        : var(--fg4);
+		cursor       : pointer;
+		font-family  : inherit;
+		transition   : border-color 0.12s, color 0.12s;
+	}
+	.probe-btn-open:hover  { color: var(--orange); border-color: var(--orange); }
+	.probe-btn-retry:hover { color: var(--aqua);   border-color: var(--aqua);   }
+
+	.url-hint {
+		font-size  : 0.8rem;
+		color      : var(--fg4);
+		line-height: 1.5;
+	}
 
 	/* ── Open button (inside success banner) ────────────────────────────────── */
 	.open-btn {
