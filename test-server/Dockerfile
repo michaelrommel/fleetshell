@@ -27,6 +27,9 @@ RUN apk add --no-cache ca-certificates openssh-server && \
 	mkdir -p /root/.ssh && \
 	sed -i 's/#PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
 
+RUN adduser -D aremote
+RUN echo "aremote:secret" | chpasswd
+
 COPY test-server/scripts/authorized_keys /root/.ssh/authorized_keys
 COPY test-server/scripts/run.sh /
 COPY --from=builder /app/target/release/test-server /usr/local/bin/test-server
