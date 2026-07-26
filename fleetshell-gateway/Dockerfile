@@ -26,7 +26,7 @@ RUN cargo build --release -p fleetshell-gateway --target x86_64-unknown-linux-mu
 # guacd libs    : /opt/guacamole/lib  (LD_LIBRARY_PATH already set in image)
 # guacd user    : guacd (UID 1000) — already created by base image
 # netcat-openbsd: already present in base image (used for healthcheck)
-FROM guacamole/guacd:1.5.0
+FROM guacamole/guacd:1.6.0
 
 USER root
 WORKDIR /fleetshell-gateway
@@ -49,6 +49,12 @@ COPY --from=builder \
 COPY fleetshell-gateway/scripts/run.sh .
 COPY target/x86_64-unknown-linux-musl/release/test-guac .
 RUN chmod +x run.sh
+
+# Create the drive-sharing buffer directory used by guacd for RDP file
+# transfer.  guacd runs as user 'guacd' (UID 1000) so it needs write access.
+# drive-create-path=true in the guacd connect instruction will create
+# per-session sub-directories automatically under this root.
+RUN mkdir -p /guac-drives && chown guacd:guacd /guac-drives
 
 # Hand ownership of the working directory to the unprivileged guacd user.
 RUN chown -R guacd:guacd /fleetshell-gateway

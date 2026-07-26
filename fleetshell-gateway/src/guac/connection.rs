@@ -49,6 +49,16 @@ pub struct RdpParams {
 	/// Skip server certificate verification.  Appropriate for embedded
 	/// targets (medical devices, etc.) that carry self-signed certificates.
 	pub ignore_cert: bool,
+	/// Enable guacd drive sharing.  When `true`, guacd mounts `drive_path`
+	/// as a virtual Windows drive inside the RDP session.
+	pub enable_drive: bool,
+	/// Display name of the virtual drive as it appears in Windows Explorer.
+	/// Defaults to `"FleetShell"`.
+	pub drive_name: String,
+	/// Absolute path on the gateway host that backs the virtual drive.
+	/// Must be writable by the guacd process.  Ignored when `enable_drive`
+	/// is `false`.
+	pub drive_path: String,
 	/// Requested screen width in pixels.
 	pub width:  u32,
 	/// Requested screen height in pixels.
@@ -67,6 +77,9 @@ impl Default for RdpParams {
 			domain:      None,
 			security:    None,
 			ignore_cert: true,
+			enable_drive: false,
+			drive_name:   "FleetShell".into(),
+			drive_path:   String::new(),
 			width:       1280,
 			height:      800,
 			dpi:         96,
@@ -184,6 +197,11 @@ impl ConnectionParams {
 				m.insert("domain",      p.domain.clone().unwrap_or_default());
 				m.insert("security",    p.security.clone().unwrap_or_else(|| "any".into()));
 				m.insert("ignore-cert", bool_str(p.ignore_cert));
+				m.insert("enable-drive",      bool_str(p.enable_drive));
+				m.insert("drive-name",        p.drive_name.clone());
+				m.insert("drive-path",        p.drive_path.clone());
+				// Let guacd create sub-directories under drive-path automatically.
+				m.insert("drive-create-path", bool_str(p.enable_drive));
 				m.insert("width",       p.width.to_string());
 				m.insert("height",      p.height.to_string());
 				m.insert("dpi",         p.dpi.to_string());

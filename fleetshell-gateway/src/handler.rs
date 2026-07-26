@@ -84,6 +84,14 @@ pub struct HandshakePayload {
     /// Dots per inch for Guacamole sessions.  Defaults to 96 when absent.
     pub dpi:         Option<u32>,
 
+    /// Request drive sharing for this RDP session.
+    ///
+    /// When `true` and `GUACD_DRIVE_PATH` is configured on the gateway,
+    /// guacd will mount that directory as a virtual drive inside the Windows
+    /// session.  Silently ignored for VNC/SSH, and when `GUACD_DRIVE_PATH`
+    /// is not set on the gateway.
+    pub enable_drive: Option<bool>,
+
     /// Opaque identifier of a parked guacd session to resume.
     ///
     /// When the browser reloads, the client re-sends the `connection_id`
@@ -168,10 +176,15 @@ where
         width       = ?payload.width,
         height      = ?payload.height,
         dpi         = ?payload.dpi,
+        enable_drive = ?payload.enable_drive,
         "handshake payload"
     );
     // Token and password are intentionally not logged to avoid leaking credentials.
     info!(%peer, token_len = payload.token.len(), "JWT token received (not logged)");
+    info!(%peer,
+        password_len = payload.password.as_deref().map(|p| p.len()).unwrap_or(0),
+        password_set = payload.password.as_deref().map(|p| !p.is_empty()).unwrap_or(false),
+        "credential lengths (values not logged)");
 
     // ── 4. Validate JWT + authorise target / port ────────────────────────
     match auth::verify_connection(
@@ -270,17 +283,61 @@ where
 
         // ── New session path ──────────────────────────────────────────────────────────
         let params = match payload.application.as_str() {
-            "rdp" => guac::ConnectionParams::Rdp(guac::RdpParams {
-                hostname:    payload.target.clone(),
-                port:        payload.port,
-                username:    payload.username.clone().unwrap_or_default(),
-                password:    payload.password.clone(),
-                width:       payload.width.unwrap_or(1280),
-                height:      payload.height.unwrap_or(800),
-                dpi:         payload.dpi.unwrap_or(96),
-                ignore_cert: true,
-                ..Default::default()
-            }),
+            "rdp" => {
+                // Resolve the effective drive path: the gateway-level default
+                // is used when the client opts in; a missing GUACD_DRIVE_PATH
+                // silently disables the feature regardless of the flag.
+                //
+                // When a base path is available, create a per-device sub-
+                // directory named after the target IP so that files from
+                // different devices never mix, and the origin of every file
+                // is unambiguous regardless of which gateway container handled
+                // the session.
+                //
+                //   /guac-drives/
+                //     192.168.1.100/          ← device writes here
+                //       Downloads/            ← guacd writes here (push to device)
+                //     192.168.1.101/
+                //       Downloads/
+                let drive_path = if payload.enable_drive.unwrap_or(false) {
+                    match config.guacd_drive_path.as_deref() {
+                        Some(base) if !base.is_empty() => {
+                            // IP addresses are safe directory names on Linux
+                            // (digits + dots); use as-is for readability.
+                            let device_dir = format!("{}/{}", base, payload.target);
+                            match tokio::fs::create_dir_all(&device_dir).await {
+                                Ok(()) => {
+                                    info!(%peer, dir = %device_dir,
+                                        "created per-device drive directory");
+                                }
+                                Err(e) => {
+                                    // Non-fatal: guacd will still try to use
+                                    // the path; log the error and continue.
+                                    warn!(%peer, dir = %device_dir,
+                                        "could not create per-device drive directory: {e}");
+                                }
+                            }
+                            device_dir
+                        }
+                        _ => String::new(),
+                    }
+                } else {
+                    String::new()
+                };
+                guac::ConnectionParams::Rdp(guac::RdpParams {
+                    hostname:    payload.target.clone(),
+                    port:        payload.port,
+                    username:    payload.username.clone().unwrap_or_default(),
+                    password:    payload.password.clone(),
+                    width:       payload.width.unwrap_or(1280),
+                    height:      payload.height.unwrap_or(800),
+                    dpi:         payload.dpi.unwrap_or(96),
+                    ignore_cert: true,
+                    enable_drive: !drive_path.is_empty(),
+                    drive_path,
+                    ..Default::default()
+                })
+            }
             "vnc" => guac::ConnectionParams::Vnc(guac::VncParams {
                 hostname: payload.target.clone(),
                 port:     payload.port,

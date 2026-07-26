@@ -76,6 +76,22 @@ pub struct Config {
     /// Set via the `GUACD_ADDR` environment variable (exported by `run.sh`).
     /// Default: `127.0.0.1:4822`.
     pub guacd_addr: String,
+
+    /// Root directory on the gateway host used for RDP drive sharing.
+    ///
+    /// When set (via `GUACD_DRIVE_PATH`), RDP sessions that request drive
+    /// sharing (`enable_drive: true` in the handshake) will have guacd mount
+    /// this path as a virtual drive inside the Windows session.  guacd is
+    /// instructed to create per-session sub-directories automatically
+    /// (`drive-create-path = true`), so only the root needs to exist.
+    ///
+    /// The directory must be writable by the guacd process (UID 1000 / user
+    /// `guacd`).  The Dockerfile creates `/guac-drives` with the correct
+    /// ownership for this purpose.
+    ///
+    /// When absent (not set or empty) drive sharing is silently disabled
+    /// even if the client requests it.
+    pub guacd_drive_path: Option<String>,
 }
 
 impl Config {
@@ -113,6 +129,10 @@ impl Config {
 
             guacd_addr: std::env::var("GUACD_ADDR")
                 .unwrap_or_else(|_| "127.0.0.1:4822".to_string()),
+
+            guacd_drive_path: std::env::var("GUACD_DRIVE_PATH")
+                .ok()
+                .filter(|s| !s.is_empty()),
 
             parked_sessions: Arc::new(tokio::sync::Mutex::new(
                 std::collections::HashMap::new()
