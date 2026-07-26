@@ -78,6 +78,9 @@ pub struct GuacSessionParams {
 	pub slot_idx:    usize,
 	/// Shared with the idle monitor; updated on every byte that flows.
 	pub last_active: Arc<std::sync::atomic::AtomicU64>,
+	/// Request drive sharing for this RDP session.
+	/// Forwarded verbatim to the gateway; ignored for VNC/SSH.
+	pub enable_drive: bool,
 }
 
 // ── Per-slot router state ─────────────────────────────────────────────────────
@@ -402,6 +405,7 @@ fn build_gateway_payload(
 		"width":         params.width,
 		"height":        params.height,
 		"dpi":           params.dpi,
+		"enable_drive":  params.enable_drive,
 		"gateway":       params.gateway,
 		"path":          gateway_path,
 		"e2ecrypt":      false,

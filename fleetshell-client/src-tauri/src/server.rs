@@ -60,6 +60,9 @@ pub struct PortRow {
     pub e2ecrypt:    Option<bool>,
     /// SNI hostname for proxy-mode HTTP/S connections to the upstream device.
     pub sni:         Option<String>,
+    /// URL path suffix appended when opening http/https/expert-i tabs.
+    /// `None` or empty string → treated as `/` (no suffix appended).
+    pub path:        Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -83,6 +86,10 @@ pub struct TunnelRequest {
     pub height:     Option<u32>,
     /// Dots per inch for Guacamole sessions (default 96).
     pub dpi:        Option<u32>,
+    /// Request drive sharing for this RDP Guacamole session.
+    /// Forwarded to the gateway; ignored for VNC/SSH and when the gateway
+    /// has no `GUACD_DRIVE_PATH` configured.
+    pub enable_drive: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
@@ -328,6 +335,7 @@ async fn tunnel_handler(
             gateway:     req.gateway.clone(),
             slot_idx,
             last_active: last_active.clone(),
+            enable_drive: req.enable_drive.unwrap_or(false),
         });
 
         let handle = tokio::spawn(
@@ -355,6 +363,7 @@ async fn tunnel_handler(
 
         all_ports.push(port);
         all_urls.push(ws_url);
+        bind_ip = slot_ip;
     }
 
     // ── Regular TCP-tunnel rows ───────────────────────────────────────────
@@ -398,7 +407,10 @@ async fn tunnel_handler(
 
         // Phase 2: collect browser URLs (native apps are launched on demand).
         for (port, row, _) in &listeners {
-            if let Some(url) = crate::tunnel::get_tunnel_url(&row.application, *port, &slot.ip) {
+            if let Some(url) = crate::tunnel::get_tunnel_url(
+                    &row.application, *port, &slot.ip,
+                    row.path.as_deref().unwrap_or(""),
+                ) {
                 all_urls.push(url);
             }
         }

@@ -593,12 +593,32 @@ pub async fn probe_target(
 
 /// Return the browser URL for an http / https / expert-i tunnel.
 /// Returns `None` for application types that use native apps (rdp/vnc/ssh).
-pub fn get_tunnel_url(application: &str, port: u16, bind_ip: &str) -> Option<String> {
+///
+/// `path` is an optional suffix appended after `host:port` (e.g. `"/adminportal"`).
+/// An empty string or `"/"` is treated as the root and produces no suffix.
+pub fn get_tunnel_url(application: &str, port: u16, bind_ip: &str, path: &str) -> Option<String> {
+    let suffix = normalise_path(path);
     match application.to_lowercase().as_str() {
-        "http"     => Some(format!("http://{}:{}",  dns_host(bind_ip), port)),
-        "https"    => Some(format!("https://{}:{}", dns_host(bind_ip), port)),
-        "expert-i" => Some(format!("https://{}:{}", dns_host(bind_ip), port)),
+        "http"     => Some(format!("http://{}:{}{}",  dns_host(bind_ip), port, suffix)),
+        "https"    => Some(format!("https://{}:{}{}", dns_host(bind_ip), port, suffix)),
+        "expert-i" => Some(format!("https://{}:{}{}", dns_host(bind_ip), port, suffix)),
         _          => None,
+    }
+}
+
+/// Normalise a path string for appending to a base URL.
+///
+/// - Empty or `"/"` → returns `""` (no suffix; callers get a clean `host:port`).
+/// - Otherwise ensures a leading `'/'` and returns the path as-is.
+fn normalise_path(path: &str) -> String {
+    let p = path.trim();
+    if p.is_empty() || p == "/" {
+        return String::new();
+    }
+    if p.starts_with('/') {
+        p.to_owned()
+    } else {
+        format!("/{p}")
     }
 }
 
