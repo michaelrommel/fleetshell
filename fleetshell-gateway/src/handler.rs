@@ -422,7 +422,7 @@ where
     if !payload.e2ecrypt.unwrap_or(false) {
         // ── Transform mode: HTTP/1.1-aware reverse proxy ──────────────────
         match payload.application.as_str() {
-            "https" => {
+            "https" | "expert-i" => {
                 // Open our own TLS session to the upstream so the gateway
                 // can see and transform the plaintext HTTP payload.
                 //
