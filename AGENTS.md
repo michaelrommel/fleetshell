@@ -232,8 +232,19 @@ fleetshell/
   Phase 2 will replace this with per-client key pairs and real CSRs.
 - **Device lookup + Connect form** — `/devices` page searches Redis by IP address
   and renders the raw key/value hash.  The page also has a Connect form with fields:
-  `target`, `application` (http/https/rdp/vnc), `ports`, `gateway`, `sni`, `servicekey`,
-  `transform`. On submit it:
+  `target`, `application` (http/https/rdp/vnc/ssh/expert-i), `ports`, `gateway`,
+  `servicekey`, `username`, `password`, `width`, `height`, `dpi`.
+  Per port-row settings:
+  - **Guac** checkbox — route RDP/VNC/SSH through guacd (browser session instead of native app)
+  - **E2E** checkbox — relay raw TLS bytes end-to-end (mutually exclusive with guac)
+  - **Open** checkbox — show an Open button in the result box
+  - **Path sub-row** (http/https/expert-i rows) — URL path suffix appended when
+    opening a browser tab (e.g. `/adminportal`); SNI field also lives here
+  - **Guac sub-row** (rdp/vnc/ssh rows with guac checked) — Width/Height/DPI and a
+    **Drives** checkbox (RDP only) that enables guacd drive sharing via EFS
+  The main port-row grid has 6 columns: Ports | Application | Guac | E2E | Open | ✕
+  (SNI was removed from the main row and moved into the path sub-row).
+  On submit it:
   1. POSTs `{ target, ports, gateway }` to `POST /api/tunnel/sign` to get a JWT
      (JWT_SECRET never leaves the server).
   2. POSTs the full tunnel request (including the JWT) to the local client's API
@@ -351,13 +362,15 @@ Error responses:
 | Field | Notes |
 |---|---|
 | `target` | Final destination host on the gateway's side |
-| `application` | `"http"` \| `"https"` \| `"rdp"` \| `"vnc"` |
+| `application` | `"http"` \| `"https"` \| `"rdp"` \| `"vnc"` \| `"ssh"` \| `"expert-i"` |
 | `ports` | Comma-separated ports/ranges: `"443"`, `"3000-3020"`, `"443,3000-3020"` |
 | `token` | JWT forwarded verbatim to the gateway handshake |
 | `servicekey` | Optional — triggers Functions tab + navigate event when present |
 | `gateway` | `"host"` or `"host:port"` — port defaults to 443 |
-| `sni` | Optional — SNI hostname for TLS + `Host:` header in transform mode |
-| `e2ecrypt` | Optional bool — when `true`, relay raw bytes end-to-end (passthrough); default `false` = proxy mode |
+| `sni` | Optional (per row) — SNI hostname for TLS + `Host:` header in transform mode |
+| `path` | Optional (per row) — URL path suffix appended for http/https/expert-i tabs (e.g. `"/adminportal"`) |
+| `enable_drive` | Optional bool — request guacd RDP drive sharing via EFS; gateway uses `GUACD_DRIVE_PATH` |
+| `e2ecrypt` | Optional bool (per row) — when `true`, relay raw bytes end-to-end; default `false` = proxy mode |
 
 #### `POST /api/deep-link`
 
@@ -393,10 +406,21 @@ indicators with `free`, `active`, `countdown`, and `idle` states.
 
 | `application` | Bind IP | Local action | URLs returned |
 |---|---|---|---|
-| `"http"` | `slot.ip` | none | `http://{slot-dns-host}:{port}` |
-| `"https"` | `slot.ip` | none | `https://{slot-dns-host}:{port}` |
+| `"http"` | `slot.ip` | none | `http://{slot-dns-host}:{port}{path}` |
+| `"https"` | `slot.ip` | none | `https://{slot-dns-host}:{port}{path}` |
+| `"expert-i"` | `slot.ip` | none | `https://{slot-dns-host}:{port}{path}` |
 | `"rdp"` | `slot.ip` | writes `%TEMP%\fleetshell_rdp_{port}.rdp`, launches `mstsc.exe` | none |
 | `"vnc"` | `slot.ip` | writes `%TEMP%\fleetshell_vnc_{port}.vnc`, tries `tvnviewer.exe` / `vncviewer64.exe` / `vncviewer.exe` | none |
+
+For **guac rows** (guac checkbox ticked), the client binds a WebSocket listener on
+the slot IP instead of a raw TCP port and returns a `wss://` URL.  The browser
+connects via `guacamole-common-js`; the client proxies it to the gateway which
+runs the guacd opening handshake.  The response `bind_ip` is populated for both
+guac and regular rows so the portal banner shows the slot address in all cases.
+
+`get_tunnel_url` in `tunnel.rs` accepts a `path` argument and appends it when
+non-empty and not `"/"`.  Leading `/` is ensured; the empty / `"/"` case produces
+a clean `host:port` URL with no trailing slash.
 
 The DNS hostname (`127-x-x-x.client.fleetshell.com`) is returned in URLs instead
 of the bare IP so that HTTPS certificates validate correctly.
@@ -420,21 +444,32 @@ of the bare IP so that HTTPS certificates validate correctly.
 
 ```json
 {
-    "target":      "192.168.13.133",
-    "application": "https",
-    "port":        443,
-    "token":       "<jwt>",
-    "servicekey":  "abcde-...",
-    "gateway":     "atlanta-01",
-    "sni":         "device.example.com",
-    "path":        "/service/tunnel/",
-    "e2ecrypt":    false
+    "target":       "192.168.13.133",
+    "application":  "https",
+    "port":         443,
+    "token":        "<jwt>",
+    "servicekey":   "abcde-...",
+    "gateway":      "atlanta-01",
+    "sni":          "device.example.com",
+    "path":         "/service/tunnel/",
+    "e2ecrypt":     false,
+    "guac":         false,
+    "username":     "Administrator",
+    "password":     "<vnc-or-rdp-password>",
+    "width":        1920,
+    "height":       1080,
+    "dpi":          96,
+    "enable_drive": false,
+    "connection_id": null
 }
 ```
 
 `port` is always a single integer (expanded from the range).
 `path` defaults to `"/service/tunnel/"`.
 `sni` is forwarded to the gateway for use in proxy-mode TLS + Host header.
+`guac`, `username`, `password`, `width`, `height`, `dpi`, `enable_drive` are only
+meaningful when `guac: true`; `connection_id` carries a guacd session ID on
+WebSocket reconnects (see guacd reconnect section in gateway docs).
 
 ### Deep-link handling (`fleetshell://`)
 
@@ -556,6 +591,8 @@ The portal issues JWTs. The gateway verifies them with `JWT_SECRET` (HS256).
 | `GATEWAY_TLS` | `false` | Set `true` for standalone/dev mode (no NLB in front); gateway terminates TLS itself |
 | `GATEWAY_HEALTH_ADDR` | `0.0.0.0:8080` | HTTP health-check listener — point NLB health checks at HTTP on this port to avoid polluting tunnel logs |
 | `GATEWAY_UPSTREAM_TLS_ACCEPT_INVALID_CERTS` | `true` | Skip upstream cert verification in transform mode |
+| `GUACD_ADDR` | `127.0.0.1:4822` | Address of the guacd daemon co-located in the same container |
+| `GUACD_DRIVE_PATH` | *(none)* | Root directory on the gateway host for RDP drive sharing.  When set, RDP guac sessions with `enable_drive: true` mount a per-device sub-directory (`<path>/<target_ip>/`) as a virtual Windows drive.  Must be writable by UID 1000 (guacd user).  In production this is the EFS mount at `/guac-drives`. |
 | `RUST_LOG` | `info` | Log filter — `debug` for per-connection detail, `trace` for TLS internals |
 
 ### Wire protocol
@@ -607,12 +644,15 @@ The portal issues JWTs. The gateway verifies them with `JWT_SECRET` (HS256).
 | File | Responsibility |
 |---|---|
 | `main.rs` | tokio accept loop; TCP-level `info!` log before spawning; optional TLS handshake with debug logs; spawns handler + health tasks |
-| `config.rs` | `Config::from_env()` — includes `GATEWAY_TLS` and `GATEWAY_HEALTH_ADDR` |
+| `config.rs` | `Config::from_env()` — includes `GATEWAY_TLS`, `GATEWAY_HEALTH_ADDR`, `GUACD_ADDR`, `GUACD_DRIVE_PATH` |
 | `auth.rs` | `verify_connection()` — JWT decode + target/port/gateway claims check; has unit tests for `port_in_spec` |
-| `handler.rs` | Reads handshake, calls auth, connects to target, selects proxy mode; raw handshake bytes logged at DEBUG; TCP health probe close demoted to DEBUG |
+| `handler.rs` | Reads handshake, calls auth, selects proxy mode (raw TCP / transform / guacd); creates per-device drive directory; raw handshake bytes logged at DEBUG; password length logged (value never logged); TCP health probe close demoted to DEBUG |
 | `health.rs` | HTTP health-check server on `GATEWAY_HEALTH_ADDR`; responds `200 {"status":"ok"}` to any request; probes logged at DEBUG only |
 | `tls.rs` | `build_acceptor()` — loads PEM files or generates self-signed cert via rcgen |
 | `transform.rs` | HTTP/1.1 aware proxy loop; `TransformHook` trait; `NoopHook` impl; `SkipServerVerification` for self-signed upstream certs |
+| `guac/mod.rs` | Re-exports `connection::{ConnectionParams, RdpParams, VncParams, SshParams}` and `connect()` |
+| `guac/connection.rs` | guacd opening handshake (select → args → size/audio/video/image → connect → ready); `ConnectionParams` enum; `to_value_map()` per protocol including drive-sharing params for RDP |
+| `guac/protocol.rs` | `Instruction` encode/decode; `write_instruction` / `read_instruction` async I/O helpers |
 
 ### Transform mode
 
@@ -657,6 +697,100 @@ Limits (current):
 - Header buffer: 64 KiB per message.
 - Body buffer: **16 MiB** per message (hard cap; no streaming).
 - HTTP/2 is not supported.
+
+### Guacamole mode
+
+When `guac: true` is set in the handshake, the gateway connects to the local
+guacd daemon (`GUACD_ADDR`, default `127.0.0.1:4822`) instead of opening a raw
+TCP connection to the target.  guacd speaks native RDP/VNC/SSH to the device
+and the gateway bridges the Guacamole instruction stream bidirectionally to the
+client WebSocket.
+
+**Base image:** `guacamole/guacd:1.6.0` (upgraded from 1.5.0 to fix a VNC
+authentication bug in libvncclient).
+
+**Supported protocols:** `rdp`, `vnc`, `ssh`.
+
+**guacd opening handshake** (`guac/connection.rs`):
+```
+client → select  <protocol>
+guacd  ← args    <ordered list of param names>
+client → size / audio / video / image  (capability instructions)
+client → connect <value for each param in args order>
+guacd  ← ready   <connection_id>
+```
+After `ready` the stream is raw Guacamole instructions bridged bidirectionally.
+
+**Reconnect / session parking:** when the browser WebSocket drops, the live guacd
+`TcpStream` is parked in `config.parked_sessions` (keyed by `connection_id`) for
+`GUAC_RECONNECT_GRACE_SECS` (default 30 s).  The client sends the same
+`connection_id` on the next connect; the gateway unparks the stream and resumes
+the session without re-running the guacd opening handshake.
+
+Response format on successful guacd session:
+```
+200 CONNECTED $cf9dace0-fffd-4bef-97cc-ff3db89c18c8\n
+```
+The connection ID is included so the client can reconnect to the parked session.
+
+**RDP parameters** (`guac/connection.rs` `RdpParams`):
+
+| Field | Default | Notes |
+|---|---|---|
+| `hostname` | — | Target IP/host |
+| `port` | 3389 | |
+| `username` | `""` | Windows username |
+| `password` | `None` | |
+| `domain` | `None` | Leave empty for local accounts |
+| `security` | `None` | `"any"` negotiated |
+| `ignore_cert` | `true` | Appropriate for self-signed device certs |
+| `enable_drive` | `false` | Enable virtual drive sharing |
+| `drive_name` | `"FleetShell"` | Name shown in Windows Explorer |
+| `drive_path` | `""` | Absolute path on gateway host; set from `GUACD_DRIVE_PATH/<target_ip>` |
+| `width/height/dpi` | 1280/800/96 | Display geometry |
+
+`drive-create-path = true` is always sent so guacd creates subdirectories automatically.
+
+**Drive sharing directory layout** on the EFS volume:
+```
+/guac-drives/
+  192.168.1.100/          ← device writes files here (RDP drive redirect)
+    Downloads/            ← guacd writes files pushed TO the device
+  192.168.1.101/
+    Downloads/
+```
+The per-device directory is created by the gateway handler (`tokio::fs::create_dir_all`)
+before calling `guac::connect()`.  `create_dir_all` is idempotent — safe for
+multiple gateway containers racing on the same EFS path.
+
+**AWS EFS** (`fleetshell-guac-drives`, `fs-0316990fe78641ae2`):
+- Access point: EFS path `/guac-drives`, `posixUser: Uid=1000, Gid=1000`,
+  `CreationInfo: OwnerUid=1000, OwnerGid=1000, Permissions=755`
+- Security group `sg-04e471905c7422a96` allows TCP 2049 from ECS task SG
+  `sg-065f9193da9f46436`
+- Mounted at `/guac-drives` in the ECS task (volume name `guac-drives`,
+  `transitEncryption: ENABLED`, `iam: DISABLED`)
+- Shared across all gateway container instances — files from any session are
+  visible on all containers
+
+**VNC operational notes:**
+- VNC only works when the Windows desktop session is **active and unlocked**.
+  guacd cannot access the Windows Winlogon / lock-screen desktop.
+- UltraVNC must run as a **Windows service** for console-session access;
+  MS-Logon I and II must be unchecked; no DSM plugin.
+- guacd 1.5.0 had a VNC authentication bug against UltraVNC; fixed in 1.6.0.
+- **Unlock workflow** (for a device at the lock screen):
+  1. Open an e2e RDP tunnel (port 3389, e2ecrypt checked, guac unchecked).
+  2. Connect with `mstsc /admin /v:127-0-0-x.client.fleetshell.com:3389`.
+  3. Log in; open a command prompt and run `tscon %SESSIONNAME% /dest:console`.
+  4. The RDP window closes; the session is now live on the physical console.
+  5. Open a **new** VNC guac connection — the unlocked desktop is visible.
+  (The existing VNC session drops on the `tscon` desktop switch; reconnect.)
+- **VNC vs RDP session identity:** VNC always mirrors the physical console
+  session.  RDP creates its own virtual session (Windows Server) or takes over
+  the console session (Windows 10/11 single-session).  On Windows Server, RDP
+  and VNC show **different sessions**; VNC is the correct tool for observing a
+  running clinical application on the console.
 
 ### What is NOT yet implemented (open work)
 
@@ -793,6 +927,16 @@ These bugs span multiple components and require coordinated fixes.
       - `JWT_SECRET` and any secrets must use `valueFrom` (Secrets Manager ARN)
         in the ECS task definition, **not** `value` (which injects the ARN string)
 - [x] **Health check endpoint** — `health.rs` / `GATEWAY_HEALTH_ADDR` (`:8080`)
+- [x] **Guacamole support** — RDP, VNC, SSH via guacd 1.6.0:
+      - `guac/` module: `connection.rs` (handshake + `ConnectionParams`),
+        `protocol.rs` (instruction encode/decode)
+      - Session parking + reconnect via `parked_sessions` map
+      - Per-device drive directory created before `guac::connect()`
+- [x] **EFS drive sharing** — `fleetshell-guac-drives` (`fs-0316990fe78641ae2`)
+      mounted at `/guac-drives`; `GUACD_DRIVE_PATH=/guac-drives`;
+      per-device subdirectories (`<target_ip>/`) created on session open;
+      access point with `posixUser: 1000` and `Path=/guac-drives` ensures
+      guacd (UID 1000) can write without root
 - [ ] **Implement concrete `TransformHook`** — currently `NoopHook` is wired in
       `main.rs`; implement at minimum:
       - Rewrite `Host:` header to the upstream target (or `sni` when present)

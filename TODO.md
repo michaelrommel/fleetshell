@@ -112,12 +112,17 @@ the Connect form.  Falls back to transparent mode if the client has no cert yet.
       now loaded from AWS Secrets Manager via `valueFrom` in the ECS task
       definition instead of from `certs/client.pem` / `private/client.key` files
 - [x] Devices page UX improvements:
-      - Gateway field default changed to `gateway.fleetshell.com` (port omitted;
-        client defaults to 443)
-      - Target field pre-filled with `172.16.33.` (operator fills in last octet)
-      - Service key field pre-filled with `i-love-healthineers-so-much`
-      - Connect success banner: checkmark icon now top-aligned with first text
-        line (`align-items: flex-start`); Open button stays vertically centred
+      - Gateway field default changed to `gateway.fleetshell.com`
+      - Target field pre-filled with `172.16.33.`
+      - Connect success banner: slot IP shown for both regular and guac tunnels
+- [x] **Connect form port-row improvements:**
+      - `path` field per row (http/https/expert-i): URL path suffix appended when
+        opening a browser tab (e.g. `/adminportal`); defaults to `/`
+      - SNI moved from main row into the `port-row-path` sub-row (only shown for
+        http/https/expert-i; greys out when e2ecrypt is on)
+      - Main row grid reduced from 7 to 6 columns (SNI column removed)
+      - `drive` checkbox in guac sub-row (RDP only): enables guacd RDP drive
+        sharing; sends `enable_drive: true` to the client and gateway
 - [ ] Service-launch buttons per device: RDP, VNC, HTTP, HTTPS
 - [ ] Ability to retrieve LE certificates (ACME client / integration)
 - [ ] Ability to perform LE web-based auth challenges
@@ -133,6 +138,20 @@ the Connect form.  Falls back to transparent mode if the client has no cert yet.
 - [x] Idle-timeout field in SettingsView (10–3600 s, saved to AppConfig)
 - [x] Single-instance forwarding (HTTPS-first, HTTP fallback)
 - [x] Registers protocol handler; NSIS user-level installer
+- [x] **Guacamole WebSocket proxy** (`guac_proxy.rs`):
+      - `run_guac_slot`: per-slot axum router + WebSocket handler
+      - `handle_guac_ws`: TLS connect to gateway, JSON handshake, bridge
+      - Session reconnect: `live_connection_id` persisted across WebSocket drops
+      - Keepalive ping detection and echo (never forwarded to gateway)
+      - `GuacSessionParams`: target, port, ws_port, protocol, username, password,
+        width, height, dpi, gateway, slot_idx, last_active, `enable_drive`
+      - `build_gateway_payload`: includes all guac fields incl. `enable_drive`
+      - `bind_ip` in `TunnelResponse` now populated for guac slots (was empty)
+- [x] **URL path suffix** (`tunnel.rs` `get_tunnel_url`):
+      - Accepts `path: &str`; `normalise_path()` ensures leading `/`
+      - Empty / `"/"` → no suffix; non-root paths appended to base URL
+- [x] **`enable_drive`** wired through `TunnelRequest` → `GuacSessionParams` →
+      gateway handshake
 - [ ] Phase 1 (BUG-1): fix probe JWT TTL / key-fetch auth (see BUG-1 above)
 - [x] Phase 1 (BUG-2): hot-reload TLS after enrollment without restart — FIXED
 - [ ] Phase 2: client generates its own pub/private key pair
@@ -152,6 +171,27 @@ the Connect form.  Falls back to transparent mode if the client has no cert yet.
 - [x] Logging improvements — TCP-level accept log; raw handshake bytes at DEBUG;
       TCP health probe close demoted from WARN to DEBUG; `.with_target(true)`;
       simplified default filter; `RUST_LOG` values documented
+- [x] **Guacamole (RDP/VNC/SSH)** — `guac/` module wired into handler:
+      - `guac/connection.rs`: `ConnectionParams` enum, `RdpParams` / `VncParams` /
+        `SshParams`, guacd opening handshake, `to_value_map()`
+      - `guac/protocol.rs`: `Instruction` encode/decode, async I/O helpers
+      - Session parking + reconnect (`parked_sessions`, `GUAC_RECONNECT_GRACE_SECS`)
+      - `200 CONNECTED <connection_id>` response carries session ID for reconnect
+      - Base image upgraded `guacamole/guacd:1.5.0` → `1.6.0` (VNC auth fix)
+- [x] **RDP drive sharing** via guacd:
+      - `RdpParams`: `enable_drive`, `drive_name`, `drive_path`, `drive-create-path`
+      - Handler creates per-device subdirectory `<GUACD_DRIVE_PATH>/<target_ip>/`
+        before calling `guac::connect()` (`tokio::fs::create_dir_all`, idempotent)
+      - `GUACD_DRIVE_PATH` env var in config
+      - Dockerfile: `mkdir -p /guac-drives && chown guacd:guacd /guac-drives`
+- [x] **EFS shared drive volume** — `fleetshell-guac-drives` (`fs-0316990fe78641ae2`):
+      - Access point with `posixUser: Uid=1000`, `Path=/guac-drives`,
+        `CreationInfo: OwnerUid=1000, Permissions=755`
+      - SG rule: TCP 2049 from ECS task SG → EFS mount target SG
+      - ECS task definition (revision 10) mounts EFS at `/guac-drives`
+      - Shared across all gateway container instances
+- [x] **Password length diagnostic** — handler logs `password_len` and `password_set`
+      (never logs the value itself) for debugging credential delivery issues
 - [ ] Implement concrete `TransformHook`:
       - Rewrite `Host:` header to `sni` (when present) or `target`
       - Inject auth headers if required
