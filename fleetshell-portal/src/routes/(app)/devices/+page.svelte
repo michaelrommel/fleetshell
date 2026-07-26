@@ -31,14 +31,18 @@
 		height:      number;
 		/** Dots per inch — only sent when guac is true. */
 		dpi:         number;
+		/** Enable guacd drive sharing; RDP only, ignored for VNC/SSH. */
+		drive:       boolean;
+		/** URL path suffix appended when opening http/https/expert-i tabs (default '/'). */
+		path:        string;
 	}
 
 	let portRows = $state<PortRow[]>([
-		{ ports: '443', application: 'https', guac: false, e2ecrypt: false, open: true, sni: '', width: 1920, height: 1080, dpi: 96 },
+		{ ports: '443', application: 'https', guac: false, e2ecrypt: false, open: true, sni: '', width: 1920, height: 1080, dpi: 96, drive: false, path: '/' },
 	]);
 
 	function addRow(): void {
-		portRows = [...portRows, { ports: '', application: 'https', guac: false, e2ecrypt: false, open: true, sni: '', width: 1920, height: 1080, dpi: 96 }];
+		portRows = [...portRows, { ports: '', application: 'https', guac: false, e2ecrypt: false, open: true, sni: '', width: 1920, height: 1080, dpi: 96, drive: false, path: '/' }];
 	}
 
 	function removeRow(i: number): void {
@@ -61,6 +65,11 @@
 		return row.guac && guacApplicable(row);
 	}
 
+	/** True when the path sub-row should be shown (http / https / expert-i only). */
+	function showPathParam(row: PortRow): boolean {
+		return row.application === 'http' || row.application === 'https' || row.application === 'expert-i';
+	}
+
 	/**
 	 * Called when the application selector changes.
 	 * - Clears guac if the new application does not support it.
@@ -76,6 +85,8 @@
 			row.guac     = false;
 			row.e2ecrypt = false;
 		}
+		// Drive sharing is RDP-only; clear it when switching to VNC or SSH.
+		if (row.application !== 'rdp') row.drive = false;
 	}
 
 	type ConnectState = 'idle' | 'signing' | 'connecting' | 'launching' | 'done' | 'error';
@@ -114,9 +125,10 @@
 			servicekey : servicekey || undefined,
 			username   : username   || undefined,
 			password   : password   || undefined,
-			width      : guacRow?.width  ?? undefined,
-			height     : guacRow?.height ?? undefined,
-			dpi        : guacRow?.dpi    ?? undefined,
+			width        : guacRow?.width  ?? undefined,
+			height       : guacRow?.height ?? undefined,
+			dpi          : guacRow?.dpi    ?? undefined,
+			enable_drive : (guacRow?.drive && guacRow?.application === 'rdp') || undefined,
 			port_rows  : portRows.map(r => ({
 				ports      : r.ports,
 				application: r.application,
@@ -124,6 +136,9 @@
 				// e2ecrypt is mutually exclusive with guac — omit when guac is set.
 				e2ecrypt   : (!r.guac && r.e2ecrypt) ? true : undefined,
 				sni        : r.sni        || undefined,
+				// Only send path when it's not the default root; the client
+				// treats a missing/empty path as "/" (no suffix appended).
+				path       : (r.path && r.path !== '/') ? r.path : undefined,
 			})),
 		});
 	}
@@ -579,7 +594,6 @@
 					<span class="col-center">Guac</span>
 					<span class="col-center">E2E</span>
 					<span class="col-center">Open</span>
-					<span>SNI <span class="optional">(optional)</span></span>
 					<span></span>
 				</div>
 				{#each portRows as row, i}
@@ -645,16 +659,6 @@
 							disabled={busy}
 						/>
 					</label>
-					<input
-						class="pr-input"
-						class:pr-sni-muted={!sniEffective(row)}
-						type="text"
-						placeholder="device.example.com"
-						bind:value={row.sni}
-						disabled={busy || !sniEffective(row)}
-						autocomplete="off"
-						spellcheck="false"
-					/>
 					<button
 						type="button"
 						class="pr-remove"
@@ -664,6 +668,30 @@
 						aria-label="Remove row"
 					>✕</button>
 				</div>
+				{#if showPathParam(row)}
+				<div class="port-row-path">
+					<span class="path-param-label">Path</span>
+					<input
+						class="path-param-input"
+						type="text"
+						placeholder="/"
+						bind:value={row.path}
+						disabled={busy}
+						autocomplete="off"
+						spellcheck="false"
+					/>
+					<span class="path-param-label path-param-sni-label">SNI</span>
+					<input
+						class="path-param-input path-param-sni"
+						type="text"
+						placeholder="device.example.com"
+						bind:value={row.sni}
+						disabled={busy || !sniEffective(row)}
+						autocomplete="off"
+						spellcheck="false"
+					/>
+				</div>
+				{/if}
 				{#if showGuacParams(row)}
 				<div class="port-row-guac">
 					<span class="guac-param-label">Width</span>
@@ -691,6 +719,20 @@
 						disabled={busy}
 					/>
 					<span class="guac-param-hint">px — Guacamole display size</span>
+					<label
+						class="guac-param-drive"
+						title={row.application === 'rdp'
+							? 'Mount a shared drive buffer on the gateway (RDP only)'
+							: 'Drive sharing is only available for RDP sessions'}
+					>
+						<input
+							type="checkbox"
+							class="check-input"
+							bind:checked={row.drive}
+							disabled={busy || row.application !== 'rdp'}
+						/>
+						Drives
+					</label>
 				</div>
 				{/if}
 				{/each}
@@ -1177,7 +1219,7 @@
 	.port-row-head,
 	.port-row {
 		display              : grid;
-		grid-template-columns: 140px 110px 52px 52px 52px 1fr 32px;
+		grid-template-columns: 140px 110px 52px 52px 52px 32px;
 		align-items          : stretch;
 	}
 
@@ -1238,8 +1280,9 @@
 	}
 	.pr-check:has(.check-input:disabled) { opacity: 0.5; cursor: not-allowed; }
 
-	/* Dim SNI when it has no effect (rdp/vnc, or e2ecrypt on) */
-	.pr-sni-muted { opacity: 0.35; }
+	/* Dim SNI label+input when e2ecrypt is on (passthrough; proxy SNI has no effect). */
+	.path-param-sni:disabled { opacity: 0.4; }
+	.path-param-sni-label:has(~ .path-param-sni:disabled) { opacity: 0.4; }
 
 	.pr-remove {
 		background     : transparent;
@@ -1272,6 +1315,42 @@
 	}
 	.pr-add:hover:not(:disabled) { background: var(--bg1); color: var(--bright-aqua); }
 	.pr-add:disabled              { opacity: 0.5; cursor: not-allowed; }
+	/* ── Path sub-row (http / https / expert-i) ───────────────────────── */
+	.port-row-path {
+		display    : flex;
+		align-items: center;
+		gap        : 8px;
+		padding    : 6px 10px;
+		border-top : 1px dashed var(--bg3);
+		background : color-mix(in srgb, var(--bright-blue) 5%, var(--bg0));
+	}
+
+	.path-param-label {
+		font-size     : 0.72rem;
+		font-weight   : 600;
+		color         : var(--bright-blue);
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		white-space   : nowrap;
+	}
+
+	.path-param-input {
+		flex         : 1;
+		background   : var(--bg1);
+		color        : var(--fg1);
+		border       : 1px solid var(--bg3);
+		border-radius: 3px;
+		padding      : 4px 8px;
+		font-family  : monospace;
+		font-size    : 0.88rem;
+		outline      : none;
+		transition   : border-color 0.12s;
+	}
+	/* Path gets a fixed narrower width; SNI takes the remaining flex space. */
+	.path-param-input:not(.path-param-sni) { flex: 0 0 180px; }
+	.path-param-input:focus    { border-color: var(--bright-blue); }
+	.path-param-input:disabled { opacity: 0.5; cursor: not-allowed; }
+
 	/* ── Guac display params sub-row ────────────────────────────────────── */
 	.port-row-guac {
 		display    : flex;
@@ -1313,4 +1392,20 @@
 		color     : var(--bg4);
 		margin-left: 4px;
 	}
+
+	/* Drive-sharing checkbox at the right end of the guac sub-row. */
+	.guac-param-drive {
+		display    : flex;
+		align-items: center;
+		gap        : 5px;
+		margin-left: auto;
+		font-size  : 0.72rem;
+		font-weight: 600;
+		color      : var(--bright-aqua);
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		white-space: nowrap;
+		cursor     : pointer;
+	}
+	.guac-param-drive:has(input:disabled) { opacity: 0.4; cursor: not-allowed; }
 </style>
