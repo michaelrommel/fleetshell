@@ -81,6 +81,12 @@ pub struct GuacSessionParams {
 	/// Request drive sharing for this RDP session.
 	/// Forwarded verbatim to the gateway; ignored for VNC/SSH.
 	pub enable_drive: bool,
+	/// Skip TLS certificate validation for the outbound gateway connection.
+	/// Mirrors `AppConfig::gateway_skip_tls_verify`.
+	pub skip_tls_verify: bool,
+	/// Disable TLS entirely for the outbound gateway connection (plain TCP).
+	/// Mirrors `AppConfig::gateway_disable_tls`.
+	pub disable_tls: bool,
 }
 
 // ── Per-slot router state ─────────────────────────────────────────────────────
@@ -204,21 +210,14 @@ async fn handle_guac_ws(
 	let gw_addr = format!("{}:{}", gw_host, gw_port);
 
 	// ── TLS connect to gateway ────────────────────────────────────────────────────────
-	let tcp = match tokio::net::TcpStream::connect(&gw_addr).await {
+	// ── Connect to gateway (TLS or plain TCP depending on config) ─────────────────
+	let mut tls = match crate::tunnel::connect_gateway(
+		&gw_addr, &gw_host,
+		params.skip_tls_verify,
+		params.disable_tls,
+	).await {
 		Ok(s)  => s,
-		Err(e) => { log::error!("guac slot {} gateway TCP failed ({}): {}", params.slot_idx, gw_addr, e); return; }
-	};
-	let connector = match crate::tunnel::make_tls_connector() {
-		Ok(c)  => c,
-		Err(e) => { log::error!("guac slot {} TLS setup failed: {}", params.slot_idx, e); return; }
-	};
-	let server_name = match rustls::pki_types::ServerName::try_from(gw_host.as_str()) {
-		Ok(n)  => n.to_owned(),
-		Err(e) => { log::error!("guac slot {} invalid gateway hostname \'{}\': {}", params.slot_idx, gw_host, e); return; }
-	};
-	let mut tls = match connector.connect(server_name, tcp).await {
-		Ok(s)  => s,
-		Err(e) => { log::error!("guac slot {} TLS handshake failed: {}", params.slot_idx, e); return; }
+		Err(e) => { log::error!("guac slot {} gateway connect failed: {}", params.slot_idx, e); return; }
 	};
 
 	// ── Gateway JSON handshake ────────────────────────────────────────────────────────

@@ -3,11 +3,13 @@
 	import { invoke }             from '@tauri-apps/api/core';
 
 	interface AppConfig {
-		font_size:       number;
-		vnc_viewer:      string;
-		portal_base_url: string;
-		idle_timeout:    number;
-		client_id:       string | null;
+		font_size:               number;
+		vnc_viewer:              string;
+		portal_base_url:         string;
+		idle_timeout:            number;
+		client_id:               string | null;
+		gateway_skip_tls_verify: boolean;
+		gateway_disable_tls:     boolean;
 	}
 
 	const FONT_MIN     = 10;
@@ -16,18 +18,22 @@
 	const FONT_STEP    =  1;
 
 	let cfg: AppConfig = $state({
-		font_size:       FONT_DEFAULT,
-		vnc_viewer:      '',
-		portal_base_url: 'https://portal.fleetshell.com',
-		idle_timeout:    300,
-		client_id:       null,
+		font_size:               FONT_DEFAULT,
+		vnc_viewer:              '',
+		portal_base_url:         'https://portal.fleetshell.com',
+		idle_timeout:            300,
+		client_id:               null,
+		gateway_skip_tls_verify: false,
+		gateway_disable_tls:     false,
 	});
 
 	// Per-field save-state indicators so they don't interfere with each other.
-	let fontSaveState:        'idle' | 'saving' | 'saved' | 'error' = $state('idle');
-	let vncSaveState:         'idle' | 'saving' | 'saved' | 'error' = $state('idle');
-	let portalUrlSaveState:   'idle' | 'saving' | 'saved' | 'error' = $state('idle');
-	let idleTimeoutSaveState: 'idle' | 'saving' | 'saved' | 'error' = $state('idle');
+	let fontSaveState:           'idle' | 'saving' | 'saved' | 'error' = $state('idle');
+	let vncSaveState:            'idle' | 'saving' | 'saved' | 'error' = $state('idle');
+	let portalUrlSaveState:      'idle' | 'saving' | 'saved' | 'error' = $state('idle');
+	let idleTimeoutSaveState:    'idle' | 'saving' | 'saved' | 'error' = $state('idle');
+	let skipTlsVerifySaveState:  'idle' | 'saving' | 'saved' | 'error' = $state('idle');
+	let disableTlsSaveState:     'idle' | 'saving' | 'saved' | 'error' = $state('idle');
 
 	let fontSaveTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -80,14 +86,28 @@
 		saveConfig('idle-timeout');
 	}
 
+	// ── Gateway TLS ─────────────────────────────────────────────────────────
+
+	function applySkipTlsVerify(value: boolean) {
+		cfg = { ...cfg, gateway_skip_tls_verify: value };
+		saveConfig('skip-tls-verify');
+	}
+
+	function applyDisableTls(value: boolean) {
+		cfg = { ...cfg, gateway_disable_tls: value };
+		saveConfig('disable-tls');
+	}
+
 	// ── Shared save ──────────────────────────────────────────────────────────
 
-	async function saveConfig(indicator: 'font' | 'vnc' | 'portal' | 'idle-timeout') {
+	async function saveConfig(indicator: 'font' | 'vnc' | 'portal' | 'idle-timeout' | 'skip-tls-verify' | 'disable-tls') {
 		const setState =
-			indicator === 'font'         ? (s: typeof fontSaveState)        => { fontSaveState        = s; } :
-			indicator === 'vnc'          ? (s: typeof vncSaveState)         => { vncSaveState         = s; } :
-			indicator === 'idle-timeout' ? (s: typeof idleTimeoutSaveState) => { idleTimeoutSaveState = s; } :
-			                               (s: typeof portalUrlSaveState)   => { portalUrlSaveState   = s; };
+			indicator === 'font'            ? (s: typeof fontSaveState)          => { fontSaveState          = s; } :
+			indicator === 'vnc'             ? (s: typeof vncSaveState)           => { vncSaveState           = s; } :
+			indicator === 'idle-timeout'    ? (s: typeof idleTimeoutSaveState)   => { idleTimeoutSaveState   = s; } :
+			indicator === 'skip-tls-verify' ? (s: typeof skipTlsVerifySaveState) => { skipTlsVerifySaveState = s; } :
+			indicator === 'disable-tls'     ? (s: typeof disableTlsSaveState)    => { disableTlsSaveState    = s; } :
+			                                  (s: typeof portalUrlSaveState)     => { portalUrlSaveState     = s; };
 
 		setState('saving');
 		try {
@@ -242,6 +262,50 @@
 			<button class="btn-secondary" onclick={() => applyIdleTimeout(IDLE_DEFAULT)}
 				title="Reset to default ({IDLE_DEFAULT} s)">Reset</button>
 			{@render SaveIndicator({ state: idleTimeoutSaveState })}
+		</div>
+	</div>
+
+	<div class="setting-row">
+		<label for="skip-tls-verify" class="setting-label">
+			Skip Gateway TLS
+			<span class="setting-hint">
+				Accept self-signed gateway certs.<br>
+				<strong class="warn-text">⚠️ Dev only — never use in production.</strong>
+			</span>
+		</label>
+
+		<div class="size-control">
+			<input
+				type="checkbox"
+				id="skip-tls-verify"
+				checked={cfg.gateway_skip_tls_verify}
+				onchange={(e) => applySkipTlsVerify(e.currentTarget.checked)}
+				class="tls-checkbox"
+				aria-label="Skip gateway TLS certificate validation"
+			/>
+			{@render SaveIndicator({ state: skipTlsVerifySaveState })}
+		</div>
+	</div>
+
+	<div class="setting-row">
+		<label for="disable-tls" class="setting-label">
+			Disable Gateway TLS
+			<span class="setting-hint">
+				Plain TCP to gateway, no encryption.<br>
+				<strong class="warn-text">⚠️ Dev only — never use in production.</strong>
+			</span>
+		</label>
+
+		<div class="size-control">
+			<input
+				type="checkbox"
+				id="disable-tls"
+				checked={cfg.gateway_disable_tls}
+				onchange={(e) => applyDisableTls(e.currentTarget.checked)}
+				class="tls-checkbox"
+				aria-label="Disable gateway TLS entirely (plain TCP)"
+			/>
+			{@render SaveIndicator({ state: disableTlsSaveState })}
 		</div>
 	</div>
 
@@ -403,6 +467,19 @@
 		transition: background 0.1s;
 	}
 	.btn-secondary:hover { background: var(--bg3); color: var(--fg); }
+
+	/* ── TLS skip checkbox ── */
+	.tls-checkbox {
+		width: 18px;
+		height: 18px;
+		cursor: pointer;
+		accent-color: var(--orange);
+	}
+
+	.warn-text {
+		color: var(--orange);
+		font-weight: bold;
+	}
 
 	/* ── Save indicator ── */
 	.save-indicator {

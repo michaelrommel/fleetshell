@@ -40,6 +40,27 @@ pub struct AppConfig {
     /// enrollment handshake.  `None` until enrollment completes.
     #[serde(default)]
     pub client_id: Option<String>,
+
+    /// Skip TLS certificate validation when connecting to the gateway.
+    ///
+    /// Set to `true` only when the gateway presents a self-signed or
+    /// otherwise-untrusted certificate (local/dev deployments without a
+    /// CA-signed cert).  **Never enable in production** — it removes
+    /// protection against man-in-the-middle attacks.
+    ///
+    /// Default: `false` (strict validation).
+    #[serde(default)]
+    pub gateway_skip_tls_verify: bool,
+
+    /// Disable TLS entirely when connecting to the gateway (plain TCP).
+    ///
+    /// Use only for local debugging when the gateway is started without
+    /// `GATEWAY_TLS=true` (e.g. to rule out TLS as the cause of a data-flow
+    /// issue).  **Never enable in production** — all traffic is unencrypted.
+    ///
+    /// Default: `false`.
+    #[serde(default)]
+    pub gateway_disable_tls: bool,
 }
 
 fn default_portal_base_url() -> String {
@@ -53,9 +74,11 @@ impl Default for AppConfig {
         Self {
             font_size:       15,
             vnc_viewer:      String::new(),
-            portal_base_url: default_portal_base_url(),
-            idle_timeout:    default_idle_timeout(),
-            client_id:       None,
+            portal_base_url:         default_portal_base_url(),
+            idle_timeout:            default_idle_timeout(),
+            client_id:               None,
+            gateway_skip_tls_verify: false,
+            gateway_disable_tls:     false,
         }
     }
 }

@@ -4,6 +4,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
@@ -11,6 +13,103 @@ use rustls::{DigitallySignedStruct, SignatureScheme};
 
 use crate::server::{ApiState, PortRow, TunnelRequest};
 use tauri::Manager as _;  // for AppHandle::state()
+
+// ── Gateway connection (plain TCP or TLS) ──────────────────────────────────
+
+/// Unified gateway stream — either raw TCP (debug) or TLS (production).
+///
+/// Allows all downstream code to stay generic without duplicating logic for
+/// each transport mode.
+pub(crate) enum GatewayConn {
+    Plain(TcpStream),
+    Tls(tokio_rustls::client::TlsStream<TcpStream>),
+}
+
+impl AsyncRead for GatewayConn {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx:   &mut Context<'_>,
+        buf:  &mut tokio::io::ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            Self::Plain(s) => Pin::new(s).poll_read(cx, buf),
+            Self::Tls(s)   => Pin::new(s).poll_read(cx, buf),
+        }
+    }
+}
+
+impl AsyncWrite for GatewayConn {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx:   &mut Context<'_>,
+        buf:  &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        match self.get_mut() {
+            Self::Plain(s) => Pin::new(s).poll_write(cx, buf),
+            Self::Tls(s)   => Pin::new(s).poll_write(cx, buf),
+        }
+    }
+    fn poll_flush(
+        self: Pin<&mut Self>,
+        cx:   &mut Context<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            Self::Plain(s) => Pin::new(s).poll_flush(cx),
+            Self::Tls(s)   => Pin::new(s).poll_flush(cx),
+        }
+    }
+    fn poll_shutdown(
+        self: Pin<&mut Self>,
+        cx:   &mut Context<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            Self::Plain(s) => Pin::new(s).poll_shutdown(cx),
+            Self::Tls(s)   => Pin::new(s).poll_shutdown(cx),
+        }
+    }
+}
+
+// Both TcpStream and TlsStream<TcpStream> are Unpin.
+impl Unpin for GatewayConn {}
+
+/// Connect to the gateway, returning either a plain TCP stream or a TLS stream
+/// depending on the config flags.
+///
+/// - `disable_tls=true`  — plain TCP; use only for local debugging.
+/// - `skip_verify=true`  — TLS but accept self-signed certs.
+/// - both false          — TLS with OS trust store (production default).
+pub(crate) async fn connect_gateway(
+    gw_addr:     &str,
+    gw_host:     &str,
+    skip_verify: bool,
+    disable_tls: bool,
+) -> Result<GatewayConn, String> {
+    let tcp = TcpStream::connect(gw_addr)
+        .await
+        .map_err(|e| format!("gateway TCP connect failed ({}): {}", gw_addr, e))?;
+
+    if disable_tls {
+        log::warn!(
+            "Gateway TLS is DISABLED (gateway_disable_tls=true) — \
+             connecting with plain TCP. Use only in local/dev environments."
+        );
+        return Ok(GatewayConn::Plain(tcp));
+    }
+
+    let connector = make_tls_connector(skip_verify)
+        .map_err(|e| format!("TLS setup failed: {}", e))?;
+
+    let server_name = rustls::pki_types::ServerName::try_from(gw_host)
+        .map_err(|e| format!("invalid gateway hostname '{}': {}", gw_host, e))?
+        .to_owned();
+
+    let tls = connector
+        .connect(server_name, tcp)
+        .await
+        .map_err(|e| format!("TLS handshake with gateway failed: {}", e))?;
+
+    Ok(GatewayConn::Tls(tls))
+}
 
 // ── Per-port connection config ────────────────────────────────────────────────
 
@@ -127,27 +226,22 @@ pub fn parse_gateway(gateway: &str) -> (String, u16) {
 
 // ── TLS helper ────────────────────────────────────────────────────────────────
 
-/// Build a rustls TLS connector.
+/// Build a rustls TLS connector for outbound gateway connections.
 ///
 /// **Normal mode** — trusts the system certificate store so that enterprise
 /// root CAs installed via MDM / GPO (e.g. zScaler) are automatically
 /// accepted without any code change.
 ///
-/// **Skip-verify mode** — when the environment variable
-/// `GATEWAY_SKIP_TLS_VERIFY=1` is set the connector accepts *any* server
-/// certificate.  TLS encryption is still active; only the authenticity of
-/// the server certificate is not checked.  Use this only during local
-/// development against a gateway that presents a self-signed certificate.
-/// **Never set this variable in production.**
-pub(crate) fn make_tls_connector() -> Result<TlsConnector, Box<dyn std::error::Error + Send + Sync>> {
-    let skip_verify = std::env::var("GATEWAY_SKIP_TLS_VERIFY")
-        .map(|v| !v.is_empty() && v != "0")
-        .unwrap_or(false);
-
+/// **Skip-verify mode** — when `skip_verify` is `true` the connector accepts
+/// *any* server certificate.  TLS encryption is still active; only the
+/// authenticity of the server certificate is not checked.  Controlled by the
+/// `gateway_skip_tls_verify` setting in the client config.
+/// Use only against gateways with self-signed certificates (local / dev).
+pub(crate) fn make_tls_connector(skip_verify: bool) -> Result<TlsConnector, Box<dyn std::error::Error + Send + Sync>> {
     if skip_verify {
         log::warn!(
-            "GATEWAY_SKIP_TLS_VERIFY is set — TLS certificate validation is DISABLED. \
-             Do not use this in production."
+            "Gateway TLS certificate validation is DISABLED (gateway_skip_tls_verify=true). \
+             Self-signed certificates accepted. Do not use in production."
         );
         let config = rustls::ClientConfig::builder()
             .dangerous()
@@ -284,41 +378,20 @@ async fn handle_connection(local: TcpStream, port: u16, cfg: PortConfig, state: 
 
     log::debug!("port {} — connecting to gateway {} (TLS)", port, gw_addr);
 
-    let tcp = match TcpStream::connect(&gw_addr).await {
-        Ok(s)  => s,
+    let app_cfg = crate::config::load(&state.app);
+    let mut gw = match connect_gateway(
+        &gw_addr, &gw_host,
+        app_cfg.gateway_skip_tls_verify,
+        app_cfg.gateway_disable_tls,
+    ).await {
+        Ok(g)  => g,
         Err(e) => {
-            log::error!("port {} — gateway connect failed ({}): {}", port, gw_addr, e);
+            log::error!("port {} — {}", port, e);
             crate::util::navigate(&state.app, "logging");
             return;
         }
     };
-
-    let connector = match make_tls_connector() {
-        Ok(c)  => c,
-        Err(e) => {
-            log::error!("port {} — TLS setup failed: {}", port, e);
-            crate::util::navigate(&state.app, "logging");
-            return;
-        }
-    };
-
-    let server_name = match rustls::pki_types::ServerName::try_from(gw_host.as_str()) {
-        Ok(n)  => n.to_owned(),
-        Err(e) => {
-            log::error!("port {} — invalid gateway hostname '{}': {}", port, gw_host, e);
-            crate::util::navigate(&state.app, "logging");
-            return;
-        }
-    };
-
-    let tls = match connector.connect(server_name, tcp).await {
-        Ok(s)  => s,
-        Err(e) => {
-            log::error!("port {} — TLS handshake failed: {}", port, e);
-            crate::util::navigate(&state.app, "logging");
-            return;
-        }
-    };
+    let _ = &mut gw; // suppress unused-mut warning when TLS branch not taken
 
     let payload = build_payload(&cfg, port, &state.gateway_path);
 
@@ -339,7 +412,7 @@ async fn handle_connection(local: TcpStream, port: u16, cfg: PortConfig, state: 
                 );
                 match acceptor.accept(local).await {
                     Ok(local_tls) => {
-                        do_tunnel(local_tls, tls, &payload, port, &state.app, last_active)
+                        do_tunnel(local_tls, gw, &payload, port, &state.app, last_active)
                             .await;
                     }
                     Err(e) => {
@@ -356,11 +429,11 @@ async fn handle_connection(local: TcpStream, port: u16, cfg: PortConfig, state: 
                     "port {} — HTTPS proxy mode: no TLS cert yet (enroll first);                      falling back to e2ecrypt passthrough",
                     port
                 );
-                do_tunnel(local, tls, &payload, port, &state.app, last_active).await;
+                do_tunnel(local, gw, &payload, port, &state.app, last_active).await;
             }
         }
     } else {
-        do_tunnel(local, tls, &payload, port, &state.app, last_active).await;
+        do_tunnel(local, gw, &payload, port, &state.app, last_active).await;
     }
 }
 
@@ -531,29 +604,18 @@ pub(crate) async fn read_line<R: AsyncRead + Unpin>(
 /// - `Ok(false)` — target unreachable
 /// - `Err(…)`   — could not reach the gateway, or unexpected response
 pub async fn probe_target(
-    target:       &str,
-    port:         u16,
-    gateway:      &str,
-    token:        &str,
-    gateway_path: &str,
+    target:          &str,
+    port:            u16,
+    gateway:         &str,
+    token:           &str,
+    gateway_path:    &str,
+    skip_tls_verify: bool,
+    disable_tls:     bool,
 ) -> Result<bool, String> {
     let (gw_host, gw_port) = parse_gateway(gateway);
     let gw_addr = format!("{}:{}", gw_host, gw_port);
 
-    let tcp = TcpStream::connect(&gw_addr)
-        .await
-        .map_err(|e| format!("Gateway connect failed: {e}"))?;
-
-    let connector = make_tls_connector()
-        .map_err(|e| format!("TLS setup failed: {e}"))?;
-
-    let server_name = rustls::pki_types::ServerName::try_from(gw_host.as_str())
-        .map_err(|e| format!("Invalid gateway hostname '{gw_host}': {e}"))?;
-
-    let mut tls = connector
-        .connect(server_name.to_owned(), tcp)
-        .await
-        .map_err(|e| format!("TLS handshake with gateway failed: {e}"))?;
+    let mut tls = connect_gateway(&gw_addr, &gw_host, skip_tls_verify, disable_tls).await?;
 
     let payload = serde_json::json!({
         "target":      target,

@@ -176,6 +176,7 @@ async fn probe_handler(
     State(state): State<ApiState>,
     Json(req):    Json<ProbeRequest>,
 ) -> Json<ProbeResponse> {
+    let cfg = crate::config::load(&state.app);
     log::info!(
         "Probe request: target={}:{} via {}",
         req.target, req.port, req.gateway,
@@ -186,6 +187,8 @@ async fn probe_handler(
         &req.gateway,
         &req.token,
         &state.gateway_path,
+        cfg.gateway_skip_tls_verify,
+        cfg.gateway_disable_tls,
     ).await {
         Ok(true) => {
             log::info!("Probe: {}:{} reachable", req.target, req.port);
@@ -335,7 +338,9 @@ async fn tunnel_handler(
             gateway:     req.gateway.clone(),
             slot_idx,
             last_active: last_active.clone(),
-            enable_drive: req.enable_drive.unwrap_or(false),
+            enable_drive:    req.enable_drive.unwrap_or(false),
+            skip_tls_verify: cfg.gateway_skip_tls_verify,
+            disable_tls:     cfg.gateway_disable_tls,
         });
 
         let handle = tokio::spawn(
