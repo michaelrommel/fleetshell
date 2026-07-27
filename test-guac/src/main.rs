@@ -32,9 +32,11 @@
 //! # In-container: gateway mode (tests the new guac branch in handler.rs)
 //!
 //! ```bash
-//! # The gateway receives plain TCP from the NLB — no TLS needed from inside
-//! # the same container.
-//! TOKEN="<jwt-from-portal>" GATEWAY_NAME="atlanta-01" \
+//! # Set GATEWAY_TLS=true when the gateway terminates TLS itself (local dev
+//! # without an NLB in front).  The test tool then performs a TLS handshake
+//! # and accepts any server certificate (useful for self-signed certs).
+//! # In production the NLB terminates TLS; omit GATEWAY_TLS or set it to false.
+//! TOKEN="<jwt-from-portal>" GATEWAY_NAME="atlanta-01" GATEWAY_TLS=true \
 //!   ./test-guac --gateway 127.0.0.1:8443 172.16.28.109 3389 Administrator ''
 //! ```
 
@@ -42,8 +44,125 @@ use std::io::{self, Read, Write};
 use std::net::TcpStream;
 use std::time::Duration;
 use std::collections::HashMap;
+use std::sync::Arc;
 
-// ── Guacamole protocol (inline, no external deps) ─────────────────────────────
+use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
+use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
+use rustls::{ClientConfig, DigitallySignedStruct, SignatureScheme};
+
+// ── Gateway stream: plain TCP or TLS ────────────────────────────────────────
+//
+// Used by run_via_gateway and read_instructions so both paths share the same
+// I/O helpers.  For the direct-guacd path we still use TcpStream directly.
+
+enum GatewayStream {
+	Plain(TcpStream),
+	Tls(rustls::StreamOwned<rustls::ClientConnection, TcpStream>),
+}
+
+impl GatewayStream {
+	/// Forward set_read_timeout to the underlying TCP socket.
+	fn set_read_timeout(&self, dur: Option<Duration>) -> io::Result<()> {
+		match self {
+			Self::Plain(s) => s.set_read_timeout(dur),
+			Self::Tls(s)   => s.sock.set_read_timeout(dur),
+		}
+	}
+}
+
+impl Read for GatewayStream {
+	fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+		match self {
+			Self::Plain(s) => s.read(buf),
+			Self::Tls(s)   => s.read(buf),
+		}
+	}
+}
+
+impl Write for GatewayStream {
+	fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+		match self {
+			Self::Plain(s) => s.write(buf),
+			Self::Tls(s)   => s.write(buf),
+		}
+	}
+	fn flush(&mut self) -> io::Result<()> {
+		match self {
+			Self::Plain(s) => s.flush(),
+			Self::Tls(s)   => s.flush(),
+		}
+	}
+}
+
+// ── TLS: accept-any verifier for self-signed gateway certs ───────────────────
+
+#[derive(Debug)]
+struct SkipServerVerification(Arc<rustls::crypto::CryptoProvider>);
+
+impl SkipServerVerification {
+	fn new() -> Arc<Self> {
+		Arc::new(Self(Arc::new(rustls::crypto::ring::default_provider())))
+	}
+}
+
+impl ServerCertVerifier for SkipServerVerification {
+	fn verify_server_cert(
+		&self,
+		_end_entity: &CertificateDer<'_>,
+		_intermediates: &[CertificateDer<'_>],
+		_server_name: &ServerName<'_>,
+		_ocsp_response: &[u8],
+		_now: UnixTime,
+	) -> Result<ServerCertVerified, rustls::Error> {
+		Ok(ServerCertVerified::assertion())
+	}
+	fn verify_tls12_signature(
+		&self, message: &[u8], cert: &CertificateDer<'_>, dss: &DigitallySignedStruct,
+	) -> Result<HandshakeSignatureValid, rustls::Error> {
+		rustls::crypto::verify_tls12_signature(
+			message, cert, dss, &self.0.signature_verification_algorithms,
+		)
+	}
+	fn verify_tls13_signature(
+		&self, message: &[u8], cert: &CertificateDer<'_>, dss: &DigitallySignedStruct,
+	) -> Result<HandshakeSignatureValid, rustls::Error> {
+		rustls::crypto::verify_tls13_signature(
+			message, cert, dss, &self.0.signature_verification_algorithms,
+		)
+	}
+	fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+		self.0.signature_verification_algorithms.supported_schemes()
+	}
+}
+
+/// Connect to the gateway, wrapping in TLS when `use_tls` is true.
+/// Certificate verification is always skipped — self-signed certs are expected
+/// in local/dev deployments.
+fn connect_gateway(addr: &str, use_tls: bool) -> io::Result<GatewayStream> {
+	let tcp = TcpStream::connect(addr)?;
+	if !use_tls {
+		return Ok(GatewayStream::Plain(tcp));
+	}
+
+	let hostname = addr.split(':').next().unwrap_or(addr);
+	let cfg = Arc::new(
+		ClientConfig::builder()
+			.dangerous()
+			.with_custom_certificate_verifier(SkipServerVerification::new())
+			.with_no_client_auth(),
+	);
+	let server_name = ServerName::try_from(hostname.to_string())
+		.map_err(|e| io::Error::new(io::ErrorKind::InvalidInput,
+			format!("invalid gateway hostname '{hostname}': {e}")
+		))?;
+	let conn = rustls::ClientConnection::new(cfg, server_name)
+		.map_err(|e| io::Error::new(io::ErrorKind::Other,
+			format!("TLS client config error: {e}")
+		))?;
+	Ok(GatewayStream::Tls(rustls::StreamOwned::new(conn, tcp)))
+}
+
+// ── Guacamole protocol (inline) ───────────────────────────────────────────────
 
 fn encode_element(s: &str) -> String {
 	format!("{}.{}", s.len(), s)
@@ -59,19 +178,19 @@ fn encode_instruction(opcode: &str, args: &[&str]) -> String {
 	out
 }
 
-fn send(stream: &mut TcpStream, opcode: &str, args: &[&str]) -> io::Result<()> {
+fn send<W: Write>(stream: &mut W, opcode: &str, args: &[&str]) -> io::Result<()> {
 	let wire = encode_instruction(opcode, args);
 	stream.write_all(wire.as_bytes())?;
 	stream.flush()
 }
 
-fn read_byte(stream: &mut TcpStream) -> io::Result<u8> {
+fn read_byte<R: Read>(stream: &mut R) -> io::Result<u8> {
 	let mut b = [0u8; 1];
 	stream.read_exact(&mut b)?;
 	Ok(b[0])
 }
 
-fn recv(stream: &mut TcpStream) -> io::Result<(String, Vec<String>)> {
+fn recv<R: Read>(stream: &mut R) -> io::Result<(String, Vec<String>)> {
 	let mut elements: Vec<String> = Vec::new();
 	loop {
 		let mut digits: Vec<u8> = Vec::with_capacity(8);
@@ -190,8 +309,9 @@ fn main() {
 			 \n\
 			 Env (direct):   GUACD_ADDR  guacd address        (default 127.0.0.1:4822)\n\
 			 Env (both):     PROTOCOL    rdp or vnc            (default rdp)\n\
-			 Env (gateway):  TOKEN       JWT                   (required)\n\
-			 Env (gateway):  GATEWAY_NAME  gateway field value (default: test)"
+			 Env (gateway):  TOKEN         JWT                   (required)\n\
+			 Env (gateway):  GATEWAY_NAME  gateway field in handshake (default: --gateway address)\n\
+			 Env (gateway):  GATEWAY_TLS   true = TLS handshake (default: false, plain TCP)"
 		);
 		return;
 	}
@@ -227,12 +347,19 @@ fn main() {
 	match gateway_addr {
 		Some(ref gw) => {
 			// ── Gateway mode ──────────────────────────────────────────────────
-			let token        = std::env::var("TOKEN").unwrap_or_default();
+			let token = std::env::var("TOKEN").unwrap_or_default();
+			// Default gateway_name to the --gateway address so the handshake
+			// "gateway" field matches the gw claim in a portal-issued JWT.
+			// Override with GATEWAY_NAME only when using a logical name like
+			// "atlanta-01" instead of a raw address.
 			let gateway_name = std::env::var("GATEWAY_NAME")
-				.unwrap_or_else(|_| "test".into());
+				.unwrap_or_else(|_| gw.clone());
+			let gateway_tls  = std::env::var("GATEWAY_TLS")
+				.map(|v| !(v.eq_ignore_ascii_case("false") || v == "0"))
+				.unwrap_or(false);
 
 			println!("━━━ test-guac (gateway mode) ━━━━━━━━━━━━━━━━━━━━━━━━━━");
-			println!("  gateway     : {gw}");
+			println!("  gateway     : {gw}{}", if gateway_tls { " (TLS)" } else { " (plain TCP)" });
 			println!("  protocol    : {protocol}");
 			println!("  target      : {host}:{port}");
 			println!("  username    : {username}");
@@ -247,7 +374,7 @@ fn main() {
 			}
 
 			if let Err(e) = run_via_gateway(
-				gw, &protocol, &host, port,
+				gw, gateway_tls, &protocol, &host, port,
 				&username, &password, &token, &gateway_name,
 				1280, 800, 96,
 				num_instructions,
@@ -355,13 +482,14 @@ fn run_direct(
 	let cid = args.first().map(|s| s.as_str()).unwrap_or("<none>");
 	println!("\n✓ guacd handshake complete — connection_id = {cid}");
 
-	read_instructions(&mut stream, num, "guacd")
+	read_instructions(&mut GatewayStream::Plain(stream), num, "guacd")
 }
 
 // ── Mode 2: via fleetshell-gateway ────────────────────────────────────────────
 
 fn run_via_gateway(
 	gateway_addr: &str,
+	gateway_tls:  bool,
 	protocol:     &str,
 	host:         &str,
 	port:         u16,
@@ -374,12 +502,12 @@ fn run_via_gateway(
 	dpi:          u32,
 	num:          usize,
 ) -> io::Result<()> {
-	// 1. TCP connect to gateway
-	// Inside the container the gateway receives plain TCP (the NLB terminates
-	// TLS), so no TLS library is needed here.
-	print!("\n[1/3] connecting to gateway at {gateway_addr} … ");
+	// 1. Connect to gateway — plain TCP when behind an NLB that terminates TLS,
+	//    or TLS directly when GATEWAY_TLS=true (local / standalone mode).
+	let mode = if gateway_tls { "TLS" } else { "plain TCP" };
+	print!("\n[1/3] connecting to gateway at {gateway_addr} ({mode}) … ");
 	io::stdout().flush()?;
-	let mut stream = TcpStream::connect(gateway_addr)?;
+	let mut stream = connect_gateway(gateway_addr, gateway_tls)?;
 	stream.set_read_timeout(Some(Duration::from_secs(10)))?;
 	println!("ok");
 
@@ -394,7 +522,7 @@ fn run_via_gateway(
 	stream.write_all(line.as_bytes())?;
 	stream.flush()?;
 
-	// 3. Read gateway status line (e.g. "200 CONNECTED")
+	// 3. Read gateway status line (e.g. "200 CONNECTED $uuid")
 	let mut status = String::new();
 	loop {
 		let mut b = [0u8; 1];
@@ -425,7 +553,7 @@ fn run_via_gateway(
 
 // ── Shared: read and print N Guacamole instructions ───────────────────────────
 
-fn read_instructions(stream: &mut TcpStream, num: usize, source: &str) -> io::Result<()> {
+fn read_instructions(stream: &mut GatewayStream, num: usize, source: &str) -> io::Result<()> {
 	println!("\n[reading up to {num} Guacamole instructions from {source} …]");
 	println!("  (30 s timeout per instruction)\n");
 	stream.set_read_timeout(Some(Duration::from_secs(30)))?;

@@ -1182,7 +1182,7 @@ dependencies = [
 
 [[package]]
 name = "fleetshell-client"
-version = "0.12.0"
+version = "0.12.2"
 dependencies = [
  "axum",
  "base64 0.22.1",
@@ -4528,6 +4528,10 @@ dependencies = [
 [[package]]
 name = "test-guac"
 version = "0.1.0"
+dependencies = [
+ "rustls",
+ "rustls-pki-types",
+]
 
 [[package]]
 name = "thiserror"

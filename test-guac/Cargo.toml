@@ -8,5 +8,8 @@ description = "Smoke-test tool: connect to guacd and drive an RDP/VNC session ha
 name = "test-guac"
 path = "src/main.rs"
 
-# No external dependencies — pure std so the binary stays tiny and compiles fast.
 [dependencies]
+# rustls for optional TLS in gateway mode (set GATEWAY_TLS=true when the
+# gateway is not behind an NLB that terminates TLS).
+rustls = { version = "0.23", default-features = false, features = ["ring", "logging", "std", "tls12"] }
+rustls-pki-types = "1"
