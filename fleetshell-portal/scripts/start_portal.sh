@@ -2,10 +2,10 @@
 
 export PORTAL_USERNAME=demo
 export PORTAL_PASSWORD=bratwurst13
-export JWT_SECRET=secret
-export DOWNLOAD_VNC_VIEWER=123
-export DOWNLOAD_TEAMVIEWER_CLIENT=123
-export DOWNLOAD_SSH_TERMINAL=123
-export DOWNLOAD_FLEETSHELL_CLIENT=/home/rommel/software/fleetshell/dist/fleetshell-client_0.4.0_x64-setup.exe
+export JWT_SECRET="change-me-in-production"
+#export DOWNLOAD_VNC_VIEWER=123
+#export DOWNLOAD_TEAMVIEWER_CLIENT=123
+#export DOWNLOAD_SSH_TERMINAL=123
+export DOWNLOAD_FLEETSHELL_CLIENT=/home/rommel/software/fleetshell/dist/fleetshell-client_0.12.1_x64-setup.exe
 npm run dev
 
