@@ -94,6 +94,9 @@ pub struct VncParams {
 	pub hostname: String,
 	/// VNC port.  Default: 5900.
 	pub port:     u16,
+	/// Username for ARD / NLA authentication (macOS Screen Sharing, etc.).
+	/// Leave empty for servers that use password-only (classic VNC).
+	pub username: String,
 	/// VNC password (optional for unauthenticated servers).
 	pub password: Option<String>,
 	/// Requested screen width in pixels.
@@ -109,6 +112,7 @@ impl Default for VncParams {
 		Self {
 			hostname: String::new(),
 			port:     5900,
+			username: String::new(),
 			password: None,
 			width:    1280,
 			height:   800,
@@ -209,6 +213,7 @@ impl ConnectionParams {
 			Self::Vnc(p) => {
 				m.insert("hostname", p.hostname.clone());
 				m.insert("port",     p.port.to_string());
+				m.insert("username", p.username.clone());
 				m.insert("password", p.password.clone().unwrap_or_default());
 				m.insert("width",    p.width.to_string());
 				m.insert("height",   p.height.to_string());

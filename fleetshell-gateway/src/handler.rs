@@ -270,7 +270,7 @@ where
                 let resp = format!("200 CONNECTED {}\n", cid);
                 send_line(&mut writer_half, resp.as_bytes()).await;
                 let mut client = tokio::io::join(reader, writer_half);
-                if relay_guac(&mut client, &mut guacd).await {
+                if relay_guac(&mut client, &mut guacd, peer).await {
                     park_session(&config, cid.clone(), guacd, peer).await;
                 } else {
                     info!(%peer, connection_id = %cid, "guacd session ended");
@@ -341,6 +341,7 @@ where
             "vnc" => guac::ConnectionParams::Vnc(guac::VncParams {
                 hostname: payload.target.clone(),
                 port:     payload.port,
+                username: payload.username.clone().unwrap_or_default(),
                 password: payload.password.clone(),
                 width:    payload.width.unwrap_or(1280),
                 height:   payload.height.unwrap_or(800),
@@ -386,7 +387,9 @@ where
         let mut client = tokio::io::join(reader, writer_half);
         let mut guacd  = session.stream;
 
-        if relay_guac(&mut client, &mut guacd).await {
+        debug!(%peer, connection_id = %session.connection_id,
+            "entering relay_guac for new session");
+        if relay_guac(&mut client, &mut guacd, peer).await {
             // Client disconnected; guacd is still alive — park for reconnect.
             park_session(&config, session.connection_id, guacd, peer).await;
         } else {
@@ -490,24 +493,59 @@ where
 /// Returns `true` if the **client** side closed the connection and guacd is
 /// still alive (the session should be parked for reconnect).
 /// Returns `false` if **guacd** closed the connection (session ended cleanly).
-async fn relay_guac<C, G>(client: &mut C, guacd: &mut G) -> bool
+async fn relay_guac<C, G>(client: &mut C, guacd: &mut G, peer: SocketAddr) -> bool
 where
     C: AsyncRead + AsyncWrite + Unpin,
     G: AsyncRead + AsyncWrite + Unpin,
 {
     let mut buf_c = vec![0u8; 16_384];
     let mut buf_g = vec![0u8; 16_384];
+    let mut iterations: u64 = 0;
+    debug!(%peer, "relay_guac: entered bidirectional relay loop");
     loop {
         tokio::select! {
             res = client.read(&mut buf_c) => match res {
-                Ok(0) | Err(_) => return true,   // client closed
-                Ok(n) => { if guacd.write_all(&buf_c[..n]).await.is_err() { return false; } }
+                Ok(0) => {
+                    debug!(%peer, iterations, "relay_guac: client EOF — parking guacd");
+                    return true;
+                }
+                Err(e) => {
+                    debug!(%peer, iterations, error = %e, "relay_guac: client read error — parking guacd");
+                    return true;
+                }
+                Ok(n) => {
+                    debug!(%peer, iterations, bytes = n, "relay_guac: client → guacd");
+                    if let Err(e) = guacd.write_all(&buf_c[..n]).await {
+                        warn!(%peer, iterations, error = %e, "relay_guac: write to guacd failed");
+                        return false;
+                    }
+                }
             },
             res = guacd.read(&mut buf_g) => match res {
-                Ok(0) | Err(_) => return false,  // guacd ended the session
-                Ok(n) => { if client.write_all(&buf_g[..n]).await.is_err() { return true; } }
+                Ok(0) => {
+                    debug!(%peer, iterations, "relay_guac: guacd EOF — session ended");
+                    return false;
+                }
+                Err(e) => {
+                    debug!(%peer, iterations, error = %e, "relay_guac: guacd read error — session ended");
+                    return false;
+                }
+                Ok(n) => {
+                    debug!(%peer, iterations, bytes = n, "relay_guac: guacd → client");
+                    if let Err(e) = client.write_all(&buf_g[..n]).await {
+                        warn!(%peer, iterations, error = %e, "relay_guac: write to client failed");
+                        return true;
+                    }
+                    // Flush so the client receives the data promptly even
+                    // when writes are small (e.g. single guacd instructions).
+                    if let Err(e) = client.flush().await {
+                        warn!(%peer, iterations, error = %e, "relay_guac: flush to client failed");
+                        return true;
+                    }
+                }
             },
         }
+        iterations += 1;
     }
 }
 
