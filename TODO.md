@@ -1,103 +1,93 @@
 # FleetShell — TODO
 
-## Active bugfixes (cross-boundary, high priority)
-
-These bugs span multiple components and are blocking full end-to-end use.
+## Active bugfixes (high priority)
 
 ### BUG-1 · Probe JWT expires before key-fetch (portal ↔ client)
 
 **Symptom:** enrollment fails at step 6 (key fetch) with HTTP 401.
 
-The probe JWT issued by `POST /api/clients` has a 5-minute TTL.  The enrollment
-sequence that follows is:
-1. CSR POST (step 3)
-2. 10-second simulated CA delay in the portal
-3. Poll `/api/cert/status` every 3 s until "ready"
-4. Cert fetch (steps 4+5)
-5. Key fetch **with the same probe token** (step 6)
+The probe JWT issued at `POST /api/clients` has a 5-minute TTL.  The enrollment
+sequence that follows (CSR POST → 10 s CA delay → polling → cert fetch → key fetch)
+can exceed this window in slow or retry-heavy environments.
 
-In slow or retry-heavy environments the total elapsed time exceeds 5 minutes.
+**Fix options:**
+- Extend TTL to 15–30 min in `issueProbeToken` (`portal/src/lib/server/jwt.ts`).
+- Issue a separate longer-lived enrollment token for steps 6–7 only.
+- Make `/api/cert/key` auth-free (UUID as discriminator, like `/api/cert/confirm`).
 
-**Fix options (pick one):**
-- Extend the probe token TTL to 15–30 minutes in `issueProbeToken` (portal `jwt.ts`).
-- Issue a separate, longer-lived enrollment session token (e.g. 30-minute JWT) at
-  `/api/clients` and use it only for cert/key fetch (steps 6–7), keeping the
-  5-minute probe token for the probe step only.
-- Make `/api/cert/key` not require a Bearer token (use the UUID as the
-  discriminator, same pattern as `/api/cert/confirm`).
-
-**Files to touch:**
-- `fleetshell-portal/src/lib/server/jwt.ts` — `issueProbeToken` TTL or new function
-- `fleetshell-portal/src/routes/api/cert/key/+server.ts` — auth check
-- `fleetshell-portal/src/routes/api/clients/+server.ts` — token issuance
-- `fleetshell-client/src-tauri/src/portal.rs` — `fetch_key` call / token forwarding
+**Files:**
+- `fleetshell-portal/src/lib/server/jwt.ts`
+- `fleetshell-portal/src/routes/api/cert/key/+server.ts`
+- `fleetshell-portal/src/routes/api/clients/+server.ts`
+- `fleetshell-client/src-tauri/src/portal.rs`
 
 ---
 
 ### ~~BUG-2~~ · Client API HTTPS not activated until restart — **FIXED**
 
-**Symptom:** immediately after a successful enrollment, the portal's devices page
-Connect button fails with a network error; deep-link forwarding from a second
-instance falls back to HTTP.
-
-**Root cause:** `lib.rs` builds the `TlsAcceptor` exactly once at startup.  After
-`handle_enroll` writes the cert+key to disk, the running server still speaks plain
-HTTP.  HTTPS only becomes active after the user restarts the app.
-
-**Fix:** after `handle_enroll` completes successfully, hot-reload the API server
-with TLS:
-- Option A — restart signal: have `handle_enroll` send a message over a `tokio::sync::oneshot`
-  channel to the server task; the server task rebuilds itself with `build_tls_acceptor`
-  and `serve_tls` on the same `TcpListener`.
-- Option B — `ArcSwap<Option<TlsAcceptor>>`: each new TCP connection reads the
-  current acceptor from shared state; enrollment updates it atomically.
-
-**Files to touch:**
-- `fleetshell-client/src-tauri/src/lib.rs` — startup wiring
-- `fleetshell-client/src-tauri/src/server.rs` — `serve_tls` / hot-reload mechanism
-- `fleetshell-client/src-tauri/src/portal.rs` — `handle_enroll` completion signal
+Hot-reload via `TlsState` (`Arc<RwLock<Option<TlsAcceptor>>>`).  `handle_enroll`
+updates the shared state after writing cert+key; the axum server picks up the new
+acceptor on the next TCP connection.  No restart required.
 
 ---
 
-### ~~BUG-3~~ · Portal Connect form fails for pre-enrollment / just-enrolled clients — **PARTIALLY FIXED**
+### BUG-3 · Connect form does not handle all client states (portal ↔ client)
 
-**Symptom:** clicking "Connect" on the devices page immediately throws a network
-error if the client has never enrolled or hasn't restarted after enrollment.
+**Symptom:** clicking Connect fails or produces broken result URLs depending on
+whether FleetShell is running and enrolled.  The portal currently has only two
+paths (HTTPS success → show result; HTTPS failure → deep-link) but there are
+five distinct client states that each require different UX.
 
-**Root cause:** `devices/+page.svelte` unconditionally fetches
-`https://127-0-0-1.client.fleetshell.com:8080/api/tunnel`.  Pre-enrollment (or
-post-enrollment before restart) the API server speaks plain HTTP, so the browser
-rejects the HTTPS request.
+**Mixed-content note:** `http://127.0.0.1` is listed as a *potentially
+trustworthy URL* in the W3C Secure Contexts spec, so an HTTPS portal page **can**
+`fetch()` from `http://127.0.0.1:*` without being blocked.  The custom hostname
+`http://127-0-0-1.client.fleetshell.com:8080` is **not** exempt and must never
+be used as an HTTP fallback.
 
-**Fix options (pick one or both):**
-- BUG-2 is now fixed (hot-reload TLS), so the client switches to HTTPS
-  immediately after enrollment without a restart.
-- [ ] Still open: the portal's Connect form should fall back to
-  `http://127.0.0.1:8080/api/tunnel` for pre-enrollment clients that have
-  never enrolled and therefore cannot serve HTTPS at all.
+**Detection sequence** (runs on Connect click):
+
+```
+Step 1 → POST https://127-0-0-1.client.fleetshell.com:8080/api/tunnel
+Step 2 → on TypeError: POST http://127.0.0.1:8080/api/tunnel
+Step 3 → on TypeError: open fleetshell:// wake deep-link, poll both for ~10 s
+Step 4 → on poll timeout: give up
+```
+
+| HTTPS | HTTP | Poll result | Client state | UX |
+|---|---|---|---|---|
+| ✅ 200 | — | — | Enrolled + running | Normal — show result |
+| ❌ | ✅ 200 | — | **Not enrolled + running** | Enrollment gate |
+| ❌ | ❌ | HTTPS responds | **Enrolled, not started** | "Starting…" spinner → normal |
+| ❌ | ❌ | HTTP responds | **Not enrolled, not started** | "Starting…" spinner → enrollment gate |
+| ❌ | ❌ | Timeout | Not installed / unresponsive | "Not found — [Download ↓]" |
+
+**Enrollment gate** (states 2 and 4):
+
+> ⚠️  FleetShell client is not enrolled
+>
+> Browser sessions (HTTPS, Expert-i, Guac RDP/VNC/SSH) require an enrolled
+> certificate and will not work.
+>
+> Works without enrollment: HTTP connections · Native RDP/VNC/SSH (no Guac)
+>
+> **[Enroll now →]**  (→ `/support?action=enroll`)   **[Continue anyway]**
+
+"Continue anyway" proceeds with `http://127.0.0.1:8080`; any HTTPS/guac result
+URLs are marked ⚠️ to warn the user they will not open.
+
+**Wake deep-link** — any `fleetshell://` URL launches the app if not running
+(OS protocol handler) and brings it to front if it is.  Use either:
+- `fleetshell://e30` (base64url of `{}` — client ignores unknown payload, app starts)
+- or implement `type: "wake"` in the client dispatcher (calls `show_window()`;
+  cleaner than relying on silent ignore of an unrecognised type)
 
 **Files to touch:**
-- `fleetshell-portal/src/routes/(app)/devices/+page.svelte` — `onConnect` handler
-- (optional, if BUG-2 fix chosen) — client files listed in BUG-2
-
----
-
-### ~~Architecture gap~~ · HTTPS tunnels to devices with self-signed certs — **FIXED**
-
-Browser → transparent relay → device exposed the device's self-signed cert to the
-browser, causing hard blocks in modern browsers.  The fix is two-part:
-
-**Client (`tunnel.rs`)** — when `application = "https"` and `transform = true`,
-`handle_connection` now wraps the accepted `TcpStream` in a `TlsAcceptor` using
-the enrolled `*.client.fleetshell.com` cert before entering `do_tunnel`.  The
-browser sees the trusted wildcard cert; the gateway receives plaintext HTTP.
-
-**Gateway (`transform.rs`)** — already injects `Host: {sni}` before the hook
-runs (step 4 of the transform loop), and opens its own TLS session to the device
-with cert validation disabled.  No gateway changes required.
-
-**Usage:** set `transform = true` and `sni = "device-hostname.example.com"` in
-the Connect form.  Falls back to transparent mode if the client has no cert yet.
+- `fleetshell-portal/src/routes/(app)/devices/+page.svelte` — `doConnect()`,
+  new state machine, enrollment gate UI
+- `fleetshell-portal/src/routes/(app)/support/+page.svelte` — read
+  `?action=enroll` query param and scroll to / activate the enrollment card
+- `fleetshell-client/src-tauri/src/portal.rs` — add `DeepLinkPayload::Wake`
+  variant that calls `show_window()` (optional but cleaner)
 
 ---
 
@@ -106,101 +96,96 @@ the Connect form.  Falls back to transparent mode if the client has no cert yet.
 ### Portal
 
 - [ ] LE certificate for `portal.fleetshell.com`
-- [ ] Device entry form: enter machine details (IP, hostname, OS, serial, etc.)
-      and persist to Redis under `systems:by-ip:<ip>`
-- [x] `CLIENT_CERT` and `CLIENT_KEY` env vars — cert chain and private key are
-      now loaded from AWS Secrets Manager via `valueFrom` in the ECS task
-      definition instead of from `certs/client.pem` / `private/client.key` files
-- [x] Devices page UX improvements:
-      - Gateway field default changed to `gateway.fleetshell.com`
-      - Target field pre-filled with `172.16.33.`
-      - Connect success banner: slot IP shown for both regular and guac tunnels
-- [x] **Connect form port-row improvements:**
-      - `path` field per row (http/https/expert-i): URL path suffix appended when
-        opening a browser tab (e.g. `/adminportal`); defaults to `/`
-      - SNI moved from main row into the `port-row-path` sub-row (only shown for
-        http/https/expert-i; greys out when e2ecrypt is on)
-      - Main row grid reduced from 7 to 6 columns (SNI column removed)
-      - `drive` checkbox in guac sub-row (RDP only): enables guacd RDP drive
-        sharing; sends `enable_drive: true` to the client and gateway
-- [ ] Service-launch buttons per device: RDP, VNC, HTTP, HTTPS
-- [ ] Ability to retrieve LE certificates (ACME client / integration)
-- [ ] Ability to perform LE web-based auth challenges
-- [ ] Convert the welcome page into a guided multi-step enrollment page
+- [ ] Device entry form (IP, hostname, OS, serial) → persist to Redis
+      `systems:by-ip:<ip>` hash
+- [ ] ACME client / LE cert retrieval + challenge handling
+- [ ] Guided multi-step enrollment welcome page
+- [ ] **File manager panel** in `/session` page:
+      - Toolbar 🗂 button placeholder is already present
+      - Implement a slide-out panel listing `/guac-drives/<target_ip>/` contents
+      - Upload (browser → device via EFS) and download (device → browser)
+      - Requires gateway to expose a file-list/download API or use the EFS mount directly
+- [x] `CLIENT_CERT` / `CLIENT_KEY` env vars (AWS Secrets Manager `valueFrom`)
+- [x] Connect form: `path` sub-row (URL suffix + SNI); `drive` checkbox (RDP guac)
+- [x] Connect form: SNI moved from main row into path sub-row
+- [x] Session page (`/session`) with toolbar, scaling, clipboard, overflow fix
 
 ### Client
 
-- [x] Phase 1: persist unique client ID in AppConfig
-- [x] Phase 1: placeholder CSR → portal → poll → cert + key → confirm
-- [x] Phase 1: HTTPS API server — hot-reloads immediately after enrollment (no restart)
-- [x] 16 loopback connection slots (127.0.0.2–127.0.0.17) via SlotManager
-- [x] FunctionsView slot grid with SVG arc free/busy/countdown timers
-- [x] Idle-timeout field in SettingsView (10–3600 s, saved to AppConfig)
-- [x] Single-instance forwarding (HTTPS-first, HTTP fallback)
-- [x] Registers protocol handler; NSIS user-level installer
-- [x] **Guacamole WebSocket proxy** (`guac_proxy.rs`):
+- [x] Phase 1: `client_id` in AppConfig; placeholder CSR → cert+key fetch → confirm
+- [x] Phase 1: HTTPS API hot-reload after enrollment (BUG-2 fixed)
+- [x] 16 loopback connection slots (SlotManager)
+- [x] FunctionsView: SVG arc free/busy/countdown timers per slot
+- [x] SettingsView: idle-timeout field; gateway TLS settings
+- [x] `GatewayConn` enum + `connect_gateway()` — plain-TCP / TLS / skip-verify
+      Used by all three gateway connection sites: raw tunnel, probe, guac proxy
+- [x] `gateway_skip_tls_verify` — accept self-signed gateway certs (dev)
+- [x] `gateway_disable_tls` — plain TCP to gateway (debug)
+- [x] Guacamole WebSocket proxy (`guac_proxy.rs`):
       - `run_guac_slot`: per-slot axum router + WebSocket handler
-      - `handle_guac_ws`: TLS connect to gateway, JSON handshake, bridge
-      - Session reconnect: `live_connection_id` persisted across WebSocket drops
-      - Keepalive ping detection and echo (never forwarded to gateway)
-      - `GuacSessionParams`: target, port, ws_port, protocol, username, password,
-        width, height, dpi, gateway, slot_idx, last_active, `enable_drive`
-      - `build_gateway_payload`: includes all guac fields incl. `enable_drive`
-      - `bind_ip` in `TunnelResponse` now populated for guac slots (was empty)
-- [x] **URL path suffix** (`tunnel.rs` `get_tunnel_url`):
-      - Accepts `path: &str`; `normalise_path()` ensures leading `/`
-      - Empty / `"/"` → no suffix; non-root paths appended to base URL
-- [x] **`enable_drive`** wired through `TunnelRequest` → `GuacSessionParams` →
-      gateway handshake
-- [ ] Phase 1 (BUG-1): fix probe JWT TTL / key-fetch auth (see BUG-1 above)
-- [x] Phase 1 (BUG-2): hot-reload TLS after enrollment without restart — FIXED
-- [ ] Phase 2: client generates its own pub/private key pair
-- [ ] Phase 2: client creates CSR for `*.<uniquename>.client.fleetshell.com`
-- [ ] Phase 2: client sends real PKCS#10 CSR to the portal
-- [ ] Add `Connect`/`Tunnel` variant to `DeepLinkPayload` (currently portal uses
-      direct HTTP POST; deep-link dispatch for tunnels not yet wired)
+      - TLS connect to gateway, JSON handshake, Guacamole instruction bridge
+      - Session reconnect via `live_connection_id` across WebSocket drops
+      - `enable_drive` field wired through to gateway handshake
+- [ ] **BUG-1**: probe JWT TTL fix
+- [ ] **BUG-3**: full client-state detection + enrollment gate in Connect form
+- [ ] `type: "wake"` deep-link variant — `DeepLinkPayload::Wake` calls `show_window()`;
+      used by the portal when the client is not running
+- [ ] Phase 2: real PKCS#10 CSR + per-client key pair
+- [ ] `Connect`/`Tunnel` deep-link variant (currently portal uses direct HTTP POST)
 
 ### Gateway
 
-- [ ] Dockerfile — `FROM scratch` or `FROM alpine` with musl binary
-- [x] AWS infrastructure — NLB deployed and working; see AGENTS.md §7 Gateway
-      for the full checklist of SG rules, target group settings, and the
-      `valueFrom` / `value` Secrets Manager gotcha
-- [x] Health check endpoint — `health.rs` on `GATEWAY_HEALTH_ADDR` (`:8080`);
-      NLB health check set to HTTP port 8080; probe noise eliminated from logs
-- [x] Logging improvements — TCP-level accept log; raw handshake bytes at DEBUG;
-      TCP health probe close demoted from WARN to DEBUG; `.with_target(true)`;
-      simplified default filter; `RUST_LOG` values documented
-- [x] **Guacamole (RDP/VNC/SSH)** — `guac/` module wired into handler:
-      - `guac/connection.rs`: `ConnectionParams` enum, `RdpParams` / `VncParams` /
-        `SshParams`, guacd opening handshake, `to_value_map()`
+- [ ] **Dockerfile** — `FROM scratch` or `FROM alpine` with musl binary
+- [x] AWS NLB wired; ECS service + target group; SG rules; health check on :8080
+- [x] `GATEWAY_TLS=true` local dev mode — self-signed cert via rcgen, or load
+      `TLS_CERT_FILE` / `TLS_KEY_FILE` for a real cert
+- [x] Health check endpoint (`health.rs`, `GATEWAY_HEALTH_ADDR`)
+- [x] Guacamole RDP/VNC/SSH via guacd 1.6.0:
+      - `guac/connection.rs`: `ConnectionParams` enum, guacd handshake, `to_value_map()`
       - `guac/protocol.rs`: `Instruction` encode/decode, async I/O helpers
       - Session parking + reconnect (`parked_sessions`, `GUAC_RECONNECT_GRACE_SECS`)
-      - `200 CONNECTED <connection_id>` response carries session ID for reconnect
-      - Base image upgraded `guacamole/guacd:1.5.0` → `1.6.0` (VNC auth fix)
-- [x] **RDP drive sharing** via guacd:
+      - `200 CONNECTED <connection_id>` for reconnect support
+- [x] RDP drive sharing via EFS (`fleetshell-guac-drives`, `fs-0316990fe78641ae2`):
       - `RdpParams`: `enable_drive`, `drive_name`, `drive_path`, `drive-create-path`
-      - Handler creates per-device subdirectory `<GUACD_DRIVE_PATH>/<target_ip>/`
-        before calling `guac::connect()` (`tokio::fs::create_dir_all`, idempotent)
-      - `GUACD_DRIVE_PATH` env var in config
-      - Dockerfile: `mkdir -p /guac-drives && chown guacd:guacd /guac-drives`
-- [x] **EFS shared drive volume** — `fleetshell-guac-drives` (`fs-0316990fe78641ae2`):
-      - Access point with `posixUser: Uid=1000`, `Path=/guac-drives`,
-        `CreationInfo: OwnerUid=1000, Permissions=755`
-      - SG rule: TCP 2049 from ECS task SG → EFS mount target SG
-      - ECS task definition (revision 10) mounts EFS at `/guac-drives`
-      - Shared across all gateway container instances
-- [x] **Password length diagnostic** — handler logs `password_len` and `password_set`
-      (never logs the value itself) for debugging credential delivery issues
-- [ ] Implement concrete `TransformHook`:
+      - Per-device subdirectory created with `tokio::fs::create_dir_all`
+      - `GUACD_DRIVE_PATH` env var; access point `posixUser: Uid=1000`
+- [x] **`expert-i` fix**: transform mode opens TLS upstream for both `"https"`
+      and `"expert-i"` — previously only `"https"` got TLS; `"expert-i"` fell
+      through to plain TCP and silently failed
+- [x] **VNC username fix**: `VncParams` now carries `username`; wired from
+      `payload.username` in handler — fixes macOS Screen Sharing (ARD auth)
+      where an empty username causes guacd to silently fail VNC authentication
+- [x] **`relay_guac()` debug logging**: per-direction byte counts, separate
+      client-EOF vs guacd-EOF log messages, error logging with the actual error,
+      explicit `flush()` after each client write, iteration counter
+- [ ] Concrete `TransformHook`:
       - Rewrite `Host:` header to `sni` (when present) or `target`
       - Inject auth headers if required
-      - Optionally redact sensitive fields in responses
+      - Optionally redact sensitive response fields
 - [ ] HTTP/2 support in transform mode
-- [ ] Proper upstream trust store (webpki-roots) for CA-signed deployments
-- [ ] Streaming body in transform mode (currently capped at 16 MiB)
+- [ ] Upstream trust store (`webpki-roots`) for CA-signed deployments
+- [ ] Streaming body support (current 16 MiB hard cap)
+
+### Test tooling (`test-guac`)
+
+- [x] TLS support in gateway mode: `GATEWAY_TLS=true` triggers TLS handshake
+      via `GatewayStream::Tls`; `SkipServerVerification` for self-signed certs
+- [x] `GATEWAY_NAME` defaults to `--gateway` address — `gw` JWT claim matches
+      automatically, no extra env var needed
+- [x] `GatewayStream` enum (`Plain` / `Tls`) for shared I/O helpers
+- [ ] Token expiry display (seconds remaining) in the banner
+- [ ] `--protocol rdp|vnc|ssh` as a positional flag (currently env var only)
+
+### scripts/mint_jwt.sh
+
+- [x] Mint a tunnel JWT locally without the portal — uses `openssl` + base64
+      for pure-shell HS256 signing
+- [x] `JWT_SECRET` env var (default: `change-me-in-production`)
+- [x] `JWT_TTL` env var (default: 86400 = 24 h)
+- [x] Optional `gw` claim (third positional arg); omitted when not supplied
+- [ ] Optional `sub` claim as a flag (currently always `"local-dev"`)
 
 ### Simulated test devices (AWS VPC)
 
 - [ ] Windows VMs in the same VPC as the gateway
-- [ ] Servers for RDP, VNC, HTTP, HTTPS (self-signed certs fine)
+- [ ] Services: RDP, VNC, HTTP, HTTPS (self-signed certs are fine)
