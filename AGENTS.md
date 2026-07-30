@@ -43,11 +43,13 @@ fleetshell/
 │   ├── package.json
 │   ├── svelte.config.js
 │   ├── src/
+│   │   ├── app.css             # Gruvbox tokens; @xterm/xterm CSS; Victor Mono NF @font-face
 │   │   ├── hooks.server.ts     # Session auth guard (redirects to /login)
 │   │   ├── lib/
 │   │   │   ├── components/
 │   │   │   │   └── AppShell.svelte       # Sidebar + page wrapper
 │   │   │   ├── guacamole-common-js.d.ts  # TypeScript declarations for guacamole-common-js
+│   │   │   ├── fontfaceobserver.d.ts     # TypeScript declarations for fontfaceobserver
 │   │   │   └── server/
 │   │   │       ├── constants.ts          # ADMIN_USERNAME, ADMIN_PASSWORD, SESSION_SECRET
 │   │   │       ├── jwt.ts                # issueProbeToken / verifyProbeToken / issueTunnelToken
@@ -59,7 +61,7 @@ fleetshell/
 │   │       ├── welcome/                  # First-run page → directs user to Support then Devices
 │   │       ├── (app)/                    # Auth-guarded app shell
 │   │       │   ├── devices/              # IP-based device lookup + Connect form
-│   │       │   ├── session/              # Guacamole remote-desktop viewer (full-screen, toolbar)
+│   │       │   ├── session/              # Unified viewer: Guacamole (RDP/VNC) + xterm.js (SSH)
 │   │       │   ├── support/              # Client download + fleetshell:// enrollment link
 │   │       │   ├── settings/             # (placeholder)
 │   │       │   └── administration/       # (placeholder)
@@ -75,6 +77,8 @@ fleetshell/
 │   │               ├── get/              # GET  — fetch the issued certificate chain (PEM)
 │   │               ├── key/              # GET  — fetch the shared private key (PEM)
 │   │               └── confirm/          # POST — client confirms receipt; marks enrollment done
+│   ├── static/
+│   │   └── fonts/                    # Victor Mono NF woff2 faces (Regular/Bold/Italic/BoldItalic)
 │   ├── certs/client.pem        # (deprecated) now injected via CLIENT_CERT env var
 │   ├── private/client.key      # (deprecated) now injected via CLIENT_KEY env var
 │   └── support/apps/[filename]/ # GET — serves client installer download
@@ -97,6 +101,7 @@ fleetshell/
 │           ├── portal.rs       # Deep-link decoder/dispatcher, enrollment orchestrator
 │           ├── config.rs       # AppConfig struct (TOML), cert/key persistence helpers
 │           ├── guac_proxy.rs   # Per-slot WebSocket server; bridges browser ↔ gateway guacd stream
+│           ├── ssh_proxy.rs    # Per-slot WS server for SSH direct mode; bridges xterm.js ↔ gateway ssh.rs
 │           └── util.rs         # navigate(), show_window() helpers
 │
 ├── fleetshell-gateway/         # Standalone Rust TCP/TLS tunnel gateway
@@ -105,9 +110,10 @@ fleetshell/
 │       ├── main.rs             # Tokio accept loop, optional TLS handshake, spawns tasks
 │       ├── config.rs           # Config::from_env() — all settings via env vars
 │       ├── auth.rs             # JWT verify_connection(), Claims struct, AuthError
-│       ├── handler.rs          # Parse → auth → probe/guac/proxy; relay_guac() with
+│       ├── handler.rs          # Parse → auth → probe/ssh-direct/guac/proxy; relay_guac() with
 │       │                       #   per-direction debug logging + flush
 │       ├── health.rs           # HTTP health-check server on GATEWAY_HEALTH_ADDR (:8080)
+│       ├── ssh.rs              # Direct SSH handler (russh): PTY alloc, shell, framed relay
 │       ├── tls.rs              # build_acceptor(): self-signed (rcgen) or file-based PEM
 │       ├── transform.rs        # HTTP/1.1 transform proxy + TransformHook trait + NoopHook
 │       └── guac/
@@ -134,6 +140,7 @@ fleetshell/
   Probe initiation  ──SSE──► Probe via deep-link              Bidirectional TCP proxy
   Connect form ─────────────► POST /api/tunnel ───────────────► TCP → target:port
   /session page ◄──wss://────  (guac WebSocket)  ──────────────► guacd → device
+  /session page ◄──wss://────  (ssh-ws WebSocket) ──────────────► russh → device
 ```
 
 ### Full tunnel sequence
@@ -165,6 +172,29 @@ fleetshell/
        |◄══Guacamole instructions════════════════════════════════════════════════════|
 ```
 
+### SSH xterm.js tunnel sequence
+
+```
+  Browser /session     fleetshell-client (ssh_proxy)    Gateway (ssh.rs)      Target device
+       |                        |                              |                    |
+       |─wss://{slot}:P/ssh-ws──►|                              |                    |
+       |                        |─TCP/TLS connect─────────────►|                    |
+       |                        |─JSON {application:"ssh",guac:false,...}\n────────►|─SSH auth+PTY──────►|
+       |                        |◄─"200 CONNECTED\n"───────────|                    |
+       |◄═[0x00/0x01 frames]════►|◄═══raw PTY bytes═══════════►|                    |
+```
+
+**SSH framing protocol (after `200 CONNECTED`):**
+
+| Direction | Format | Meaning |
+|---|---|---|
+| browser → gateway | `[0x00][len_hi][len_lo][...data]` | Keyboard input → PTY stdin |
+| browser → gateway | `[0x01][0x00][0x04][rows_hi][rows_lo][cols_hi][cols_lo]` | PTY resize (SIGWINCH) |
+| gateway → browser | raw bytes, no framing | PTY stdout/stderr |
+
+The client `ssh_proxy.rs` bridge is transparent to the framing — it copies bytes
+verbatim in both directions as `Message::Binary` WebSocket frames.
+
 ### Deep-link / probe sequence (enrollment)
 
 ```
@@ -195,6 +225,8 @@ fleetshell/
 | Auth | Cookie session (signed) + static credentials from env |
 | JWT | Custom HS256 (Node.js `crypto`, no external lib) |
 | Styling | Custom CSS (Gruvbox palette, CSS custom properties) |
+| SSH terminal | xterm.js (`@xterm/xterm` 6.x) + WebGL/canvas renderer |
+| SSH font | Victor Mono NF (Nerd Font, woff2) — self-hosted in `/static/fonts/` |
 
 ### Environment variables
 
@@ -226,8 +258,31 @@ fleetshell/
   - On submit: sign JWT server-side → POST to client API
 - **Tunnel JWT signing** — `POST /api/tunnel/sign` (auth-guarded).
 - **Client installer** — `GET /support/apps/[filename]` streamed from disk.
-- **Session page** (`/session`) — full-screen Guacamole remote-desktop viewer:
-  - Opened in a new tab by the devices page with `?ws=<wss-url>`
+- **Session page** (`/session`) — unified full-screen viewer for both Guacamole
+  (RDP/VNC) and SSH xterm.js sessions, selected by URL parameters:
+  - Opened in a new tab with `?ws=<wss-url>` (and `&proto=ssh` for SSH sessions).
+  - Session type detection: `?proto=ssh` or `wsUrl.includes('/ssh-ws')` → SSH path;
+    otherwise → Guacamole path.
+
+  **SSH / xterm.js path** (`isSsh === true`):
+  - Loads `@xterm/xterm`, `@xterm/addon-fit`, `@xterm/addon-webgl`,
+    `@xterm/addon-image`, `@xterm/addon-unicode11`, `@xterm/addon-unicode-graphemes`
+    in parallel via dynamic `import()`.
+  - Waits for all four Victor Mono NF font faces (regular/bold/italic/bold-italic)
+    via `fontfaceobserver` before opening the terminal (prevents wrong cell-width
+    measurements if xterm.js initialises before the font loads).
+  - Gruvbox Dark Hard colour theme applied to the terminal.
+  - `WebglAddon` loaded first; falls back to canvas renderer silently if WebGL
+    is unavailable.
+  - `FitAddon` + `ResizeObserver` keep the terminal sized to the available area
+    and send PTY resize frames on every geometry change.
+  - **Left toolbar (SSH mode)**: A− | fontSize px | A+ | Fullscreen | Disconnect
+    (font-size steps: 8–28 px; changed via 100 ms interval polling `fontSize`
+    reactive state, then `fit.fit()` + resize frame sent to gateway).
+  - Keyboard input → `sshFrameData()` (`0x00` frame).
+  - Resize → `sshFrameResize()` (`0x01` frame, 4-byte payload: u16 BE rows, cols).
+
+  **Guacamole path** (`isSsh === false`, unchanged):
   - **Left toolbar** (44 px wide, full-height, monochrome SVG icons):
     Fit | 1:1 | Zoom+ | % | Zoom− | Clipboard | Files (placeholder) | Fullscreen | Disconnect
   - **Scaling** via `display.scale(factor)` — mouse coordinate remapping is
@@ -242,8 +297,15 @@ fleetshell/
     cursor-sprite layer so it cannot expand the scroll area
   - **Clipboard bidirectional**: paste button → remote (`StringWriter`); remote →
     browser (`onclipboard` + `StringReader`)
-  - **SSR safety**: `onMount` is sync and returns cleanup; async Guacamole setup
-    runs in a fire-and-forget inner IIFE (avoids `window is not defined` in SSR)
+  - **SSR safety**: `onMount` is sync and returns cleanup; async setup (both SSH
+    and Guacamole) runs in a fire-and-forget inner IIFE (avoids `window is not
+    defined` in SSR)
+
+- **Devices form SSH handling**: `ssh` rows with `guac:false` and `e2ecrypt:false`
+  default to xterm.js mode; E2E checkbox is enabled so the user can opt into raw
+  TCP passthrough instead.  `tunnelBody()` now includes `width`/`height` for SSH
+  rows (not just guac rows) so the gateway can compute initial PTY dimensions.
+  Result URL detection checks for `/ssh-ws` in the URL to open `/session?…&proto=ssh`.
 
 ### What is NOT yet implemented
 
@@ -268,7 +330,7 @@ See §7 Open work items — Portal below.
 | HTTP client | reqwest 0.12 (rustls-tls-native-roots) |
 | Logging | tauri-plugin-log |
 
-**Current version: 0.12.1** — keep `src-tauri/Cargo.toml` and
+**Current version: 0.12.4** — keep `src-tauri/Cargo.toml` and
 `src-tauri/tauri.conf.json` in sync manually on every bump.
 
 ### Tauri commands
@@ -322,9 +384,29 @@ Response 200: `{ status, ports[], urls[], bind_ip }`.
 
 `GatewayConn` enum (`Plain(TcpStream)` / `Tls(TlsStream<TcpStream>)`) implements
 `AsyncRead + AsyncWrite + Unpin`.  `connect_gateway(addr, host, skip_verify,
-disable_tls)` selects the right variant.  Used by raw-tunnel, probe, and guac
-proxy code paths.  The old `GATEWAY_SKIP_TLS_VERIFY` env var is removed; both
-flags live in `AppConfig`.
+disable_tls)` selects the right variant.  Used by raw-tunnel, probe, guac proxy,
+and SSH proxy code paths.  The old `GATEWAY_SKIP_TLS_VERIFY` env var is removed;
+both flags live in `AppConfig`.
+
+#### SSH direct proxy (`ssh_proxy.rs`)
+
+Mirrors `guac_proxy.rs` structure but simpler — no Guacamole framing, no session
+parking.
+
+- `SshProxyParams` carries: target, port, ws_port, token, username, password,
+  width, height, gateway, slot_idx, last_active, skip_tls_verify, disable_tls.
+- `run_ssh_slot()` — per-slot accept loop identical to `guac_proxy`; handles
+  optional TLS for the inbound WebSocket.
+- Route: `GET /ssh-ws` → WebSocket upgrade → `handle_ssh_ws()`.
+- `handle_ssh_ws()` connects to the gateway, sends JSON handshake with
+  `{application:"ssh", guac:false, ...}`, reads `200 CONNECTED\n`, then calls
+  `bridge()` which copies bytes verbatim in both directions.
+- Port remapping: SSH port 22 is browser-blocked; remapped to 50022 by the same
+  `guac_ws_port()` helper used by guac proxy.
+- `tunnel_handler` three-way partition:
+  1. `guac_flat`    — `guac:true` → Guacamole canvas
+  2. `ssh_flat`     — `application:"ssh"` + `e2ecrypt:false` → xterm.js WS
+  3. `regular_flat` — everything else incl. `ssh+e2ecrypt:true` → raw TCP tunnel
 
 ### Connection slots
 
@@ -341,7 +423,9 @@ DNS hostname `127-0-0-{N}.client.fleetshell.com` covered by the wildcard cert.
 | `expert-i` | none | `https://{slot-dns}:{port}{path}` |
 | `rdp` | writes `.rdp`, launches `mstsc.exe` | none |
 | `vnc` | writes `.vnc`, tries TigerVNC / vncviewer | none |
-| guac rows | binds WebSocket listener on slot IP | `wss://` URL |
+| guac rows | binds WebSocket listener on slot IP (`/guac-ws`) | `wss://` URL |
+| `ssh` (guac:false, e2ecrypt:false) | binds WebSocket listener on slot IP (`/ssh-ws`) | `wss://…/ssh-ws` URL |
+| `ssh` (e2ecrypt:true) | raw TCP tunnel, no local action | none |
 
 ### Gateway handshake payload (client → gateway)
 
@@ -403,6 +487,7 @@ See §7 Open work items — Client below.
 | HTTP parsing | httparse 1 (transform mode) |
 | Serialisation | serde + serde_json |
 | Logging | tracing + tracing-subscriber |
+| SSH (direct mode) | russh 0.62 (ring backend, no aws-lc-rs) |
 | Build target | `x86_64-unknown-linux-musl` |
 
 ### Configuration (environment variables)
@@ -439,7 +524,7 @@ or `gateway_disable_tls` (plain TCP).
 
 | Response | Meaning |
 |---|---|
-| `200 CONNECTED\n` | Proxy mode entered |
+| `200 CONNECTED\n` | Proxy mode or SSH direct mode entered |
 | `200 CONNECTED $uuid\n` | guac mode — reconnect ID included |
 | `400 BAD REQUEST\n` | Unparseable JSON |
 | `401 UNAUTHORIZED\n` | Invalid/expired JWT |
@@ -465,8 +550,9 @@ After `200 CONNECTED`: raw byte pipe.
 | `main.rs` | Accept loop; optional TLS; spawn handler + health tasks |
 | `config.rs` | `Config::from_env()` |
 | `auth.rs` | `verify_connection()` — JWT decode + claims check; `port_in_spec` unit tests |
-| `handler.rs` | Parse → auth → probe / guac / transform/e2e dispatch; `relay_guac()` with per-direction byte-count debug logs, flush after write, iteration counter |
+| `handler.rs` | Parse → auth → SSH-direct / probe / guac / transform/e2e dispatch; `relay_guac()` with per-direction byte-count debug logs, flush after write, iteration counter |
 | `health.rs` | HTTP health-check; probes at DEBUG only |
+| `ssh.rs` | Direct SSH via `russh`: `SshParams`, `AcceptAllKeys` handler, PTY alloc, shell, framed relay loop (parse `0x00`/`0x01` frames, forward to `channel.data()` / `channel.window_change()`) |
 | `tls.rs` | `build_acceptor()` — PEM files or rcgen self-signed |
 | `transform.rs` | HTTP/1.1 proxy; `TransformHook` trait; `NoopHook`; `SkipServerVerification` |
 | `guac/connection.rs` | guacd handshake; `ConnectionParams` enum; `to_value_map()` |
@@ -490,11 +576,24 @@ pub trait TransformHook: Send + Sync {
 Current implementation: `NoopHook` (pass-through).
 Limits: 64 KiB headers, 16 MiB body, no HTTP/2.
 
+### Direct SSH mode
+
+When `application = "ssh"`, `guac: false`, and `e2ecrypt: false`, the gateway
+bypasses guacd entirely and speaks SSH natively via `russh`.
+
+- `SshParams` → `ssh::run()` → TCP connect to target:22 → password auth → PTY
+  (`xterm-256color`, initial cols/rows derived from `width/8` and `height/16`) →
+  interactive shell → bidirectional framed relay.
+- `AcceptAllKeys` handler accepts all SSH host keys (TOFU can be layered later).
+- Initial PTY cols/rows: `cols = (width / 8).max(40)`, `rows = (height / 16).max(10)`.
+- When `e2ecrypt: true` for `application:"ssh"`, falls through to raw TCP
+  passthrough so a native SSH client can connect through the tunnel unmolested.
+
 ### Guacamole mode
 
 When `guac: true`, the gateway connects to guacd instead of the target.
 
-**Supported protocols:** `rdp`, `vnc`, `ssh`.
+**Supported protocols:** `rdp`, `vnc`, `ssh` (guacd path).
 
 **Key implementation details:**
 - `VncParams` carries `username` — required for macOS Screen Sharing (ARD auth);
@@ -613,6 +712,8 @@ JWT claim matches automatically without extra env vars.
 - [x] 16 loopback slots; FunctionsView SVG arc timers; idle-timeout setting
 - [x] `GatewayConn` enum + `connect_gateway()` — plain-TCP / TLS / skip-verify
 - [x] `gateway_skip_tls_verify` and `gateway_disable_tls` in AppConfig + SettingsView
+- [x] SSH direct mode: `ssh_proxy.rs` — per-slot `/ssh-ws` WebSocket, raw byte bridge
+- [x] `tunnel_handler` three-way partition: guac / ssh-direct / raw-TCP
 - [ ] **BUG-1**: probe JWT TTL / key-fetch auth
 - [ ] **BUG-3**: full client-state detection + enrollment gate (see §7 Known bugs)
 - [ ] `type: "wake"` deep-link — `DeepLinkPayload::Wake` calls `show_window()`
@@ -629,6 +730,7 @@ JWT claim matches automatically without extra env vars.
 - [x] VNC username: `VncParams.username` wired from handshake (fixes macOS ARD auth)
 - [x] `relay_guac()` expanded debug: per-direction byte counts, EOF/error
       distinction, explicit `flush()` after client writes, iteration counter
+- [x] Direct SSH mode: `ssh.rs` (russh 0.62) — PTY, shell, framed relay, all SSH modes
 - [ ] Concrete `TransformHook`: rewrite `Host:` header, inject auth headers
 - [ ] HTTP/2 support in transform mode
 - [ ] Proper upstream trust store (`webpki-roots`) for CA-signed deployments
