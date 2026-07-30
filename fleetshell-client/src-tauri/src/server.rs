@@ -279,11 +279,20 @@ async fn tunnel_handler(
         flat.iter().map(|(p, _)| *p).collect::<Vec<_>>(),
     );
 
-    // Partition into guac rows (browser-based, per-slot WS server) and
-    // regular rows (raw TCP tunnel, shared slot).
-    let (guac_flat, regular_flat): (Vec<_>, Vec<_>) = flat
+    // Three-way partition:
+    //  guac_flat    — guac:true                          → Guacamole canvas
+    //  ssh_flat     — application:"ssh", e2ecrypt:false  → xterm.js WebSocket
+    //  regular_flat — everything else incl. ssh+e2ecrypt → raw TCP tunnel
+    let (guac_flat, rest): (Vec<_>, Vec<_>) = flat
         .into_iter()
         .partition(|(_, r)| r.guac.unwrap_or(false));
+
+    let (ssh_flat, regular_flat): (Vec<_>, Vec<_>) = rest
+        .into_iter()
+        .partition(|(_, r)| {
+            r.application.eq_ignore_ascii_case("ssh")
+                && !r.e2ecrypt.unwrap_or(false)
+        });
 
     let mut all_ports: Vec<u16>   = Vec::new();
     let mut all_urls:  Vec<String> = Vec::new();
@@ -370,6 +379,89 @@ async fn tunnel_handler(
         all_urls.push(ws_url);
         bind_ip = slot_ip;
     }
+
+    // ── SSH direct rows (application:"ssh", guac:false) ───────────────────
+    // Each SSH row gets its own slot and a WebSocket listener at /ssh-ws.
+    // The browser xterm.js session connects to that URL; the proxy bridges
+    // framed bytes to the gateway which speaks SSH natively.
+    if let Some((port, _row)) = ssh_flat.into_iter().next() {
+        let ws_port = guac_ws_port(port); // remap privileged ports (22 → 50022)
+
+        let slot = match state.slot_manager.claim().await {
+            Some(s) => s,
+            None => {
+                let msg = "All 16 connection slots are in use".to_string();
+                log::error!("{}", msg);
+                return Err((
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    Json(serde_json::json!({ "error": msg })),
+                ));
+            }
+        };
+
+        let slot_idx     = slot.idx;
+        let slot_ip      = slot.ip.clone();
+        let last_active  = slot.last_active.clone();
+        let task_handles = slot.task_handles.clone();
+
+        let listener = match tokio::net::TcpListener::bind((slot_ip.as_str(), ws_port)).await {
+            Ok(l)  => l,
+            Err(e) => {
+                let msg = format!("Failed to bind {}:{}: {}", slot_ip, ws_port, e);
+                log::error!("{}", msg);
+                state.slot_manager.release(slot_idx).await;
+                crate::util::navigate(&state.app, "logging");
+                return Err((
+                    StatusCode::CONFLICT,
+                    Json(serde_json::json!({ "error": msg })),
+                ));
+            }
+        };
+
+        let params = std::sync::Arc::new(crate::ssh_proxy::SshProxyParams {
+            target:          req.target.clone(),
+            port,
+            ws_port,
+            token:           req.token.clone(),
+            username:        req.username.clone().unwrap_or_default(),
+            password:        req.password.clone().unwrap_or_default(),
+            width:           req.width.unwrap_or(1920),
+            height:          req.height.unwrap_or(1080),
+            gateway:         req.gateway.clone(),
+            slot_idx,
+            last_active:     last_active.clone(),
+            skip_tls_verify: cfg.gateway_skip_tls_verify,
+            disable_tls:     cfg.gateway_disable_tls,
+        });
+
+        let handle = tokio::spawn(
+            crate::ssh_proxy::run_ssh_slot(listener, params, state.clone())
+        );
+        task_handles.lock().unwrap().push(handle);
+
+        state.app.emit("slot-update", serde_json::json!({
+            "idx": slot_idx, "status": "active", "progress": 1.0,
+        })).ok();
+
+        tokio::spawn(crate::slot::run_idle_monitor(
+            state.app.clone(), slot_idx, last_active,
+            cfg.idle_timeout, state.slot_manager.clone(),
+        ));
+
+        let ws_url = format!(
+            "wss://{}:{}/ssh-ws",
+            crate::tunnel::dns_host(&slot_ip), ws_port,
+        );
+        log::info!(
+            "SSH direct session created — slot {} ({}) port {} (ws:{}) — {}",
+            slot_idx, slot_ip, port, ws_port, ws_url,
+        );
+
+        all_ports.push(port);
+        all_urls.push(ws_url);
+        bind_ip = slot_ip;
+    }
+
 
     // ── Regular TCP-tunnel rows ───────────────────────────────────────────
     if !regular_flat.is_empty() {

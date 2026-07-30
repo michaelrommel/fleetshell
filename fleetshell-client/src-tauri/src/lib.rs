@@ -3,6 +3,7 @@ mod guac_proxy;
 mod portal;
 mod server;
 mod slot;
+mod ssh_proxy;
 mod tunnel;
 mod util;
 mod zscaler;
