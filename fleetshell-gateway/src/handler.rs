@@ -119,7 +119,7 @@ pub async fn handle<S>(
     hook:       Arc<dyn transform::TransformHook>,
 )
 where
-    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send,
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
 {
     info!(%peer, "connection accepted");
 
@@ -223,7 +223,47 @@ where
         }
     }
 
-    // ── 4b. Probe mode: check reachability without forwarding data ───────────
+    // ── 4b. Direct SSH mode (application="ssh", guac:false, e2ecrypt:false) ──────────
+    //
+    // When the client requests application:"ssh" without guac or e2ecrypt,
+    // we speak SSH directly using russh — no guacd involved.  Raw PTY bytes
+    // are delivered to the browser xterm.js renderer.
+    //
+    // When e2ecrypt:true, fall through to the raw TCP passthrough below so
+    // a local SSH client can connect through the tunnel unmolested.
+    // The existing guac:true + application:"ssh" path continues to work.
+    if payload.application.eq_ignore_ascii_case("ssh")
+        && !payload.guac.unwrap_or(false)
+        && !payload.e2ecrypt.unwrap_or(false)
+    {
+        let params = crate::ssh::SshParams {
+            hostname: payload.target.clone(),
+            port:     payload.port,
+            username: payload.username.clone().unwrap_or_default(),
+            password: payload.password.clone().unwrap_or_default(),
+            cols:     payload.width.map(|w| w / 8).unwrap_or(220).max(40),
+            rows:     payload.height.map(|h| h / 16).unwrap_or(50).max(10),
+        };
+
+        info!(
+            %peer,
+            target   = %payload.target,
+            port     = payload.port,
+            username = %params.username,
+            cols     = params.cols,
+            rows     = params.rows,
+            "direct SSH mode — bypassing guacd"
+        );
+
+        send_line(&mut writer_half, b"200 CONNECTED\n").await;
+
+        // Reassemble the split stream so ssh::run receives a single I/O object.
+        let stream = tokio::io::join(reader, writer_half);
+        crate::ssh::run(stream, peer, params).await;
+        return;
+    }
+
+    // ── 4c. Probe mode: check reachability without forwarding data ───────────
     //
     // The client sends `application: "probe"` to ask whether a target device
     // is currently accepting connections, before opening a real tunnel.

@@ -1,3 +1,42 @@
+/* ── xterm.js ───────────────────────────────────────────────────────────────
+   Imported here so Vite bundles it once for all pages.
+   ─────────────────────────────────────────────────────────────────────────── */
+@import '@xterm/xterm/css/xterm.css';
+
+/* ── Victor Mono NF (Nerd Font variant) ─────────────────────────────────────
+   Used by the SSH xterm.js terminal.  Files live in /static/fonts/ and are
+   served as-is by SvelteKit's static file handler.
+   font-display:swap keeps the page responsive while the fonts load.
+   ─────────────────────────────────────────────────────────────────────────── */
+@font-face {
+	font-family: 'Victor Mono NF';
+	src: url('/fonts/VictorMonoNF-Regular.woff2') format('woff2');
+	font-weight: normal;
+	font-style:  normal;
+	font-display: swap;
+}
+@font-face {
+	font-family: 'Victor Mono NF';
+	src: url('/fonts/VictorMonoNF-Bold.woff2') format('woff2');
+	font-weight: bold;
+	font-style:  normal;
+	font-display: swap;
+}
+@font-face {
+	font-family: 'Victor Mono NF';
+	src: url('/fonts/VictorMonoNF-Italic.woff2') format('woff2');
+	font-weight: normal;
+	font-style:  italic;
+	font-display: swap;
+}
+@font-face {
+	font-family: 'Victor Mono NF';
+	src: url('/fonts/VictorMonoNF-BoldItalic.woff2') format('woff2');
+	font-weight: bold;
+	font-style:  italic;
+	font-display: swap;
+}
+
 /* ── Gruvbox Dark Hard ───────────────────────────────────────────────────────
    Palette reference: https://github.com/morhetz/gruvbox
    ─────────────────────────────────────────────────────────────────────────── */
