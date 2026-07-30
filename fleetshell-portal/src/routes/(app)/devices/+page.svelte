@@ -78,8 +78,14 @@
 	 */
 	function onAppChange(row: PortRow): void {
 		if (guacApplicable(row)) {
-			// Native protocol — passthrough required when not using guacd.
-			if (!row.guac) row.e2ecrypt = true;
+			if (!row.guac) {
+				// rdp/vnc without guacd → must use raw passthrough.
+				// ssh without guacd   → default to xterm.js (no e2ecrypt), but
+				//   the checkbox is enabled so the user can switch to raw passthrough.
+				if (row.application !== 'ssh') row.e2ecrypt = true;
+				// Don't touch e2ecrypt for ssh — preserve the user's choice,
+				// defaulting to false (xterm.js mode) on first selection.
+			}
 		} else {
 			// Browser-native protocol — guac never applies.
 			row.guac     = false;
@@ -116,8 +122,11 @@
 	// Build the JSON body sent to the client API — used by both the direct
 	// connect attempt and the polling retries inside launchViaDeepLink.
 	function tunnelBody(token: string): string {
-		// Extract display params from the first guac-enabled row (if any).
+		// Extract display params: prefer a guac row; fall back to SSH-direct row
+		// so the gateway can compute an initial PTY size from width/height.
 		const guacRow = portRows.find(r => r.guac && guacApplicable(r));
+		const sshRow  = portRows.find(r => r.application === 'ssh' && !r.guac);
+		const dimRow  = guacRow ?? sshRow;
 		return JSON.stringify({
 			target,
 			token,
@@ -125,9 +134,9 @@
 			servicekey : servicekey || undefined,
 			username   : username   || undefined,
 			password   : password   || undefined,
-			width        : guacRow?.width  ?? undefined,
-			height       : guacRow?.height ?? undefined,
-			dpi          : guacRow?.dpi    ?? undefined,
+			width        : dimRow?.width  ?? undefined,
+			height       : dimRow?.height ?? undefined,
+			dpi          : dimRow?.dpi    ?? undefined,
 			enable_drive : (guacRow?.drive && guacRow?.application === 'rdp') || undefined,
 			port_rows  : portRows.map(r => ({
 				ports      : r.ports,
@@ -192,16 +201,33 @@
 
 		for (const url of connectUrls) {
 			if (url.startsWith('wss://') || url.startsWith('ws://')) {
-				// Guacamole session URL — find the guac row.
-				const row = connectedRows.find(r => r.guac && guacApplicable(r));
-				if (!row?.open) continue;
-				buttons.push({
-					label: `Open ${row.application.toUpperCase()} Session`,
-					kind:  'guac',
-					url,
-					app:   row.application,
-					port:  firstPort(row.ports), // used for the probe
-				});
+				// Determine whether this is an SSH-direct (xterm.js) or a Guacamole
+				// WebSocket based on the path the client chose.
+				const isSshWs = url.includes('/ssh-ws');
+
+				if (isSshWs) {
+					// SSH direct session — find the matching ssh row.
+					const row = connectedRows.find(r => r.application === 'ssh' && !r.guac);
+					if (!row?.open) continue;
+					buttons.push({
+						label: 'Open SSH Session',
+						kind:  'guac', // reuse 'guac' kind; executeItem checks the URL
+						url,
+						app:   'ssh',
+						port:  firstPort(row.ports),
+					});
+				} else {
+					// Guacamole session URL — find the guac row.
+					const row = connectedRows.find(r => r.guac && guacApplicable(r));
+					if (!row?.open) continue;
+					buttons.push({
+						label: `Open ${row.application.toUpperCase()} Session`,
+						kind:  'guac',
+						url,
+						app:   row.application,
+						port:  firstPort(row.ports),
+					});
+				}
 			} else {
 				// http / https / expert-i URL
 				const port = portFromUrl(url);
@@ -212,11 +238,15 @@
 			}
 		}
 
-		// Native-app rows (rdp/vnc/ssh, no guac) with open checked.
-		// These never produce a URL — the client only returns URLs for http/https.
+		// Native-app rows (rdp/vnc — no guac) with open checked.
+		// SSH rows with e2ecrypt checked also land here (raw TCP passthrough).
+		// SSH rows without e2ecrypt are handled by the ssh-ws path above —
+		// skip them here so we don't add a stale launch button.
+		const hasSshWs = connectUrls.some(u => u.includes('/ssh-ws'));
 		for (const row of connectedRows) {
 			if (!row.open) continue;
 			if (row.guac || !guacApplicable(row)) continue; // handled above
+			if (row.application === 'ssh' && hasSshWs) continue; // xterm.js handles it
 			const port = firstPort(row.ports);
 			if (!port) continue;
 			buttons.push({
@@ -234,7 +264,8 @@
 	/** Execute a result button's action without probing first. */
 	async function executeItem(btn: ResultButton): Promise<void> {
 		if (btn.kind === 'guac') {
-			window.open(`/session?ws=${encodeURIComponent(btn.url)}`, '_blank');
+			const proto = btn.url.includes('/ssh-ws') ? '&proto=ssh' : '';
+			window.open(`/session?ws=${encodeURIComponent(btn.url)}${proto}`, '_blank');
 		} else if (btn.kind === 'launch') {
 			try {
 				await fetch(`${CLIENT_API_BASE}/api/launch`, {
@@ -645,7 +676,7 @@
 							type="checkbox"
 							class="check-input"
 							bind:checked={row.e2ecrypt}
-							disabled={busy || row.guac || guacApplicable(row)}
+							disabled={busy || row.guac || (guacApplicable(row) && row.application !== 'ssh')}
 						/>
 					</label>
 					<label
