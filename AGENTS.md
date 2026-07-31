@@ -52,25 +52,29 @@ fleetshell/
 │   │   │   ├── fontfaceobserver.d.ts     # TypeScript declarations for fontfaceobserver
 │   │   │   └── server/
 │   │   │       ├── constants.ts          # ADMIN_USERNAME, ADMIN_PASSWORD, SESSION_SECRET
-│   │   │       ├── jwt.ts                # issueProbeToken / verifyProbeToken / issueTunnelToken
+│   │   │       ├── jwt.ts                # issueProbeToken / verifyProbeToken / issueTunnelToken (+ record claim)
 │   │   │       ├── redis.ts              # Singleton Redis client (ioredis)
+│   │   │       ├── s3.ts                 # Singleton S3 client; listRecordingDays/Sessions; presignedDownloadUrl
 │   │   │       └── session.ts            # Cookie-based session helpers
 │   │   └── routes/
 │   │       ├── login/                    # Static username/password login
 │   │       ├── logout/                   # Cookie clear + redirect
 │   │       ├── welcome/                  # First-run page → directs user to Support then Devices
 │   │       ├── (app)/                    # Auth-guarded app shell
-│   │       │   ├── devices/              # IP-based device lookup + Connect form
+│   │       │   ├── devices/              # IP-based device lookup + Connect form (incl. Record checkbox)
 │   │       │   ├── session/              # Unified viewer: Guacamole (RDP/VNC) + xterm.js (SSH)
 │   │       │   ├── support/              # Client download + fleetshell:// enrollment link
 │   │       │   ├── settings/             # (placeholder)
-│   │       │   └── administration/       # (placeholder)
+│   │       │   └── administration/       # Device search (Valkey) + S3 recording browser
 │   │       └── api/
 │   │           ├── client/probe/[id]/    # POST — probe from client, store in Redis
 │   │           ├── clients/              # POST — get/create stable client ID, issue probe JWT
 │   │           ├── probes/[id]/stream/   # GET (SSE) — streams probe result to browser
 │   │           ├── enrollment/[id]/stream/ # GET (SSE) — streams enrollment events to browser
-│   │           ├── tunnel/sign/          # POST — sign a tunnel JWT server-side
+│   │           ├── tunnel/sign/          # POST — sign a tunnel JWT server-side (incl. record flag)
+│   │           ├── administration/
+│   │           │   ├── devices/              # GET ?q= — search Valkey systems:by-ip:* keys
+│   │           │   └── recordings/           # GET ?ip=&day=&session= — S3 listing + presigned ZIP URL
 │   │           └── cert/
 │   │               ├── request/          # POST — accept CSR, store cert chain, publish cert-ready
 │   │               ├── status/           # GET  — poll cert issuance status (none|pending|ready)
@@ -106,19 +110,24 @@ fleetshell/
 │
 ├── fleetshell-gateway/         # Standalone Rust TCP/TLS tunnel gateway
 │   ├── Cargo.toml
+│   ├── Dockerfile              # 3-stage: Rust builder + guacenc builder + guacamole/guacd runtime
+│   ├── scripts/
+│   │   └── run.sh              # Starts guacd, fleetshell-gateway, guacrecord; fixes AWS cred URI
 │   └── src/
 │       ├── main.rs             # Tokio accept loop, optional TLS handshake, spawns tasks
 │       ├── config.rs           # Config::from_env() — all settings via env vars
-│       ├── auth.rs             # JWT verify_connection(), Claims struct, AuthError
-│       ├── handler.rs          # Parse → auth → probe/ssh-direct/guac/proxy; relay_guac() with
-│       │                       #   per-direction debug logging + flush
+│       ├── auth.rs             # JWT verify_connection(), Claims struct (incl. record), AuthError
+│       ├── recording.rs        # RecordingMeta, write_job_file, new_recording_name, SESSION_SEQ
+│       ├── handler.rs          # Parse → auth → probe/ssh-direct/guac/proxy; recording path setup
 │       ├── health.rs           # HTTP health-check server on GATEWAY_HEALTH_ADDR (:8080)
 │       ├── ssh.rs              # Direct SSH handler (russh): PTY alloc, shell, framed relay
 │       ├── tls.rs              # build_acceptor(): self-signed (rcgen) or file-based PEM
 │       ├── transform.rs        # HTTP/1.1 transform proxy + TransformHook trait + NoopHook
+│       ├── bin/
+│       │   └── guacrecord.rs   # Post-processor: inotify → guacenc → keys.txt/srt/zip → S3
 │       └── guac/
 │           ├── mod.rs          # Re-exports ConnectionParams, RdpParams, VncParams, SshParams
-│           ├── connection.rs   # guacd opening handshake; to_value_map() per protocol
+│           ├── connection.rs   # guacd handshake; to_value_map() (incl. recording-path/name/keys)
 │           └── protocol.rs     # Instruction encode/decode; async I/O helpers
 │
 └── test-guac/                  # Smoke-test tool: connect to guacd or gateway
@@ -227,6 +236,7 @@ verbatim in both directions as `Message::Binary` WebSocket frames.
 | Styling | Custom CSS (Gruvbox palette, CSS custom properties) |
 | SSH terminal | xterm.js (`@xterm/xterm` 6.x) + WebGL/canvas renderer |
 | SSH font | Victor Mono NF (Nerd Font, woff2) — self-hosted in `/static/fonts/` |
+| S3 client | `@aws-sdk/client-s3` + `@aws-sdk/s3-request-presigner` (recording browser) |
 
 ### Environment variables
 
@@ -239,6 +249,8 @@ verbatim in both directions as `Message::Binary` WebSocket frames.
 | `JWT_SECRET` | `change-me-in-production` | HMAC secret for tunnel + probe JWTs |
 | `CLIENT_CERT` | — | PEM certificate chain — injected from AWS Secrets Manager via `valueFrom` |
 | `CLIENT_KEY` | — | PEM private key — injected from AWS Secrets Manager via `valueFrom` |
+| `GUACD_S3_BUCKET` | — | S3 bucket for recording browser (e.g. `dev-s3-fleetshell`) |
+| `AWS_REGION` | — | AWS region used by the S3 client (`@aws-sdk/client-s3`) |
 
 ### What is implemented
 
@@ -307,6 +319,30 @@ verbatim in both directions as `Message::Binary` WebSocket frames.
   rows (not just guac rows) so the gateway can compute initial PTY dimensions.
   Result URL detection checks for `/ssh-ws` in the URL to open `/session?…&proto=ssh`.
 
+- **Session recording** — Guac sub-row in `/devices` has a **Record** checkbox
+  (all protocols: RDP, VNC, SSH-via-guacd).  When ticked:
+  - `record: true` is embedded in the signed JWT by `POST /api/tunnel/sign`.
+  - `issueTunnelToken` accepts an optional `record` boolean; only embedded when
+    `true` to keep tokens compact.
+  - The session URL gains `&record=1`; the `/session` page shows a full-screen
+    **recording notice overlay** before connecting to the device.  The
+    `Guacamole.Keyboard` handler is only attached *after* the user dismisses
+    the overlay (clicking "Understood"), preventing keystrokes from reaching the
+    device until acknowledged.
+
+- **Administration page** (`/administration`) — device search + recording browser:
+  - **Device search**: searches Valkey `systems:by-ip:*` keys by IP or any field
+    value via `GET /api/administration/devices?q=`.
+  - Results table shows all hash fields (serial, product, partno, country, …)
+    with a **Recordings** button per device.
+  - **Recording days**: `GET /api/administration/recordings?ip=` lists S3 day
+    prefixes (`guacamole/recordings/<ip>/YYYY-MM-DD/`) newest first.
+  - **Session list**: `GET /api/administration/recordings?ip=&day=` lists sessions
+    for that day (detected by `.meta.json` objects in S3).
+  - **Download**: `GET /api/administration/recordings?ip=&day=&session=` returns
+    a 15-minute presigned URL for the session `.zip` bundle; browser downloads
+    directly from S3 (no portal bandwidth used).
+
 ### What is NOT yet implemented
 
 See §7 Open work items — Portal below.
@@ -374,7 +410,7 @@ Binds to `127.0.0.1:8080`.  Hot-reloads TLS after enrollment via `TlsState`
 #### `POST /api/tunnel`
 
 Request: `target`, `token`, `gateway`, `servicekey?`, `username?`, `password?`,
-`width?`, `height?`, `dpi?`, `enable_drive?`, `port_rows[]`.
+`width?`, `height?`, `dpi?`, `enable_drive?`, `enable_record?`, `port_rows[]`.
 
 Each `port_rows` entry: `ports`, `application`, `guac?`, `e2ecrypt?`, `sni?`, `path?`.
 
@@ -436,7 +472,7 @@ DNS hostname `127-0-0-{N}.client.fleetshell.com` covered by the wildcard cert.
     "path": "/service/tunnel/", "e2ecrypt": false,
     "guac": false, "username": "Administrator", "password": "<pw>",
     "width": 1920, "height": 1080, "dpi": 96,
-    "enable_drive": false, "connection_id": null
+    "enable_drive": false, "enable_record": false, "connection_id": null
 }
 ```
 
@@ -503,6 +539,10 @@ See §7 Open work items — Client below.
 | `GATEWAY_UPSTREAM_TLS_ACCEPT_INVALID_CERTS` | `true` | Skip upstream cert verification |
 | `GUACD_ADDR` | `127.0.0.1:4822` | guacd daemon (co-located in container) |
 | `GUACD_DRIVE_PATH` | *(none)* | Root path for RDP drive sharing; per-device subdirs auto-created |
+| `GUACD_RECORDING_PATH` | *(none)* | Root path for session recordings; e.g. `/guac/recordings` (EFS mount) |
+| `GUACD_JOBS_PATH` | `<GUACD_RECORDING_PATH>/jobs` | Directory watched by `guacrecord` for job files |
+| `GUACD_S3_BUCKET` | *(none)* | S3 bucket for recording uploads; skipped when unset |
+| `GUACD_S3_REGION` | `AWS_REGION` / `AWS_DEFAULT_REGION` | AWS region for S3 uploads |
 | `GUAC_RECONNECT_GRACE_SECS` | `30` | How long to park guacd stream after WebSocket drop |
 | `RUST_LOG` | `info` | `debug` for per-connection detail |
 
@@ -538,24 +578,29 @@ After `200 CONNECTED`: raw byte pipe.
 
 ```json
 {"sub":"alice","iat":1784325058,"exp":1784411458,
- "target":"192.168.13.187","ports":"443,3000-3020","gw":"atlanta-01"}
+ "target":"192.168.13.187","ports":"443,3000-3020","gw":"atlanta-01",
+ "record":true}
 ```
 
 `gw` is optional; when present the handshake `gateway` field must match.
+`record` is optional; when `true` the gateway sets up a recording path and
+`guacrecord` will post-process the session after it ends.
 
 ### Source module responsibilities
 
 | File | Responsibility |
 |---|---|
 | `main.rs` | Accept loop; optional TLS; spawn handler + health tasks |
-| `config.rs` | `Config::from_env()` |
-| `auth.rs` | `verify_connection()` — JWT decode + claims check; `port_in_spec` unit tests |
-| `handler.rs` | Parse → auth → SSH-direct / probe / guac / transform/e2e dispatch; `relay_guac()` with per-direction byte-count debug logs, flush after write, iteration counter |
+| `config.rs` | `Config::from_env()` — incl. `guacd_recording_path`, `guacd_jobs_path` |
+| `auth.rs` | `verify_connection()` — JWT decode + claims check (incl. `record`); `port_in_spec` unit tests |
+| `recording.rs` | `RecordingMeta` struct; `write_job_file()`; `new_recording_name()` (ms timestamp + atomic seq); `now_ms()` |
+| `handler.rs` | Parse → auth → SSH-direct / probe / guac / transform/e2e; builds `RecordingMeta`; writes job file on session end (both Case 1: guacd-closed and Case 2: park-grace expired) |
 | `health.rs` | HTTP health-check; probes at DEBUG only |
-| `ssh.rs` | Direct SSH via `russh`: `SshParams`, `AcceptAllKeys` handler, PTY alloc, shell, framed relay loop (parse `0x00`/`0x01` frames, forward to `channel.data()` / `channel.window_change()`) |
+| `ssh.rs` | Direct SSH via `russh`: `SshParams`, `AcceptAllKeys` handler, PTY alloc, shell, framed relay loop |
 | `tls.rs` | `build_acceptor()` — PEM files or rcgen self-signed |
 | `transform.rs` | HTTP/1.1 proxy; `TransformHook` trait; `NoopHook`; `SkipServerVerification` |
-| `guac/connection.rs` | guacd handshake; `ConnectionParams` enum; `to_value_map()` |
+| `bin/guacrecord.rs` | Post-processor binary: inotify watch on `jobs/`; runs `guacenc`; extracts keystrokes; writes `.keys.txt`, `.srt`, `.meta.json`, `.zip`; uploads to S3 via OpenDAL |
+| `guac/connection.rs` | guacd handshake; `ConnectionParams` enum; `to_value_map()` (incl. `recording-path`, `recording-name`, `recording-include-keys`) |
 | `guac/protocol.rs` | `Instruction` encode/decode; `write_instruction` / `read_instruction` |
 
 ### Transform mode
@@ -611,6 +656,56 @@ When `guac: true`, the gateway connects to guacd instead of the target.
 - guacd 1.6.0 fixes a VNC auth bug present in 1.5.0.
 - Lock screen workaround: open e2e RDP → `tscon` to console → reconnect VNC.
 
+### Session recording
+
+When the portal's **Record** checkbox is ticked, `record: true` is embedded in
+the signed JWT.  The gateway verifies this claim and sets up a recording path.
+
+**File layout on EFS:**
+```
+/guac/recordings/
+  <target_ip>/
+    <ms>-<seq>.guac         ← guacd writes raw recording
+    <ms>-<seq>.m4v          ← guacrecord: guacenc output
+    <ms>-<seq>.keys.txt     ← guacrecord: keystroke transcript
+    <ms>-<seq>.srt          ← guacrecord: subtitles
+    <ms>-<seq>.zip          ← guacrecord: bundle (.guac+.m4v+.keys+.srt+.meta)
+    <ms>-<seq>.meta.json    ← guacrecord: session metadata
+  jobs/
+    <conn_id>.json          ← gateway writes when session ends
+    done/<conn_id>.json     ← guacrecord moves here after processing
+```
+
+**Session end triggers** (two cases):
+- **Case 1** (guacd closed): gateway writes job JSON immediately in `relay_guac`
+  `else` branch.
+- **Case 2** (park grace expired): gateway writes job JSON in the grace-timer task.
+
+**`guacrecord` post-processor:**
+- Runs as a background process in the same container (started by `run.sh`).
+- Watches `jobs/` with a single inotify handle (one watch regardless of device count).
+- Per job: `guacenc -s WxH` → rename `.guac.m4v` → `.m4v`; parse `.guac` for
+  keystroke events (timestamp + keysym, normalised to session-relative ms);
+  segment by 2 s pause or 72-char wrap; write `.keys.txt` and `.srt`; create
+  `.zip`; upload all 6 files to S3 via OpenDAL.
+- S3 key: `guacamole/recordings/<ip>/YYYY-MM-DD/<session>.<ext>`.
+- OpenDAL uses the ECS task role credentials via
+  `AWS_CONTAINER_CREDENTIALS_RELATIVE_URI`.  **Known issue**: reqsign incorrectly
+  uses `ECS_CONTAINER_METADATA_URI` as the credential endpoint base.  Worked
+  around in `run.sh` by computing and exporting
+  `AWS_CONTAINER_CREDENTIALS_FULL_URI=http://169.254.170.2${AWS_CONTAINER_CREDENTIALS_RELATIVE_URI}`
+  before starting `guacrecord`.
+
+**guacd recording parameters sent by the gateway:**
+- `recording-path` — per-device directory
+- `recording-name` — `<ms>-<seq>.guac` (pre-generated, deterministic)
+- `recording-include-keys` — `true` (keyboard events embedded in `.guac`)
+- `create-recording-path` — `true`
+
+**`guacenc` note:** must be compiled with `libwebp-dev` (added to the
+`guacenc-builder` Docker stage).  Without WebP support, guacenc silently drops
+WebP-encoded RDP frames, producing artefacts in the output video.
+
 ### What is NOT yet implemented
 
 See §7 Open work items — Gateway below.
@@ -622,9 +717,9 @@ See §7 Open work items — Gateway below.
 ### JWT flow
 
 ```
-Portal ─signs JWT(target,ports,gw) with JWT_SECRET─► returns token to browser
+Portal ─signs JWT(target,ports,gw[,record]) with JWT_SECRET─► returns token to browser
 Browser ─forwards token in POST /api/tunnel─► Client ─forwards in handshake JSON─► Gateway
-Gateway ─verifies with JWT_SECRET, checks claims─► accepts or rejects
+Gateway ─verifies with JWT_SECRET, checks claims (incl. record)─► accepts or rejects
 ```
 
 **`JWT_SECRET` must be identical on portal and gateway.**
@@ -704,6 +799,8 @@ JWT claim matches automatically without extra env vars.
 - [ ] **File manager panel** in `/session` — toolbar button placeholder is already
       present; implement slide-out panel listing `/guac-drives/<target_ip>/`
       contents with upload/download
+- [ ] Recording playback in administration page — `Guacamole.SessionRecording`
+      API can play `.guac` files directly in the browser via presigned URL
 
 ### Client
 
@@ -722,7 +819,7 @@ JWT claim matches automatically without extra env vars.
 
 ### Gateway
 
-- [ ] **Dockerfile** — `FROM scratch` or `FROM alpine` with musl binary
+- [x] **Dockerfile** — 3-stage build: Rust musl binary + guacenc (with WebP/FFmpeg/Cairo) + guacamole/guacd:1.6.0 runtime
 - [x] AWS NLB infrastructure wired and working
 - [x] Health check endpoint; Guacamole RDP/VNC/SSH via guacd 1.6.0
 - [x] RDP drive sharing via EFS (`fleetshell-guac-drives`)
@@ -731,6 +828,8 @@ JWT claim matches automatically without extra env vars.
 - [x] `relay_guac()` expanded debug: per-direction byte counts, EOF/error
       distinction, explicit `flush()` after client writes, iteration counter
 - [x] Direct SSH mode: `ssh.rs` (russh 0.62) — PTY, shell, framed relay, all SSH modes
+- [x] Session recording: `record` JWT claim, `recording.rs`, `guacrecord` binary,
+      S3 upload via OpenDAL, `.guac`/`.m4v`/`.keys.txt`/`.srt`/`.zip`/`.meta.json`
 - [ ] Concrete `TransformHook`: rewrite `Host:` header, inject auth headers
 - [ ] HTTP/2 support in transform mode
 - [ ] Proper upstream trust store (`webpki-roots`) for CA-signed deployments
