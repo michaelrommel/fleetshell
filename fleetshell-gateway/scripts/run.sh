@@ -51,6 +51,16 @@ fi
 # Advertise the guacd address so the gateway binary can read it later.
 export GUACD_ADDR="127.0.0.1:4822"
 
+# Work around a reqsign bug: when AWS_CONTAINER_CREDENTIALS_RELATIVE_URI is
+# set, reqsign incorrectly prepends ECS_CONTAINER_METADATA_URI (the task
+# metadata endpoint) instead of the fixed credential base http://169.254.170.2.
+# Setting AWS_CONTAINER_CREDENTIALS_FULL_URI makes reqsign skip that path
+# entirely and use the correct URL directly.
+if [ -n "${AWS_CONTAINER_CREDENTIALS_RELATIVE_URI}" ] && [ -z "${AWS_CONTAINER_CREDENTIALS_FULL_URI}" ]; then
+	export AWS_CONTAINER_CREDENTIALS_FULL_URI="http://169.254.170.2${AWS_CONTAINER_CREDENTIALS_RELATIVE_URI}"
+	echo "[run.sh] set AWS_CONTAINER_CREDENTIALS_FULL_URI=${AWS_CONTAINER_CREDENTIALS_FULL_URI}"
+fi
+
 # ── 4. Interactive / debug mode ───────────────────────────────────────────────
 if [ "${GATEWAY_INTERACTIVE}" = "true" ]; then
 	echo "[run.sh] GATEWAY_INTERACTIVE=true — gateway not started."

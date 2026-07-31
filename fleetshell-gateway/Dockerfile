@@ -2,7 +2,8 @@
 FROM rust:alpine AS builder
 WORKDIR /workspace
 COPY fleetshell-gateway /workspace/fleetshell-gateway
-COPY Cargo.toml /workspace/Cargo.toml
+COPY Cargo.toml  /workspace/Cargo.toml
+COPY Cargo.lock  /workspace/Cargo.lock
 # Create dummy stubs for other workspace members so Cargo does not complain
 # about missing members referenced in the root Cargo.toml.
 RUN mkdir -p \
@@ -23,8 +24,14 @@ RUN cargo build --release -p fleetshell-gateway --target x86_64-unknown-linux-mu
 # We compile it here from the same 1.6.0 source tarball used by the base
 # image; only libguac + guacenc are built — protocol plugins (FreeRDP, SSH,
 # VNC) are auto-disabled when their dev headers are absent.
-FROM alpine AS guacenc-builder
+#
+# IMPORTANT: base this stage on guacamole/guacd:1.6.0 (not bare alpine) so
+# that `apk add ffmpeg-dev` installs the same FFmpeg major version as the
+# `apk add ffmpeg` in the runtime stage.  Both stages share the same Alpine
+# package repository, which guarantees ABI-compatible library SONAMES.
+FROM guacamole/guacd:1.6.0 AS guacenc-builder
 
+USER root
 RUN apk add --no-cache \
 	build-base pkgconfig wget \
 	# guacenc renders the recording canvas with Cairo, encodes with FFmpeg

@@ -391,7 +391,7 @@ where
         let recording_name = if recording_path.is_empty() {
             String::new()
         } else {
-            crate::recording::now_ms().to_string()
+            crate::recording::new_recording_name()
         };
 
         let params = match payload.application.as_str() {

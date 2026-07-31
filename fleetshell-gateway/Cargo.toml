@@ -52,3 +52,22 @@ thiserror   = "1"
 # inotify gives a single kernel-level watch on the jobs directory; guacrecord
 # holds only one inotify handle regardless of how many devices are recorded.
 inotify     = "0.10"
+
+# OpenDAL: S3 upload after recording processing.  Same version / features as
+# aeroftp.  Credentials auto-discovered from ECS task role via
+# AWS_CONTAINER_CREDENTIALS_RELATIVE_URI — no explicit config needed.
+opendal = { version = "0.56.0", default-features = false, features = [
+    "services-s3", "executors-tokio", "layers-retry", "reqwest-rustls-tls",
+] }
+
+# ZIP archive (one bundle per session uploaded alongside the other files).
+zip    = "2"
+
+# Date formatting for S3 key prefix  guacamole/recordings/<ip>/YYYY-MM-DD/.
+chrono = "0.4"
+
+# Error-handling ergonomics for guacrecord (not used in gateway binary).
+anyhow = "1"
+
+# bytes is a transitive dep via opendal; declared explicitly for guacrecord.
+bytes  = "1"
