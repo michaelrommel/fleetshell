@@ -20,6 +20,9 @@
 	);
 
 	let recordNoticeDismissed = $state(false);
+	/** Set by the Guacamole setup; called by the dismiss button to activate
+	 *  keyboard input only after the user has acknowledged the recording notice. */
+	let attachKeyboard = $state<(() => void) | null>(null);
 
 	// ── Constants ─────────────────────────────────────────────────────────────
 	const TOOLBAR_W  = 44;
@@ -385,8 +388,17 @@
 				mouse.onmousemove = sendMouse;
 
 				const keyboard = new Guacamole.Keyboard(document);
-				keyboard.onkeydown = (keysym: number) => client.sendKeyEvent(1, keysym);
-				keyboard.onkeyup   = (keysym: number) => client.sendKeyEvent(0, keysym);
+				const attach = () => {
+					keyboard.onkeydown = (keysym: number) => client.sendKeyEvent(1, keysym);
+					keyboard.onkeyup   = (keysym: number) => client.sendKeyEvent(0, keysym);
+				};
+				// Only activate keyboard input once the user has acknowledged the
+				// recording notice.  If no notice is shown, activate immediately.
+				if (isRecorded) {
+					attachKeyboard = attach;
+				} else {
+					attach();
+				}
 
 				client.connect(connData);
 
@@ -546,7 +558,7 @@
 		{/if}
 
 		{#if isRecorded && !recordNoticeDismissed}
-			<div class="record-notice-backdrop">
+			<div class="record-notice-backdrop" role="dialog" aria-modal="true" aria-label="Recording notice">
 				<div class="record-notice">
 					<div class="record-notice-icon">⏺</div>
 					<p class="record-notice-text">
@@ -555,7 +567,8 @@
 					</p>
 					<button
 						class="record-notice-btn"
-						onclick={() => recordNoticeDismissed = true}
+						autofocus
+						onclick={() => { attachKeyboard?.(); recordNoticeDismissed = true; }}
 					>
 						Understood
 					</button>
