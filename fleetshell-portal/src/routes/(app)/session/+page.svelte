@@ -13,6 +13,14 @@
 		wsUrl.includes('/ssh-ws'),
 	);
 
+	// True when the gateway was instructed to record this session.
+	// Set by the devices page via ?record=1 when the Record checkbox was ticked.
+	const isRecorded = $derived(
+		!isSsh && $page.url.searchParams.get('record') === '1',
+	);
+
+	let recordNoticeDismissed = $state(false);
+
 	// ── Constants ─────────────────────────────────────────────────────────────
 	const TOOLBAR_W  = 44;
 	const CANVAS_PAD = 8;
@@ -537,6 +545,24 @@
 			</div>
 		{/if}
 
+		{#if isRecorded && !recordNoticeDismissed}
+			<div class="record-notice-backdrop">
+				<div class="record-notice">
+					<div class="record-notice-icon">⏺</div>
+					<p class="record-notice-text">
+						<strong>PLEASE NOTE</strong><br>
+						The remote screen of this session will be recorded.
+					</p>
+					<button
+						class="record-notice-btn"
+						onclick={() => recordNoticeDismissed = true}
+					>
+						Understood
+					</button>
+				</div>
+			</div>
+		{/if}
+
 	</div>
 </div>
 
@@ -665,4 +691,64 @@
 		z-index        : 201;
 	}
 	.overlay--error { background: rgba(180, 30, 30, 0.85); }
+
+	/* ── Recording notice ──────────────────────────────────────────────── */
+
+	/* Full-area backdrop blocks interaction with the canvas until dismissed. */
+	.record-notice-backdrop {
+		position       : absolute;
+		inset          : 0;
+		z-index        : 202;
+		background     : rgba(0, 0, 0, 0.65);
+		backdrop-filter: blur(3px);
+		display        : flex;
+		align-items    : center;
+		justify-content: center;
+	}
+
+	.record-notice {
+		background   : #282828;
+		border       : 2px solid var(--bright-orange, #fe8019);
+		border-radius: 10px;
+		padding      : 36px 44px;
+		max-width    : 480px;
+		text-align   : center;
+		box-shadow   : 0 8px 40px rgba(0, 0, 0, 0.7);
+	}
+
+	.record-notice-icon {
+		font-size  : 2.8rem;
+		line-height: 1;
+		margin-bottom: 18px;
+		color      : var(--bright-orange, #fe8019);
+	}
+
+	.record-notice-text {
+		margin     : 0 0 28px;
+		font-size  : 1.05rem;
+		line-height: 1.6;
+		color      : var(--fg, #ebdbb2);
+	}
+
+	.record-notice-text strong {
+		display      : block;
+		font-size    : 1.2rem;
+		letter-spacing: 0.05em;
+		margin-bottom: 10px;
+		color        : var(--bright-orange, #fe8019);
+	}
+
+	.record-notice-btn {
+		background   : var(--bright-orange, #fe8019);
+		color        : #1d2021;
+		border       : none;
+		border-radius: 6px;
+		padding      : 10px 32px;
+		font-size    : 0.95rem;
+		font-weight  : 700;
+		letter-spacing: 0.04em;
+		cursor       : pointer;
+		transition   : opacity 0.15s;
+	}
+	.record-notice-btn:hover { opacity: 0.85; }
 </style>

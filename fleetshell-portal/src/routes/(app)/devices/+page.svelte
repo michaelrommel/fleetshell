@@ -167,6 +167,8 @@
 		url:     string;   // for 'url' and 'guac'
 		app:     string;   // for 'launch'
 		port:    number;   // for 'launch'
+		/** True when the session will be recorded; causes the session page to show a notice. */
+		record?: boolean;
 	}
 
 	/** Parse the first port from a port spec string. */
@@ -226,11 +228,12 @@
 					const row = connectedRows.find(r => r.guac && guacApplicable(r));
 					if (!row?.open) continue;
 					buttons.push({
-						label: `Open ${row.application.toUpperCase()} Session`,
-						kind:  'guac',
+						label:  `Open ${row.application.toUpperCase()} Session`,
+						kind:   'guac',
 						url,
-						app:   row.application,
-						port:  firstPort(row.ports),
+						app:    row.application,
+						port:   firstPort(row.ports),
+						record: row.record,
 					});
 				}
 			} else {
@@ -270,7 +273,8 @@
 	async function executeItem(btn: ResultButton): Promise<void> {
 		if (btn.kind === 'guac') {
 			const proto = btn.url.includes('/ssh-ws') ? '&proto=ssh' : '';
-			window.open(`/session?ws=${encodeURIComponent(btn.url)}${proto}`, '_blank');
+			const rec   = (!btn.url.includes('/ssh-ws') && btn.record) ? '&record=1' : '';
+			window.open(`/session?ws=${encodeURIComponent(btn.url)}${proto}${rec}`, '_blank');
 		} else if (btn.kind === 'launch') {
 			try {
 				await fetch(`${CLIENT_API_BASE}/api/launch`, {
