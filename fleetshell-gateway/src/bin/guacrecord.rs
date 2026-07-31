@@ -240,11 +240,13 @@ async fn process_job(
 		eprintln!("[guacrecord] wrote {meta_path}");
 	}
 
-	// 5. Create ZIP bundle (m4v + keys + srt + meta; .guac is uploaded
-	//    separately as the forensic original).
+	// 5. Create ZIP bundle (all files including the raw .guac recording).
+	// The .guac is the lossless original and enables browser-based playback
+	// via guacamole-common-js SessionRecording; storage cost is bounded by
+	// the 90-day retention policy.
 	let m4v_path = format!("{}.m4v", stem);
 	let zip_path = format!("{}.zip", stem);
-	let zip_inputs = [&m4v_path, &keys_path, &srt_path, &meta_path];
+	let zip_inputs = [&job.recording, &m4v_path, &keys_path, &srt_path, &meta_path];
 	if let Err(e) = create_zip(&zip_path, &zip_inputs) {
 		eprintln!("[guacrecord] create zip {zip_path}: {e}");
 	} else {

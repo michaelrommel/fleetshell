@@ -36,8 +36,10 @@ RUN apk add --no-cache \
 	build-base pkgconfig wget \
 	# guacenc renders the recording canvas with Cairo, encodes with FFmpeg
 	cairo-dev ffmpeg-dev \
-	# libguac hard deps: SSL (cert handling), JPEG + PNG (frame codecs)
-	openssl-dev libjpeg-turbo-dev libpng-dev
+	# libguac hard deps: SSL (cert handling), JPEG + PNG + WebP (frame codecs)
+	# WebP is required — guacd uses it for RDP screen updates; without it
+	# guacenc silently drops WebP frames causing artefacts in the output video.
+	openssl-dev libjpeg-turbo-dev libpng-dev libwebp-dev
 
 ARG GUAC_VER=1.6.0
 # Download the official Apache source tarball and build in one layer to
