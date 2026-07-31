@@ -92,6 +92,20 @@ pub struct Config {
     /// When absent (not set or empty) drive sharing is silently disabled
     /// even if the client requests it.
     pub guacd_drive_path: Option<String>,
+
+    /// Root directory on the gateway host for guacd session recordings.
+    ///
+    /// When set (via `GUACD_RECORDING_PATH`), RDP sessions whose JWT carries
+    /// `record: true` will be recorded under `<base>/<target_ip>/`.
+    /// guacd writes a `.guac` binary recording file per session; the
+    /// sub-directory is created automatically by the handler when absent.
+    ///
+    /// The directory must be writable by the guacd process (UID 1000).
+    /// The Dockerfile creates `/recordings` with the correct ownership.
+    ///
+    /// When absent (not set or empty) recording is silently disabled
+    /// even if the JWT requests it.
+    pub guacd_recording_path: Option<String>,
 }
 
 impl Config {
@@ -131,6 +145,10 @@ impl Config {
                 .unwrap_or_else(|_| "127.0.0.1:4822".to_string()),
 
             guacd_drive_path: std::env::var("GUACD_DRIVE_PATH")
+                .ok()
+                .filter(|s| !s.is_empty()),
+
+            guacd_recording_path: std::env::var("GUACD_RECORDING_PATH")
                 .ok()
                 .filter(|s| !s.is_empty()),
 

@@ -16,7 +16,38 @@ RUN mkdir -p /workspace/test-guac/src && \
 RUN apk add --no-cache musl-dev openssl-dev openssl-libs-static protoc
 RUN cargo build --release -p fleetshell-gateway --target x86_64-unknown-linux-musl
 
-# ── Stage 2: Runtime ──────────────────────────────────────────────────────────
+# ── Stage 2: build guacenc ───────────────────────────────────────────────────
+# guacenc converts .guac session recordings to MP4/M4V video.
+# The guacamole/guacd base image does not ship guacenc because it requires
+# FFmpeg at build time (a large dep not needed by guacd itself).
+# We compile it here from the same 1.6.0 source tarball used by the base
+# image; only libguac + guacenc are built — protocol plugins (FreeRDP, SSH,
+# VNC) are auto-disabled when their dev headers are absent.
+FROM alpine AS guacenc-builder
+
+RUN apk add --no-cache \
+	build-base pkgconfig wget \
+	# guacenc renders the recording canvas with Cairo, encodes with FFmpeg
+	cairo-dev ffmpeg-dev \
+	# libguac hard deps: SSL (cert handling), JPEG + PNG (frame codecs)
+	openssl-dev libjpeg-turbo-dev libpng-dev
+
+ARG GUAC_VER=1.6.0
+# Download the official Apache source tarball and build in one layer to
+# keep the builder stage cache small.
+RUN wget -qO- \
+		"https://downloads.apache.org/guacamole/${GUAC_VER}/source/guacamole-server-${GUAC_VER}.tar.gz" \
+		| tar -xz -C /tmp \
+	&& cd /tmp/guacamole-server-${GUAC_VER} \
+	# Released tarballs ship a pre-generated configure script.
+	# configure auto-detects available libs; missing protocol headers
+	# (FreeRDP etc.) are silently skipped — libguac and guacenc still build.
+	&& ./configure --prefix=/opt/guacenc \
+	&& make -C src/libguac  all install \
+	&& make -C src/guacenc  all install \
+	&& strip /opt/guacenc/bin/guacenc
+
+# ── Stage 3: Runtime ──────────────────────────────────────────────────────────
 # Base on the official guacd image so we get guacd, FreeRDP, libvncclient,
 # libssh2, and all their runtime libraries pre-built for Alpine — no
 # compilation needed.  The gateway binary is a statically-linked musl binary
@@ -41,6 +72,16 @@ WORKDIR /fleetshell-gateway
 # netcat-openbsd is already in the guacd base image.
 RUN apk add --no-cache tini curl jq iproute2 tcpdump procps
 
+# FFmpeg shared libraries needed by guacenc at runtime.
+# (guacd itself does not use FFmpeg; this is the only reason it's added.)
+RUN apk add --no-cache ffmpeg
+
+# guacenc: convert .guac recordings to MP4/M4V.  Typical usage:
+#   guacenc -s 1920x1080 /recordings/<ip>/session.guac session.m4v
+# guacenc is linked against libguac.so.0 which lives in /opt/guacamole/lib/;
+# that path is already on LD_LIBRARY_PATH in the base image.
+COPY --from=guacenc-builder /opt/guacenc/bin/guacenc /usr/local/bin/guacenc
+
 # Copy the statically-linked gateway binary.
 COPY --from=builder \
 	/workspace/target/x86_64-unknown-linux-musl/release/fleetshell-gateway .
@@ -51,10 +92,16 @@ COPY target/x86_64-unknown-linux-musl/release/test-guac .
 RUN chmod +x run.sh
 
 # Create the drive-sharing buffer directory used by guacd for RDP file
-# transfer.  guacd runs as user 'guacd' (UID 1000) so it needs write access.
+# transfer. guacd runs as user 'guacd' (UID 1000) so it needs write access.
 # drive-create-path=true in the guacd connect instruction will create
 # per-session sub-directories automatically under this root.
-RUN mkdir -p /guac-drives && chown guacd:guacd /guac-drives
+RUN mkdir -p /guac/drives && chown guacd:guacd /guac /guac/drives
+
+# Create the session-recording directory used by guacd to write .guac
+# recording files.  Structure: recordings/<target_ip>/<session>.guac
+# Mount an EFS volume here in production (same share as /guac/drives,
+# different top-level directory) so recordings persist across deployments.
+RUN mkdir -p /guac/recordings && chown guacd:guacd /guac/recordings
 
 # Hand ownership of the working directory to the unprivileged guacd user.
 RUN chown -R guacd:guacd /fleetshell-gateway

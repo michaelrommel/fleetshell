@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-export REQUESTS_CA_BUNDLE=/etc/ssl/certs/zscaler_root.pem
+#export REQUESTS_CA_BUNDLE=/etc/ssl/certs/zscaler_root.pem
 
 TASK=$1
 if [[ -z "$TASK" ]]; then

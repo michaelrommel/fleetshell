@@ -59,6 +59,10 @@ pub struct RdpParams {
 	/// Must be writable by the guacd process.  Ignored when `enable_drive`
 	/// is `false`.
 	pub drive_path: String,
+	/// Absolute path on the gateway host where guacd writes session recordings.
+	/// When non-empty, guacd is instructed to record the session as a `.guac`
+	/// binary file under this directory.  Empty string = recording disabled.
+	pub recording_path: String,
 	/// Requested screen width in pixels.
 	pub width:  u32,
 	/// Requested screen height in pixels.
@@ -80,6 +84,7 @@ impl Default for RdpParams {
 			enable_drive: false,
 			drive_name:   "FleetShell".into(),
 			drive_path:   String::new(),
+			recording_path: String::new(),
 			width:       1280,
 			height:      800,
 			dpi:         96,
@@ -105,6 +110,8 @@ pub struct VncParams {
 	pub height: u32,
 	/// Dots per inch.
 	pub dpi: u32,
+	/// Absolute path for session recording.  Empty string = disabled.
+	pub recording_path: String,
 }
 
 impl Default for VncParams {
@@ -117,6 +124,7 @@ impl Default for VncParams {
 			width:    1280,
 			height:   800,
 			dpi:      96,
+			recording_path: String::new(),
 		}
 	}
 }
@@ -142,6 +150,8 @@ pub struct SshParams {
 	pub height: u32,
 	/// Dots per inch (affects character cell sizing).
 	pub dpi: u32,
+	/// Absolute path for session recording.  Empty string = disabled.
+	pub recording_path: String,
 }
 
 impl Default for SshParams {
@@ -154,6 +164,7 @@ impl Default for SshParams {
 			width:    1280,
 			height:   800,
 			dpi:      96,
+			recording_path: String::new(),
 		}
 	}
 }
@@ -206,6 +217,12 @@ impl ConnectionParams {
 				m.insert("drive-path",        p.drive_path.clone());
 				// Let guacd create sub-directories under drive-path automatically.
 				m.insert("drive-create-path", bool_str(p.enable_drive));
+				// Session recording: guacd writes a .guac file under recording-path.
+				// create-recording-path=true lets guacd create subdirs automatically.
+				// recording-include-keys=true embeds keystroke events in the same file.
+				m.insert("recording-path",         p.recording_path.clone());
+				m.insert("create-recording-path",  bool_str(!p.recording_path.is_empty()));
+				m.insert("recording-include-keys", bool_str(!p.recording_path.is_empty()));
 				m.insert("width",       p.width.to_string());
 				m.insert("height",      p.height.to_string());
 				m.insert("dpi",         p.dpi.to_string());
@@ -218,6 +235,9 @@ impl ConnectionParams {
 				m.insert("width",    p.width.to_string());
 				m.insert("height",   p.height.to_string());
 				m.insert("dpi",      p.dpi.to_string());
+				m.insert("recording-path",         p.recording_path.clone());
+				m.insert("create-recording-path",  bool_str(!p.recording_path.is_empty()));
+				m.insert("recording-include-keys", bool_str(!p.recording_path.is_empty()));
 			}
 			Self::Ssh(p) => {
 				m.insert("hostname", p.hostname.clone());
@@ -228,6 +248,9 @@ impl ConnectionParams {
 				m.insert("width",    p.width.to_string());
 				m.insert("height",   p.height.to_string());
 				m.insert("dpi",      p.dpi.to_string());
+				m.insert("recording-path",         p.recording_path.clone());
+				m.insert("create-recording-path",  bool_str(!p.recording_path.is_empty()));
+				m.insert("recording-include-keys", bool_str(!p.recording_path.is_empty()));
 			}
 		}
 		m

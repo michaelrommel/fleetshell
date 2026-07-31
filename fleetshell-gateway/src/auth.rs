@@ -48,6 +48,9 @@ pub struct Claims {
     /// Optional gateway identifier.  When present the handshake `gateway`
     /// field must equal this value, preventing cross-gateway token reuse.
     pub gw: Option<String>,
+    /// When `true`, the gateway should record this session to
+    /// `GUACD_RECORDING_PATH/<target>/`.  Absent (or `false`) = no recording.
+    pub record: Option<bool>,
 }
 
 // ── Errors ────────────────────────────────────────────────────────────────────

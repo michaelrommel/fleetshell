@@ -92,6 +92,14 @@ pub struct HandshakePayload {
     /// is not set on the gateway.
     pub enable_drive: Option<bool>,
 
+    /// Request session recording for this RDP session.
+    ///
+    /// Authoritative value comes from the JWT `record` claim (server-signed);
+    /// this field is accepted for completeness but the gateway cross-checks
+    /// against the claim.  Silently ignored for VNC/SSH and when
+    /// `GUACD_RECORDING_PATH` is not configured.
+    pub enable_record: Option<bool>,
+
     /// Opaque identifier of a parked guacd session to resume.
     ///
     /// When the browser reloads, the client re-sends the `connection_id`
@@ -176,7 +184,8 @@ where
         width       = ?payload.width,
         height      = ?payload.height,
         dpi         = ?payload.dpi,
-        enable_drive = ?payload.enable_drive,
+        enable_drive  = ?payload.enable_drive,
+        enable_record = ?payload.enable_record,
         "handshake payload"
     );
     // Token and password are intentionally not logged to avoid leaking credentials.
@@ -187,23 +196,27 @@ where
         "credential lengths (values not logged)");
 
     // ── 4. Validate JWT + authorise target / port ────────────────────────
-    match auth::verify_connection(
+    let jwt_record = match auth::verify_connection(
         &payload.token,
         &jwt_secret,
         &payload.target,
         payload.port,
         &payload.gateway,
     ) {
-        Ok(claims) => info!(
-            %peer,
-            sub = ?claims.sub,
-            exp = ?claims.exp,
-            iat = ?claims.iat,
-            target = %claims.target,
-            ports  = %claims.ports,
-            gw     = ?claims.gw,
-            "JWT verified and connection authorised"
-        ),
+        Ok(claims) => {
+            info!(
+                %peer,
+                sub = ?claims.sub,
+                exp = ?claims.exp,
+                iat = ?claims.iat,
+                target = %claims.target,
+                ports  = %claims.ports,
+                gw     = ?claims.gw,
+                record = ?claims.record,
+                "JWT verified and connection authorised"
+            );
+            claims.record.unwrap_or(false)
+        }
         Err(e) => {
             // Distinguish between a bad/expired token (401) and a valid token
             // that simply does not cover this target or port (403).
@@ -221,7 +234,7 @@ where
             writer_half.shutdown().await.ok();
             return;
         }
-    }
+    };
 
     // ── 4b. Direct SSH mode (application="ssh", guac:false, e2ecrypt:false) ──────────
     //
@@ -322,6 +335,40 @@ where
         }
 
         // ── New session path ──────────────────────────────────────────────────────────
+
+        // ── Recording path (shared by all guac protocols) ────────────────────────────
+        // jwt_record is authoritative (server-signed); applies to RDP, VNC, and SSH.
+        //
+        //   /recordings/
+        //     192.168.1.100/   ← guacd writes .guac files here
+        //     192.168.1.101/
+        let recording_path = if jwt_record {
+            match config.guacd_recording_path.as_deref() {
+                Some(base) if !base.is_empty() => {
+                    let device_dir = format!("{}/{}", base, payload.target);
+                    match tokio::fs::create_dir_all(&device_dir).await {
+                        Ok(()) => {
+                            info!(%peer, dir = %device_dir,
+                                "created per-device recording directory");
+                        }
+                        Err(e) => {
+                            warn!(%peer, dir = %device_dir,
+                                "could not create per-device recording directory: {e}");
+                        }
+                    }
+                    device_dir
+                }
+                _ => {
+                    warn!(%peer,
+                        "recording requested (JWT record=true) but \
+                         GUACD_RECORDING_PATH is not configured — recording disabled");
+                    String::new()
+                }
+            }
+        } else {
+            String::new()
+        };
+
         let params = match payload.application.as_str() {
             "rdp" => {
                 // Resolve the effective drive path: the gateway-level default
@@ -364,6 +411,7 @@ where
                 } else {
                     String::new()
                 };
+
                 guac::ConnectionParams::Rdp(guac::RdpParams {
                     hostname:    payload.target.clone(),
                     port:        payload.port,
@@ -375,6 +423,7 @@ where
                     ignore_cert: true,
                     enable_drive: !drive_path.is_empty(),
                     drive_path,
+                    recording_path: recording_path.clone(),
                     ..Default::default()
                 })
             }
@@ -386,6 +435,7 @@ where
                 width:    payload.width.unwrap_or(1280),
                 height:   payload.height.unwrap_or(800),
                 dpi:      payload.dpi.unwrap_or(96),
+                recording_path: recording_path.clone(),
             }),
             "ssh" => guac::ConnectionParams::Ssh(guac::SshParams {
                 hostname: payload.target.clone(),
@@ -395,6 +445,7 @@ where
                 width:    payload.width.unwrap_or(1280),
                 height:   payload.height.unwrap_or(800),
                 dpi:      payload.dpi.unwrap_or(96),
+                recording_path,
             }),
             other => {
                 warn!(%peer, application = %other,
