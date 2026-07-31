@@ -90,6 +90,10 @@ pub struct TunnelRequest {
     /// Forwarded to the gateway; ignored for VNC/SSH and when the gateway
     /// has no `GUACD_DRIVE_PATH` configured.
     pub enable_drive: Option<bool>,
+    /// Request session recording for this RDP Guacamole session.
+    /// Forwarded to the gateway; ignored for VNC/SSH and when the gateway
+    /// has no `GUACD_RECORDING_PATH` configured.
+    pub enable_record: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
@@ -348,6 +352,7 @@ async fn tunnel_handler(
             slot_idx,
             last_active: last_active.clone(),
             enable_drive:    req.enable_drive.unwrap_or(false),
+            enable_record:   req.enable_record.unwrap_or(false),
             skip_tls_verify: cfg.gateway_skip_tls_verify,
             disable_tls:     cfg.gateway_disable_tls,
         });

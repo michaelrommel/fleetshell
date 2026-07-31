@@ -81,6 +81,9 @@ pub struct GuacSessionParams {
 	/// Request drive sharing for this RDP session.
 	/// Forwarded verbatim to the gateway; ignored for VNC/SSH.
 	pub enable_drive: bool,
+	/// Request session recording for this RDP session.
+	/// Forwarded verbatim to the gateway; ignored for VNC/SSH.
+	pub enable_record: bool,
 	/// Skip TLS certificate validation for the outbound gateway connection.
 	/// Mirrors `AppConfig::gateway_skip_tls_verify`.
 	pub skip_tls_verify: bool,
@@ -405,6 +408,7 @@ fn build_gateway_payload(
 		"height":        params.height,
 		"dpi":           params.dpi,
 		"enable_drive":  params.enable_drive,
+		"enable_record": params.enable_record,
 		"gateway":       params.gateway,
 		"path":          gateway_path,
 		"e2ecrypt":      false,
