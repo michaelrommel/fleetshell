@@ -215,7 +215,7 @@ where
                 record = ?claims.record,
                 "JWT verified and connection authorised"
             );
-            claims.record.unwrap_or(false)
+            (claims.record.unwrap_or(false), claims.sub)
         }
         Err(e) => {
             // Distinguish between a bad/expired token (401) and a valid token
@@ -235,6 +235,7 @@ where
             return;
         }
     };
+    let (jwt_record, jwt_sub) = jwt_record;
 
     // ── 4b. Direct SSH mode (application="ssh", guac:false, e2ecrypt:false) ──────────
     //
@@ -318,15 +319,29 @@ where
         // ── Reconnect path ───────────────────────────────────────────────────────────
         if let Some(ref cid) = payload.connection_id {
             let parked = config.parked_sessions.lock().await.remove(cid);
-            if let Some(mut guacd) = parked {
+            if let Some((mut guacd, reconnect_meta)) = parked {
                 info!(%peer, connection_id = %cid, "guacd reconnect — resuming parked session");
                 let resp = format!("200 CONNECTED {}\n", cid);
                 send_line(&mut writer_half, resp.as_bytes()).await;
                 let mut client = tokio::io::join(reader, writer_half);
                 if relay_guac(&mut client, &mut guacd, peer).await {
-                    park_session(&config, cid.clone(), guacd, peer).await;
+                    // Client dropped again — re-park, carrying the meta forward.
+                    park_session(&config, cid.clone(), guacd, peer, reconnect_meta).await;
                 } else {
+                    // Case 1 on reconnect: guacd closed — write job file now.
                     info!(%peer, connection_id = %cid, "guacd session ended");
+                    if let (Some(ref m), Some(ref jobs_path)) =
+                        (&reconnect_meta, &config.guacd_jobs_path)
+                    {
+                        if let Err(e) = crate::recording::write_job_file(
+                            m, jobs_path, crate::recording::now_ms(),
+                        ).await {
+                            warn!(%peer, "failed to write recording job file: {e}");
+                        } else {
+                            info!(%peer, recording = %m.recording,
+                                "recording job file written (reconnect path)");
+                        }
+                    }
                 }
                 return;
             }
@@ -367,6 +382,16 @@ where
             }
         } else {
             String::new()
+        };
+
+        // Generate a recording filename now (before guac::connect) so the
+        // full path is deterministic.  We use millisecond timestamp which is
+        // fine for a single-gateway deployment; add a random suffix later if
+        // multiple containers ever race on the same EFS path.
+        let recording_name = if recording_path.is_empty() {
+            String::new()
+        } else {
+            crate::recording::now_ms().to_string()
         };
 
         let params = match payload.application.as_str() {
@@ -424,6 +449,7 @@ where
                     enable_drive: !drive_path.is_empty(),
                     drive_path,
                     recording_path: recording_path.clone(),
+                    recording_name: recording_name.clone(),
                     ..Default::default()
                 })
             }
@@ -436,6 +462,7 @@ where
                 height:   payload.height.unwrap_or(800),
                 dpi:      payload.dpi.unwrap_or(96),
                 recording_path: recording_path.clone(),
+                recording_name: recording_name.clone(),
             }),
             "ssh" => guac::ConnectionParams::Ssh(guac::SshParams {
                 hostname: payload.target.clone(),
@@ -445,7 +472,8 @@ where
                 width:    payload.width.unwrap_or(1280),
                 height:   payload.height.unwrap_or(800),
                 dpi:      payload.dpi.unwrap_or(96),
-                recording_path,
+                recording_path: recording_path.clone(),
+                recording_name: recording_name.clone(),
             }),
             other => {
                 warn!(%peer, application = %other,
@@ -470,6 +498,25 @@ where
             connection_id = %session.connection_id,
             "guacd handshake complete — entering Guacamole relay");
 
+        // Build recording metadata now that we know the connection_id.
+        // Only populated when a recording path was configured and the JWT
+        // authorised recording; otherwise None.
+        let recording_meta: Option<crate::recording::RecordingMeta> =
+            if !recording_path.is_empty() {
+                Some(crate::recording::RecordingMeta {
+                    conn_id:    session.connection_id.clone(),
+                    recording:  format!("{}/{}", recording_path, recording_name),
+                    target:     payload.target.clone(),
+                    protocol:   payload.application.clone(),
+                    user:       jwt_sub.clone(),
+                    width:      payload.width.unwrap_or(1280),
+                    height:     payload.height.unwrap_or(800),
+                    started_ms: crate::recording::now_ms(),
+                })
+            } else {
+                None
+            };
+
         // Include the connection_id in the response so the client can
         // send it back on reconnect.
         let resp = format!("200 CONNECTED {}\n", session.connection_id);
@@ -482,9 +529,22 @@ where
             "entering relay_guac for new session");
         if relay_guac(&mut client, &mut guacd, peer).await {
             // Client disconnected; guacd is still alive — park for reconnect.
-            park_session(&config, session.connection_id, guacd, peer).await;
+            park_session(&config, session.connection_id, guacd, peer, recording_meta).await;
         } else {
+            // Case 1: guacd closed the connection — session is truly over.
+            // Write the job file immediately; the .guac file is already closed.
             info!(%peer, "Guacamole session ended by guacd");
+            if let (Some(ref m), Some(ref jobs_path)) =
+                (&recording_meta, &config.guacd_jobs_path)
+            {
+                if let Err(e) = crate::recording::write_job_file(
+                    m, jobs_path, crate::recording::now_ms(),
+                ).await {
+                    warn!(%peer, "failed to write recording job file: {e}");
+                } else {
+                    info!(%peer, recording = %m.recording, "recording job file written");
+                }
+            }
         }
         return;
     }
@@ -650,20 +710,34 @@ async fn park_session(
     connection_id: String,
     guacd:         TcpStream,
     peer:          SocketAddr,
+    meta:          Option<crate::recording::RecordingMeta>,
 ) {
     let grace = config.reconnect_grace_secs;
     info!(%peer, %connection_id,
         "parking guacd session for {grace}s (client disconnected)");
 
-    let parked = Arc::clone(&config.parked_sessions);
-    let id     = connection_id.clone();
+    let parked    = Arc::clone(&config.parked_sessions);
+    let jobs_path = config.guacd_jobs_path.clone();
+    let id        = connection_id.clone();
 
-    config.parked_sessions.lock().await.insert(connection_id, guacd);
+    config.parked_sessions.lock().await.insert(connection_id, (guacd, meta));
 
     tokio::spawn(async move {
         tokio::time::sleep(Duration::from_secs(grace)).await;
-        if parked.lock().await.remove(&id).is_some() {
+        if let Some((_, expired_meta)) = parked.lock().await.remove(&id) {
+            // Case 2: grace period expired without reconnect.
             info!(connection_id = %id, "parked guacd session expired ({grace}s)");
+            if let (Some(ref m), Some(ref jp)) = (&expired_meta, &jobs_path) {
+                if let Err(e) = crate::recording::write_job_file(
+                    m, jp, crate::recording::now_ms(),
+                ).await {
+                    warn!(connection_id = %id,
+                        "failed to write recording job file (park expiry): {e}");
+                } else {
+                    info!(connection_id = %id, recording = %m.recording,
+                        "recording job file written (park expiry)");
+                }
+            }
         }
         // If already removed by a reconnect, this is a silent no-op.
     });

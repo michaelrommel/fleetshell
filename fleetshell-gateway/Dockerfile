@@ -86,6 +86,10 @@ COPY --from=guacenc-builder /opt/guacenc/bin/guacenc /usr/local/bin/guacenc
 COPY --from=builder \
 	/workspace/target/x86_64-unknown-linux-musl/release/fleetshell-gateway .
 
+# Copy the recording post-processor.
+COPY --from=builder \
+	/workspace/target/x86_64-unknown-linux-musl/release/guacrecord .
+
 # Copy the start-up script.
 COPY fleetshell-gateway/scripts/run.sh .
 COPY target/x86_64-unknown-linux-musl/release/test-guac .
@@ -95,13 +99,18 @@ RUN chmod +x run.sh
 # transfer. guacd runs as user 'guacd' (UID 1000) so it needs write access.
 # drive-create-path=true in the guacd connect instruction will create
 # per-session sub-directories automatically under this root.
-RUN mkdir -p /guac/drives && chown guacd:guacd /guac /guac/drives
+RUN mkdir -p /guac/drives && chown -R guacd:guacd /guac
 
-# Create the session-recording directory used by guacd to write .guac
-# recording files.  Structure: recordings/<target_ip>/<session>.guac
-# Mount an EFS volume here in production (same share as /guac/drives,
-# different top-level directory) so recordings persist across deployments.
-RUN mkdir -p /guac/recordings && chown guacd:guacd /guac/recordings
+# Create the session-recording directory and jobs queue used by guacd and
+# guacrecord.  Structure:
+#   /recordings/<target_ip>/<name>      ← guacd writes .guac files here
+#   /recordings/jobs/<conn_id>.json     ← gateway writes job descriptors
+#   /recordings/jobs/done/<conn_id>.json ← guacrecord moves completed jobs
+# Mount an EFS volume at /guac in production (same share as
+# /guac/drives, different top-level directory) so recordings and job files
+# persist across deployments and are visible to all container instances.
+RUN mkdir -p /guac/recordings/jobs/done \
+    && chown -R guacd:guacd /guac/recordings
 
 # Hand ownership of the working directory to the unprivileged guacd user.
 RUN chown -R guacd:guacd /fleetshell-gateway

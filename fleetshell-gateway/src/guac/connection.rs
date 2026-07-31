@@ -63,6 +63,8 @@ pub struct RdpParams {
 	/// When non-empty, guacd is instructed to record the session as a `.guac`
 	/// binary file under this directory.  Empty string = recording disabled.
 	pub recording_path: String,
+	/// Filename for the recording within `recording_path`.  Empty = guacd default.
+	pub recording_name: String,
 	/// Requested screen width in pixels.
 	pub width:  u32,
 	/// Requested screen height in pixels.
@@ -85,6 +87,7 @@ impl Default for RdpParams {
 			drive_name:   "FleetShell".into(),
 			drive_path:   String::new(),
 			recording_path: String::new(),
+			recording_name: String::new(),
 			width:       1280,
 			height:      800,
 			dpi:         96,
@@ -112,6 +115,8 @@ pub struct VncParams {
 	pub dpi: u32,
 	/// Absolute path for session recording.  Empty string = disabled.
 	pub recording_path: String,
+	/// Filename for the recording within `recording_path`.  Empty = guacd default.
+	pub recording_name: String,
 }
 
 impl Default for VncParams {
@@ -125,6 +130,7 @@ impl Default for VncParams {
 			height:   800,
 			dpi:      96,
 			recording_path: String::new(),
+			recording_name: String::new(),
 		}
 	}
 }
@@ -152,6 +158,8 @@ pub struct SshParams {
 	pub dpi: u32,
 	/// Absolute path for session recording.  Empty string = disabled.
 	pub recording_path: String,
+	/// Filename for the recording within `recording_path`.  Empty = guacd default.
+	pub recording_name: String,
 }
 
 impl Default for SshParams {
@@ -165,6 +173,7 @@ impl Default for SshParams {
 			height:   800,
 			dpi:      96,
 			recording_path: String::new(),
+			recording_name: String::new(),
 		}
 	}
 }
@@ -221,6 +230,7 @@ impl ConnectionParams {
 				// create-recording-path=true lets guacd create subdirs automatically.
 				// recording-include-keys=true embeds keystroke events in the same file.
 				m.insert("recording-path",         p.recording_path.clone());
+				m.insert("recording-name",         p.recording_name.clone());
 				m.insert("create-recording-path",  bool_str(!p.recording_path.is_empty()));
 				m.insert("recording-include-keys", bool_str(!p.recording_path.is_empty()));
 				m.insert("width",       p.width.to_string());
@@ -236,6 +246,7 @@ impl ConnectionParams {
 				m.insert("height",   p.height.to_string());
 				m.insert("dpi",      p.dpi.to_string());
 				m.insert("recording-path",         p.recording_path.clone());
+				m.insert("recording-name",         p.recording_name.clone());
 				m.insert("create-recording-path",  bool_str(!p.recording_path.is_empty()));
 				m.insert("recording-include-keys", bool_str(!p.recording_path.is_empty()));
 			}
@@ -249,6 +260,7 @@ impl ConnectionParams {
 				m.insert("height",   p.height.to_string());
 				m.insert("dpi",      p.dpi.to_string());
 				m.insert("recording-path",         p.recording_path.clone());
+				m.insert("recording-name",         p.recording_name.clone());
 				m.insert("create-recording-path",  bool_str(!p.recording_path.is_empty()));
 				m.insert("recording-include-keys", bool_str(!p.recording_path.is_empty()));
 			}

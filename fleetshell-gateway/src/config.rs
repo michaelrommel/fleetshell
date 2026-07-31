@@ -4,6 +4,7 @@
 /// `JWT_SECRET` variable to something strong in every real deployment.
 
 use std::sync::Arc;
+use crate::recording::RecordingMeta;
 #[derive(Debug, Clone)]
 pub struct Config {
     /// TCP address to listen on. Default: `0.0.0.0:8443`.
@@ -39,7 +40,7 @@ pub struct Config {
     ///
     /// Shared across all handler tasks via `Arc<Mutex<_>>`.
     pub parked_sessions: Arc<tokio::sync::Mutex<
-        std::collections::HashMap<String, tokio::net::TcpStream>
+        std::collections::HashMap<String, (tokio::net::TcpStream, Option<RecordingMeta>)>
     >>,
 
     /// How long (seconds) to keep a guacd session parked after the browser
@@ -106,6 +107,17 @@ pub struct Config {
     /// When absent (not set or empty) recording is silently disabled
     /// even if the JWT requests it.
     pub guacd_recording_path: Option<String>,
+
+    /// Directory watched by `guacrecord` for post-processing job files.
+    ///
+    /// The gateway writes `<jobs_path>/<conn_id>.json` here when a recorded
+    /// session ends.  `guacrecord` watches this single directory with one
+    /// inotify handle instead of recursively watching every per-device
+    /// recording sub-directory (inotify watch-handle limits matter at scale).
+    ///
+    /// Defaults to `<GUACD_RECORDING_PATH>/jobs` when not set explicitly.
+    /// Unset (or empty) when neither env var is configured.
+    pub guacd_jobs_path: Option<String>,
 }
 
 impl Config {
@@ -151,6 +163,17 @@ impl Config {
             guacd_recording_path: std::env::var("GUACD_RECORDING_PATH")
                 .ok()
                 .filter(|s| !s.is_empty()),
+
+            guacd_jobs_path: std::env::var("GUACD_JOBS_PATH")
+                .ok()
+                .filter(|s| !s.is_empty())
+                .or_else(|| {
+                    // Default: sibling `jobs/` of the recording root.
+                    std::env::var("GUACD_RECORDING_PATH")
+                        .ok()
+                        .filter(|s| !s.is_empty())
+                        .map(|p| format!("{}/jobs", p))
+                }),
 
             parked_sessions: Arc::new(tokio::sync::Mutex::new(
                 std::collections::HashMap::new()

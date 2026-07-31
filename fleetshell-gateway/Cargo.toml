@@ -47,3 +47,8 @@ russh       = { version = "0.62", default-features = false, features = ["ring"] 
 
 # ── Error handling ───────────────────────────────────────────────────────────
 thiserror   = "1"
+
+# ── Session recording post-processor (guacrecord binary) ─────────────────────
+# inotify gives a single kernel-level watch on the jobs directory; guacrecord
+# holds only one inotify handle regardless of how many devices are recorded.
+inotify     = "0.10"

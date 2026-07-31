@@ -61,9 +61,9 @@ fi
 
 # ── 5. Signal handler — forward TERM/INT to both children ─────────────────────
 shutdown() {
-	echo "[run.sh] shutdown signal received — stopping gateway and guacd" >&2
-	kill "$GATEWAY_PID" "$GUACD_PID" 2>/dev/null
-	wait "$GATEWAY_PID" "$GUACD_PID" 2>/dev/null
+	echo "[run.sh] shutdown signal received — stopping gateway, guacrecord, and guacd" >&2
+	kill "$GATEWAY_PID" "$GUACRECORD_PID" "$GUACD_PID" 2>/dev/null
+	wait "$GATEWAY_PID" "$GUACRECORD_PID" "$GUACD_PID" 2>/dev/null
 	exit 0
 }
 
@@ -72,10 +72,32 @@ echo "[run.sh] starting fleetshell-gateway"
 ./fleetshell-gateway &
 GATEWAY_PID=$!
 
-# Install the signal trap now that we know both PIDs.
+# ── 7. Start guacrecord (if recording is configured) ───────────────────────────
+# Derive the jobs directory the same way config.rs does:
+#   1. Explicit GUACD_JOBS_PATH, or
+#   2. ${GUACD_RECORDING_PATH}/jobs
+if [ -n "${GUACD_JOBS_PATH}" ]; then
+	JOBS_DIR="${GUACD_JOBS_PATH}"
+elif [ -n "${GUACD_RECORDING_PATH}" ]; then
+	JOBS_DIR="${GUACD_RECORDING_PATH}/jobs"
+else
+	JOBS_DIR=""
+fi
+
+if [ -n "${JOBS_DIR}" ]; then
+	mkdir -p "${JOBS_DIR}/done"
+	echo "[run.sh] starting guacrecord watching ${JOBS_DIR}"
+	./guacrecord "${JOBS_DIR}" &
+	GUACRECORD_PID=$!
+else
+	echo "[run.sh] GUACD_RECORDING_PATH not set — guacrecord not started"
+	GUACRECORD_PID=""
+fi
+
+# Install the signal trap now that we know all PIDs.
 trap shutdown INT TERM
 
-# ── 7. Wait for gateway to exit ───────────────────────────────────────────────
+# ── 8. Wait for gateway to exit ───────────────────────────────────────────────
 # wait returns the exit code of the child.  If the gateway crashes or exits
 # cleanly, we stop guacd and exit with the same code so ECS can restart the
 # task if needed.

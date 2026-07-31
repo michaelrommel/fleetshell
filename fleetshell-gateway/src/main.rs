@@ -38,6 +38,7 @@ mod config;
 mod guac;
 mod handler;
 mod health;
+mod recording;
 mod ssh;
 mod tls;
 mod transform;
