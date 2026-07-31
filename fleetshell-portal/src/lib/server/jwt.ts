@@ -68,6 +68,7 @@ export function issueProbeToken(probeId: string, secret: string): string {
  *   target — exact host the token authorises
  *   ports  — port spec string (same comma/range format as the tunnel request)
  *   gw     — gateway identifier (optional cross-gateway replay guard)
+ *   record — when true, instructs the gateway to record the session (optional)
  */
 export function issueTunnelToken(
 	sub        : string,
@@ -76,16 +77,20 @@ export function issueTunnelToken(
 	gw         : string,
 	secret     : string,
 	ttlSeconds : number = 24 * 60 * 60,
+	record     : boolean = false,
 ): string {
 	const now     = Math.floor(Date.now() / 1000);
-	const payload = b64url(Buffer.from(JSON.stringify({
+	const claims: Record<string, unknown> = {
 		sub,
 		iat    : now,
 		exp    : now + ttlSeconds,
 		target,
 		ports,
 		gw,
-	})));
+	};
+	// Only embed 'record' when true to keep token compact.
+	if (record) claims['record'] = true;
+	const payload = b64url(Buffer.from(JSON.stringify(claims)));
 
 	const unsigned = `${HEADER_B64URL}.${payload}`;
 	const sig      = b64url(hmacSha256(unsigned, secret));

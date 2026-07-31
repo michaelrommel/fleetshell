@@ -33,16 +33,18 @@
 		dpi:         number;
 		/** Enable guacd drive sharing; RDP only, ignored for VNC/SSH. */
 		drive:       boolean;
+		/** Enable guacd session recording to /recordings/<ip>/; all Guacamole protocols. */
+		record:      boolean;
 		/** URL path suffix appended when opening http/https/expert-i tabs (default '/'). */
 		path:        string;
 	}
 
 	let portRows = $state<PortRow[]>([
-		{ ports: '443', application: 'https', guac: false, e2ecrypt: false, open: true, sni: '', width: 1920, height: 1080, dpi: 96, drive: false, path: '/' },
+		{ ports: '443', application: 'https', guac: false, e2ecrypt: false, open: true, sni: '', width: 1920, height: 1080, dpi: 96, drive: false, record: false, path: '/' },
 	]);
 
 	function addRow(): void {
-		portRows = [...portRows, { ports: '', application: 'https', guac: false, e2ecrypt: false, open: true, sni: '', width: 1920, height: 1080, dpi: 96, drive: false, path: '/' }];
+		portRows = [...portRows, { ports: '', application: 'https', guac: false, e2ecrypt: false, open: true, sni: '', width: 1920, height: 1080, dpi: 96, drive: false, record: false, path: '/' }];
 	}
 
 	function removeRow(i: number): void {
@@ -91,8 +93,10 @@
 			row.guac     = false;
 			row.e2ecrypt = false;
 		}
-		// Drive sharing is RDP-only; clear it when switching to VNC or SSH.
+		// Drive sharing is RDP-only; clear it when switching away.
+		// Recording clears only when the app leaves guac-capable territory.
 		if (row.application !== 'rdp') row.drive = false;
+		if (!guacApplicable(row))      row.record = false;
 	}
 
 	type ConnectState = 'idle' | 'signing' | 'connecting' | 'launching' | 'done' | 'error';
@@ -137,7 +141,8 @@
 			width        : dimRow?.width  ?? undefined,
 			height       : dimRow?.height ?? undefined,
 			dpi          : dimRow?.dpi    ?? undefined,
-			enable_drive : (guacRow?.drive && guacRow?.application === 'rdp') || undefined,
+			enable_drive  : (guacRow?.drive   && guacRow?.application === 'rdp') || undefined,
+			enable_record : guacRow?.record || undefined,
 			port_rows  : portRows.map(r => ({
 				ports      : r.ports,
 				application: r.application,
@@ -344,7 +349,13 @@
 			const res = await fetch('/api/tunnel/sign', {
 				method  : 'POST',
 				headers : { 'Content-Type': 'application/json' },
-				body    : JSON.stringify({ target, ports: allPorts, gateway }),
+				body    : JSON.stringify({
+				target,
+				ports  : allPorts,
+				gateway,
+				// Include the record flag so the portal embeds it in the signed JWT.
+				record : portRows.find(r => r.guac && guacApplicable(r))?.record ?? false,
+			}),
 			});
 			if (!res.ok) {
 				if (res.status === 401) {
@@ -763,6 +774,18 @@
 							disabled={busy || row.application !== 'rdp'}
 						/>
 						Drives
+					</label>
+					<label
+						class="guac-param-record"
+						title="Record this session to /recordings/<ip>/ on the gateway"
+					>
+						<input
+							type="checkbox"
+							class="check-input"
+							bind:checked={row.record}
+							disabled={busy}
+						/>
+						Record
 					</label>
 				</div>
 				{/if}
@@ -1439,4 +1462,20 @@
 		cursor     : pointer;
 	}
 	.guac-param-drive:has(input:disabled) { opacity: 0.4; cursor: not-allowed; }
+
+	/* Session-recording checkbox — same layout as drive, distinct accent colour. */
+	.guac-param-record {
+		display    : flex;
+		align-items: center;
+		gap        : 5px;
+		margin-left: 12px;
+		font-size  : 0.72rem;
+		font-weight: 600;
+		color      : var(--bright-orange);
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		white-space: nowrap;
+		cursor     : pointer;
+	}
+	.guac-param-record:has(input:disabled) { opacity: 0.4; cursor: not-allowed; }
 </style>

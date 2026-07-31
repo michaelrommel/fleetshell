@@ -10,7 +10,7 @@
  *
  * Request
  *   Content-Type: application/json
- *   Body: { "target": "...", "ports": "...", "gateway": "..." }
+ *   Body: { "target": "...", "ports": "...", "gateway": "...", "record"?: true }
  *
  * Response 200
  *   { "token": "<jwt>" }
@@ -33,7 +33,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 	const user = locals.user;
 	trace(user, 'sign request received');
 
-	let body: { target?: string; ports?: string; gateway?: string };
+	let body: { target?: string; ports?: string; gateway?: string; record?: boolean };
 	try {
 		body = await request.json();
 	} catch {
@@ -43,15 +43,16 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 	const target  = String(body.target  ?? '').trim();
 	const ports   = String(body.ports   ?? '').trim();
 	const gateway = String(body.gateway ?? '').trim();
+	const record  = body.record === true;
 
 	if (!target)  error(400, 'Missing field: target');
 	if (!ports)   error(400, 'Missing field: ports');
 	if (!gateway) error(400, 'Missing field: gateway');
 
-	trace(user, 'signing tunnel token', { target, ports, gateway });
+	trace(user, 'signing tunnel token', { target, ports, gateway, record });
 
 	const secret = env.JWT_SECRET ?? 'change-me-in-production';
-	const token  = issueTunnelToken(user, target, ports, gateway, secret);
+	const token  = issueTunnelToken(user, target, ports, gateway, secret, undefined, record);
 
 	trace(user, 'tunnel token issued', { tokenLen: token.length });
 
