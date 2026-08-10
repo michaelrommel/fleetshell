@@ -270,18 +270,26 @@ struct SlotBind {
 async fn bind_slot_port(slot_ip: &str, requested: u16) -> std::io::Result<SlotBind> {
     match tokio::net::TcpListener::bind((slot_ip, requested)).await {
         Ok(listener) => Ok(SlotBind { listener, actual: requested, remap: None }),
-        Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
+        // Fall back on any error that means "this specific port is unavailable":
+        //   * AddrInUse       (WSAEADDRINUSE / 10048) - another socket holds it.
+        //   * PermissionDenied (WSAEACCES    / 10013) - Windows reserved/excluded
+        //     the port (Hyper-V/WSL dynamic port ranges, exclusive-use sockets on
+        //     `0.0.0.0:<port>`, or `netsh` exclusions).  This is common and does
+        //     NOT surface as AddrInUse on Windows.
+        Err(e) if matches!(
+            e.kind(),
+            std::io::ErrorKind::AddrInUse | std::io::ErrorKind::PermissionDenied,
+        ) => {
             let listener = tokio::net::TcpListener::bind((slot_ip, 0)).await?;
             let actual   = listener.local_addr()?.port();
             log::warn!(
-                "Local port {}:{} already in use (another process holds it, \
-                 e.g. 0.0.0.0:{}) - remapped to ephemeral {}:{}",
-                slot_ip, requested, requested, slot_ip, actual,
+                "Local port {}:{} unavailable ({}) - remapped to ephemeral {}:{}",
+                slot_ip, requested, e, slot_ip, actual,
             );
             let remap = serde_json::json!({
                 "requested": requested,
                 "actual":    actual,
-                "reason":    format!("port {} already in use on this machine", requested),
+                "reason":    format!("port {} unavailable on this machine ({})", requested, e),
             });
             Ok(SlotBind { listener, actual, remap: Some(remap) })
         }

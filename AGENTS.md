@@ -457,10 +457,14 @@ DNS hostname `127-0-0-{N}.client.fleetshell.com` covered by the wildcard cert.
 browser/native-app rendezvous; the *target* service port always travels to the
 gateway inside the signed JWT + handshake JSON, never via the local port.
 `bind_slot_port()` (server.rs) binds `slot_ip:<requested>` and, on
-`AddrInUse`, falls back to an OS-assigned ephemeral port (`bind(slot_ip:0)` +
-`local_addr()`).  This works around a Windows limitation: a third-party socket
-on the wildcard `0.0.0.0:<port>` shadows that port number across every local
-address, so the slot bind fails even though nothing listens on the slot IP.
+`AddrInUse` (WSAEADDRINUSE/10048) **or** `PermissionDenied`
+(WSAEACCES/10013), falls back to an OS-assigned ephemeral port
+(`bind(slot_ip:0)` + `local_addr()`).  This works around two Windows quirks:
+a third-party socket on the wildcard `0.0.0.0:<port>` shadows that port number
+across every local address (10048), and Windows also *reserves/excludes* port
+ranges (Hyper-V/WSL dynamic ranges, `netsh` exclusions, exclusive-use sockets)
+which fail as 10013 rather than "in use".  Either way the slot bind fails even
+though nothing listens on the slot IP.
 When a fallback happens the actual port is used everywhere it is surfaced
 (returned `ports[]`, browser/`wss` URLs, generated `.rdp`/`.vnc` files) and a
 remap notice `{ requested, actual, reason }` is emitted in the `slot-update`

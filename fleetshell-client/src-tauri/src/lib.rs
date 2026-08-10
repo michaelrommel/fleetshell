@@ -133,7 +133,11 @@ pub fn run() {
         .plugin(tauri_plugin_deep_link::init())
         .invoke_handler(tauri::generate_handler![get_config, save_config, get_log_history, enrollment_login])
         .setup(|app| {
-            log::info!("FleetShell client starting up (pid {})", std::process::id());
+            log::info!(
+                "FleetShell client v{} starting up (pid {})",
+                env!("CARGO_PKG_VERSION"),
+                std::process::id(),
+            );
 
             // ── Deep-link handler ────────────────────────────────────────────
             //
