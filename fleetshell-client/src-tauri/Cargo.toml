@@ -1,6 +1,6 @@
 [package]
 name = "fleetshell-client"
-version = "0.12.5"
+version = "0.13.0"
 description = "FleetShell desktop client"
 authors = []
 license = ""

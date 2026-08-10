@@ -108,6 +108,11 @@ struct TunnelResponse {
     /// Loopback IP of the slot assigned to this tunnel (e.g. `"127.0.0.2"`).
     /// The portal passes this back to POST /api/launch when opening a native app.
     bind_ip: String,
+    /// Local-port reassignments that occurred because the requested port was
+    /// already in use on this machine.  Each entry is
+    /// `{ requested, actual, reason }`.  The portal resolves native launch
+    /// ports through this so an RDP/VNC "Open" button targets the actual port.
+    remaps:  Vec<serde_json::Value>,
 }
 
 /// Request body for `POST /api/launch`.
@@ -241,6 +246,49 @@ fn guac_ws_port(service_port: u16) -> u16 {
         service_port
     }
 }
+/// Outcome of binding a slot's local TCP listener.
+struct SlotBind {
+    listener: tokio::net::TcpListener,
+    /// Port actually bound.  Equals the requested port on the happy path; an
+    /// OS-assigned ephemeral port when the requested one was already taken.
+    actual:   u16,
+    /// `Some` when a fallback occurred - carries a UI-facing remap notice
+    /// (`{ requested, actual, reason }`).
+    remap:    Option<serde_json::Value>,
+}
+
+/// Bind a local listener on `slot_ip:requested`, falling back to an OS-assigned
+/// ephemeral port when the requested port is already in use.
+///
+/// On Windows a third-party socket bound to the wildcard address
+/// `0.0.0.0:requested` shadows the whole port number across every local address,
+/// so binding our loopback slot IP fails with `AddrInUse` even though nothing is
+/// explicitly listening on the slot address.  The target service port travels to
+/// the gateway inside the signed JWT + handshake JSON, never via this local
+/// listen port, so any local port works on the wire.  We therefore surface the
+/// remap to the user instead of failing the whole request.
+async fn bind_slot_port(slot_ip: &str, requested: u16) -> std::io::Result<SlotBind> {
+    match tokio::net::TcpListener::bind((slot_ip, requested)).await {
+        Ok(listener) => Ok(SlotBind { listener, actual: requested, remap: None }),
+        Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
+            let listener = tokio::net::TcpListener::bind((slot_ip, 0)).await?;
+            let actual   = listener.local_addr()?.port();
+            log::warn!(
+                "Local port {}:{} already in use (another process holds it, \
+                 e.g. 0.0.0.0:{}) - remapped to ephemeral {}:{}",
+                slot_ip, requested, requested, slot_ip, actual,
+            );
+            let remap = serde_json::json!({
+                "requested": requested,
+                "actual":    actual,
+                "reason":    format!("port {} already in use on this machine", requested),
+            });
+            Ok(SlotBind { listener, actual, remap: Some(remap) })
+        }
+        Err(e) => Err(e),
+    }
+}
+
 type HandlerResult = Result<
     (StatusCode, Json<TunnelResponse>),
     (StatusCode, Json<serde_json::Value>),
@@ -300,6 +348,7 @@ async fn tunnel_handler(
 
     let mut all_ports: Vec<u16>   = Vec::new();
     let mut all_urls:  Vec<String> = Vec::new();
+    let mut all_remaps: Vec<serde_json::Value> = Vec::new(); // requested->actual reassignments
     let mut bind_ip = String::new(); // used by POST /api/launch for native apps
 
     // ── Guacamole rows (first one; multiple guac rows not yet supported) ──
@@ -323,8 +372,8 @@ async fn tunnel_handler(
         let last_active  = slot.last_active.clone();
         let task_handles = slot.task_handles.clone();
 
-        let listener = match tokio::net::TcpListener::bind((slot_ip.as_str(), ws_port)).await {
-            Ok(l)  => l,
+        let bound = match bind_slot_port(&slot_ip, ws_port).await {
+            Ok(b)  => b,
             Err(e) => {
                 let msg = format!("Failed to bind {}:{}: {}", slot_ip, ws_port, e);
                 log::error!("{}", msg);
@@ -336,6 +385,10 @@ async fn tunnel_handler(
                 ));
             }
         };
+        let listener = bound.listener;
+        let ws_port  = bound.actual; // shadow with the port actually bound
+        let remaps: Vec<serde_json::Value> = bound.remap.into_iter().collect();
+        all_remaps.extend(remaps.iter().cloned());
 
         let params = std::sync::Arc::new(crate::guac_proxy::GuacSessionParams {
             target:      req.target.clone(),
@@ -364,6 +417,7 @@ async fn tunnel_handler(
 
         state.app.emit("slot-update", serde_json::json!({
             "idx": slot_idx, "status": "active", "progress": 1.0,
+            "remaps": remaps,
         })).ok();
 
         tokio::spawn(crate::slot::run_idle_monitor(
@@ -376,7 +430,7 @@ async fn tunnel_handler(
             crate::tunnel::dns_host(&slot_ip), ws_port,
         );
         log::info!(
-            "Guacamole session created — slot {} ({}) port {} (ws:{}) — {}",
+            "Guacamole session created - slot {} ({}) port {} (ws:{}) - {}",
             slot_idx, slot_ip, port, ws_port, ws_url,
         );
 
@@ -409,8 +463,8 @@ async fn tunnel_handler(
         let last_active  = slot.last_active.clone();
         let task_handles = slot.task_handles.clone();
 
-        let listener = match tokio::net::TcpListener::bind((slot_ip.as_str(), ws_port)).await {
-            Ok(l)  => l,
+        let bound = match bind_slot_port(&slot_ip, ws_port).await {
+            Ok(b)  => b,
             Err(e) => {
                 let msg = format!("Failed to bind {}:{}: {}", slot_ip, ws_port, e);
                 log::error!("{}", msg);
@@ -422,6 +476,10 @@ async fn tunnel_handler(
                 ));
             }
         };
+        let listener = bound.listener;
+        let ws_port  = bound.actual; // shadow with the port actually bound
+        let remaps: Vec<serde_json::Value> = bound.remap.into_iter().collect();
+        all_remaps.extend(remaps.iter().cloned());
 
         let params = std::sync::Arc::new(crate::ssh_proxy::SshProxyParams {
             target:          req.target.clone(),
@@ -446,6 +504,7 @@ async fn tunnel_handler(
 
         state.app.emit("slot-update", serde_json::json!({
             "idx": slot_idx, "status": "active", "progress": 1.0,
+            "remaps": remaps,
         })).ok();
 
         tokio::spawn(crate::slot::run_idle_monitor(
@@ -458,7 +517,7 @@ async fn tunnel_handler(
             crate::tunnel::dns_host(&slot_ip), ws_port,
         );
         log::info!(
-            "SSH direct session created — slot {} ({}) port {} (ws:{}) — {}",
+            "SSH direct session created - slot {} ({}) port {} (ws:{}) - {}",
             slot_idx, slot_ip, port, ws_port, ws_url,
         );
 
@@ -485,14 +544,23 @@ async fn tunnel_handler(
         log::info!("Tunnel request: assigned slot {} ({})", slot.idx + 2, slot.ip);
 
         // Phase 1: pre-bind ALL listeners before spawning any tasks.
-        let mut listeners: Vec<(u16, PortRow, tokio::net::TcpListener)> =
+        // Each entry is (local_port, target_port, row, listener).  The two ports
+        // differ only when the requested port was already in use locally and we
+        // fell back to an ephemeral one; only target_port reaches the gateway.
+        let mut listeners: Vec<(u16, u16, PortRow, tokio::net::TcpListener)> =
             Vec::with_capacity(regular_flat.len());
+        let mut remaps: Vec<serde_json::Value> = Vec::new();
 
         for (port, row) in regular_flat {
-            match tokio::net::TcpListener::bind((slot.ip.as_str(), port)).await {
-                Ok(l) => {
-                    log::info!("port {} app={} — bound on {}", port, row.application, slot.ip);
-                    listeners.push((port, row, l));
+            match bind_slot_port(&slot.ip, port).await {
+                Ok(bound) => {
+                    let local_port = bound.actual;
+                    if let Some(r) = bound.remap { remaps.push(r); }
+                    log::info!(
+                        "target port {} app={} - bound on {}:{}",
+                        port, row.application, slot.ip, local_port,
+                    );
+                    listeners.push((local_port, port, row, bound.listener));
                 }
                 Err(e) => {
                     let msg = format!("Failed to bind {}:{}: {}", slot.ip, port, e);
@@ -508,16 +576,19 @@ async fn tunnel_handler(
         }
 
         // Phase 2: collect browser URLs (native apps are launched on demand).
-        for (port, row, _) in &listeners {
+        // The browser / native app connects to the LOCAL port, so URLs and the
+        // returned ports use local_port, not the target port.
+        for (local_port, _target_port, row, _) in &listeners {
             if let Some(url) = crate::tunnel::get_tunnel_url(
-                    &row.application, *port, &slot.ip,
+                    &row.application, *local_port, &slot.ip,
                     row.path.as_deref().unwrap_or(""),
                 ) {
                 all_urls.push(url);
             }
         }
 
-        all_ports.extend(listeners.iter().map(|(p, _, _)| *p));
+        all_ports.extend(listeners.iter().map(|(local_port, _, _, _)| *local_port));
+        all_remaps.extend(remaps.iter().cloned());
         bind_ip = slot.ip.clone();
 
         // Phase 3: servicekey notification.
@@ -534,20 +605,23 @@ async fn tunnel_handler(
             "idx":      slot.idx,
             "status":   "active",
             "progress": 1.0_f64,
+            "remaps":   remaps,
         })).ok();
 
         // Phase 5: spawn one accept-loop task per port.
         let task_handles = slot.task_handles.clone();
         let last_active  = slot.last_active.clone();
 
-        for (port, row, listener) in listeners {
+        for (local_port, target_port, row, listener) in listeners {
             let port_cfg  = crate::tunnel::PortConfig::from_request(&req, &row);
             let state_c   = state.clone();
             let last_c    = last_active.clone();
             let handles_c = task_handles.clone();
 
             let accept_handle = tokio::spawn(
-                crate::tunnel::run_accept_loop(listener, port, port_cfg, state_c, last_c, handles_c),
+                crate::tunnel::run_accept_loop(
+                    listener, local_port, target_port, port_cfg, state_c, last_c, handles_c,
+                ),
             );
             task_handles.lock().unwrap().push(accept_handle);
         }
@@ -566,6 +640,7 @@ async fn tunnel_handler(
             ports:   all_ports,
             urls:    all_urls,
             bind_ip,
+            remaps:  all_remaps,
         }),
     ))
 }

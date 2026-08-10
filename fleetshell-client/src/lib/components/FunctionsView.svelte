@@ -16,11 +16,18 @@
 
   type SlotStatus = 'free' | 'active' | 'countdown' | 'idle';
 
+  interface Remap {
+    requested: number;   // port the user asked for (target/service port)
+    actual:    number;   // ephemeral port actually bound locally
+    reason:    string;
+  }
+
   interface Slot {
     id:       number;      // 1–16  →  127.0.0.{id + 1}
     status:   SlotStatus;
     progress: number;      // 0..1  (1 = full pie, 0 = empty)
     label:    string;      // target / service description when occupied
+    remaps:   Remap[];     // non-empty when a local port had to be reassigned
   }
 
   let slots = $state<Slot[]>(
@@ -29,6 +36,7 @@
       status:   'free' as SlotStatus,
       progress: 1,
       label:    '',
+      remaps:   [] as Remap[],
     }))
   );
 
@@ -37,12 +45,21 @@
   let unlisten: (() => void) | null = null;
 
   onMount(async () => {
-    unlisten = await listen<{ idx: number; status: string; progress: number }>(
+    unlisten = await listen<{ idx: number; status: string; progress: number; remaps?: Remap[] }>(
       'slot-update',
       ({ payload }) => {
+        const status = payload.status as SlotStatus;
         slots = slots.map(s =>
           s.id === payload.idx + 1
-            ? { ...s, status: payload.status as SlotStatus, progress: payload.progress }
+            ? {
+                ...s,
+                status,
+                progress: payload.progress,
+                // A fresh event carries the current remaps; on release, clear them.
+                remaps: status === 'free'
+                  ? []
+                  : (payload.remaps ?? s.remaps),
+              }
             : s
         );
       }
@@ -100,8 +117,14 @@
 
   function slotTitle(slot: Slot): string {
     const base = slotIp(slot);
-    if (slot.status === 'free' || slot.status === 'idle') return base;
-    return slot.label ? `${base} — ${slot.label}` : base;
+    const head = (slot.status === 'free' || slot.status === 'idle')
+      ? base
+      : (slot.label ? `${base} — ${slot.label}` : base);
+    if (slot.remaps.length === 0) return head;
+    const lines = slot.remaps.map(
+      r => `  target :${r.requested}  ->  local :${r.actual}  (remapped)\n  reason: ${r.reason}`,
+    );
+    return `${head}\n${lines.join('\n')}`;
   }
 
   // ── Service key clipboard ─────────────────────────────────────────────────
@@ -135,6 +158,11 @@
           <span class="slot-num" class:slot-num-live={live}>
             {slot.id + 1}
           </span>
+
+          <!-- Port-remap marker: shown when a local port had to be reassigned -->
+          {#if slot.remaps.length > 0}
+            <span class="slot-remap" aria-label="port remapped">⇄</span>
+          {/if}
 
           <!-- Pie disc -->
           <svg class="slot-svg" viewBox="0 0 44 44" aria-hidden="true">
@@ -231,6 +259,16 @@
   .slot-num-live {
     color: var(--fg1);
     font-weight: 600;
+  }
+
+  /* Port-remap marker — sits between the number and the disc when the local
+     listen port had to be reassigned to an ephemeral one. */
+  .slot-remap {
+    color: var(--orange);
+    font-size: 0.85em;
+    line-height: 1;
+    flex-shrink: 0;
+    cursor: help;
   }
 
   /* The pie SVG — rendered at 28×28; viewBox stays 44×44 */

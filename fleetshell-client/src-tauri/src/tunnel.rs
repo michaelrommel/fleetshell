@@ -335,24 +335,30 @@ impl ServerCertVerifier for SkipServerVerification {
 /// `handle_connection` task for every incoming local TCP connection.
 pub async fn run_accept_loop(
     listener:     tokio::net::TcpListener,
-    port:         u16,
+    local_port:   u16,
+    target_port:  u16,
     cfg:          PortConfig,
     state:        ApiState,
     last_active:  Arc<AtomicU64>,
     task_handles: Arc<Mutex<Vec<tokio::task::JoinHandle<()>>>>,
 ) {
-    log::info!("port {} — tunnel listener ready", port);
+    // `local_port` is the port this loopback listener is bound on; it may differ
+    // from `target_port` when the requested port was already in use locally and
+    // we fell back to an ephemeral one.  Only `target_port` reaches the gateway
+    // (via the handshake payload); `local_port` is purely the browser/app
+    // rendezvous address.
+    log::info!("local port {} (target {}) - tunnel listener ready", local_port, target_port);
 
     loop {
         match listener.accept().await {
             Ok((stream, peer)) => {
-                log::debug!("port {} — accepted connection from {}", port, peer);
+                log::debug!("local port {} - accepted connection from {}", local_port, peer);
                 let cfg_c   = cfg.clone();
                 let state_c = state.clone();
                 let last_c  = last_active.clone();
 
                 let handle = tokio::spawn(
-                    handle_connection(stream, port, cfg_c, state_c, last_c),
+                    handle_connection(stream, target_port, cfg_c, state_c, last_c),
                 );
 
                 // Store the handle; prune finished entries first to prevent
@@ -363,7 +369,7 @@ pub async fn run_accept_loop(
                 }
             }
             Err(e) => {
-                log::error!("port {} — accept error: {}", port, e);
+                log::error!("local port {} - accept error: {}", local_port, e);
                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;
             }
         }
