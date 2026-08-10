@@ -414,7 +414,10 @@ Request: `target`, `token`, `gateway`, `servicekey?`, `username?`, `password?`,
 
 Each `port_rows` entry: `ports`, `application`, `guac?`, `e2ecrypt?`, `sni?`, `path?`.
 
-Response 200: `{ status, ports[], urls[], bind_ip }`.
+Response 200: `{ status, ports[], urls[], bind_ip, remaps[] }`.
+`remaps[]` lists any local-port reassignments as `{ requested, actual, reason }`
+(see "Local vs target port decoupling" above); the portal resolves native
+RDP/VNC launch ports through it so an "Open" button targets the actual port.
 
 #### Gateway connection abstraction (`tunnel.rs`)
 
@@ -449,6 +452,21 @@ parking.
 16 loopback slots: `127.0.0.2` (slot 0) … `127.0.0.17` (slot 15), each with a
 DNS hostname `127-0-0-{N}.client.fleetshell.com` covered by the wildcard cert.
 `SlotManager` handles claim / release and idle monitoring.
+
+**Local vs target port decoupling.** The local listen port is only a
+browser/native-app rendezvous; the *target* service port always travels to the
+gateway inside the signed JWT + handshake JSON, never via the local port.
+`bind_slot_port()` (server.rs) binds `slot_ip:<requested>` and, on
+`AddrInUse`, falls back to an OS-assigned ephemeral port (`bind(slot_ip:0)` +
+`local_addr()`).  This works around a Windows limitation: a third-party socket
+on the wildcard `0.0.0.0:<port>` shadows that port number across every local
+address, so the slot bind fails even though nothing listens on the slot IP.
+When a fallback happens the actual port is used everywhere it is surfaced
+(returned `ports[]`, browser/`wss` URLs, generated `.rdp`/`.vnc` files) and a
+remap notice `{ requested, actual, reason }` is emitted in the `slot-update`
+Tauri event; FunctionsView shows a `⇄` marker + tooltip on the slot.  For
+regular TCP rows the local and target ports are threaded separately through
+`run_accept_loop(listener, local_port, target_port, …)`.
 
 ### Per-application behaviour
 
