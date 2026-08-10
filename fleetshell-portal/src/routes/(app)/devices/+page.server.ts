@@ -1,21 +1,11 @@
 import type { PageServerLoad } from './$types';
-import { getRedisClient }      from '$lib/server/redis';
 
+/**
+ * The Devices page is now a client-driven search/view/edit flow (see
+ * +page.svelte).  The only server responsibility is to pass through an
+ * optional initial query (?q= or ?ip=) so deep-links auto-search on load.
+ */
 export const load: PageServerLoad = async ({ url }) => {
-	const ip = url.searchParams.get('ip')?.trim() || null;
-
-	if (!ip) {
-		return { ip: null, result: null, error: null };
-	}
-
-	try {
-		const redis  = await getRedisClient();
-		const hash   = await redis.hGetAll(`systems:by-ip:${ip}`);
-		const result = Object.keys(hash).length > 0 ? hash : null;
-		return { ip, result, error: null };
-	} catch (e) {
-		const error = e instanceof Error ? e.message : String(e);
-		console.error('[devices] Redis query failed:', error);
-		return { ip, result: null, error };
-	}
+	const q = url.searchParams.get('q') ?? url.searchParams.get('ip') ?? '';
+	return { initialQuery: q.trim() };
 };
