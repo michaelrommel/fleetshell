@@ -212,6 +212,11 @@
 	function actualPort(requested: number): number {
 		return connectRemaps.find(r => r.requested === requested)?.actual ?? requested;
 	}
+	// Inverse of actualPort: map an actual (possibly remapped) port back to the
+	// port the user requested, so it can be matched against a row's `ports` spec.
+	function requestedPort(actual: number): number {
+		return connectRemaps.find(r => r.actual === actual)?.requested ?? actual;
+	}
 	let probeState = $state<'idle' | 'checking' | 'unreachable'>('idle');
 	let probeMsg   = $state('');
 	let probeBtn   = $state<ResultButton | null>(null);
@@ -261,7 +266,12 @@
 
 	interface ResultButton {
 		label: string; kind: 'url' | 'guac' | 'launch';
-		url: string; app: string; port: number; record?: boolean;
+		url: string; app: string;
+		// `port` is the LOCAL loopback port (what mstsc/vncviewer connects to and
+		// what the URL embeds); it may be a remapped ephemeral port.
+		// `targetPort` is the ORIGINAL device/service port - the only port the
+		// gateway ever sees (probe + signed JWT).  Never send `port` to the gateway.
+		port: number; targetPort: number; record?: boolean;
 	}
 	function firstPort(spec: string): number {
 		const part = spec.split(',')[0].trim();
@@ -269,7 +279,16 @@
 		return isNaN(n) ? 0 : n;
 	}
 	function portFromUrl(url: string): number {
-		try { return parseInt(new URL(url).port) || 0; } catch { return 0; }
+		try {
+			const u = new URL(url);
+			if (u.port) return parseInt(u.port);
+			// The URL parser strips the scheme's DEFAULT port (443 for https,
+			// 80 for http), so `u.port` is empty for e.g. `https://host:443/`.
+			// Infer it from the protocol so row matching still works.
+			if (u.protocol === 'https:') return 443;
+			if (u.protocol === 'http:')  return 80;
+			return 0;
+		} catch { return 0; }
 	}
 	function rowForPort(port: number, rows: PortRow[]): PortRow | undefined {
 		return rows.find(r => {
@@ -294,20 +313,29 @@
 				if (isSshWs) {
 					const row = connectedRows.find(r => r.application === 'ssh' && !r.guac);
 					if (!row?.selected) continue;
-					buttons.push({ label: 'Open SSH Session', kind: 'guac', url, app: 'ssh', port: firstPort(row.ports) });
+					const tp = firstPort(row.ports);
+					buttons.push({ label: 'Open SSH Session', kind: 'guac', url, app: 'ssh', port: tp, targetPort: tp });
 				} else {
 					const row = connectedRows.find(r => r.guac && guacApplicable(r));
 					if (!row?.selected) continue;
+					const tp = firstPort(row.ports);
 					buttons.push({
 						label: `Open ${row.application.toUpperCase()} Session`,
-						kind: 'guac', url, app: row.application, port: firstPort(row.ports), record: row.record,
+						kind: 'guac', url, app: row.application, port: tp, targetPort: tp, record: row.record,
 					});
 				}
 			} else {
 				const port = portFromUrl(url);
-				const row  = rowForPort(port, connectedRows);
+				// The URL carries the ACTUAL (possibly remapped) local port; map it
+				// back to the requested port so we can find the originating row,
+				// whose `ports` spec still lists the requested port.
+				const reqPort = requestedPort(port);
+				const row  = rowForPort(reqPort, connectedRows);
 				if (!row?.selected) continue;
-				buttons.push({ label: `${row.application.toUpperCase()} :${port}`, kind: 'url', url, app: row.application, port });
+				const label = port !== reqPort
+					? `${row.application.toUpperCase()} :${port} (was :${reqPort})`
+					: `${row.application.toUpperCase()} :${port}`;
+				buttons.push({ label, kind: 'url', url, app: row.application, port, targetPort: reqPort });
 			}
 		}
 
@@ -323,7 +351,7 @@
 			const label = remapped
 				? `Open ${row.application.toUpperCase()} :${port} (was :${reqPort})`
 				: `Open ${row.application.toUpperCase()} :${port}`;
-			buttons.push({ label, kind: 'launch', url: '', app: row.application, port });
+			buttons.push({ label, kind: 'launch', url: '', app: row.application, port, targetPort: reqPort });
 		}
 		return buttons;
 	})());
@@ -351,7 +379,10 @@
 		try {
 			const res = await fetch(`${CLIENT_API_BASE}/api/probe`, {
 				method: 'POST', headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ target, port: btn.port, gateway, token: connectedToken }),
+				// Probe the ORIGINAL device port - the gateway authorises against the
+				// signed JWT, which only ever covers the target port, never the local
+				// (possibly remapped) loopback port.
+				body: JSON.stringify({ target, port: btn.targetPort, gateway, token: connectedToken }),
 				signal: AbortSignal.timeout(7_000),
 			});
 			if (!res.ok) { await executeItem(btn); probeState = 'idle'; probeBtn = null; return; }
