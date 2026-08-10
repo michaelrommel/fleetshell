@@ -56,8 +56,29 @@ inotify     = "0.10"
 # OpenDAL: S3 upload after recording processing.  Same version / features as
 # aeroftp.  Credentials auto-discovered from ECS task role via
 # AWS_CONTAINER_CREDENTIALS_RELATIVE_URI — no explicit config needed.
+#
+# NOTE: we deliberately do NOT enable opendal's `reqwest-rustls-tls` feature.
+# That feature maps to `reqwest/rustls`, which hard-enables reqwest's
+# `__rustls-aws-lc-rs` variant and therefore turns on rustls's `aws_lc_rs`
+# provider feature.  With our `rustls/ring` also enabled, rustls would then see
+# TWO provider features and panic at `ClientConfig::builder()`
+# ("Could not automatically determine the process-level CryptoProvider").
+# Instead we drive reqwest's TLS ourselves via the direct dependency below
+# using `rustls-no-provider`, which enables rustls WITHOUT selecting a provider
+# feature — leaving `ring` (from our rustls/tokio-rustls deps) as the single
+# provider, auto-resolved by the builder.  Feature-flags only; no runtime
+# CryptoProvider::install_default needed.
 opendal = { version = "0.56.0", default-features = false, features = [
-    "services-s3", "executors-tokio", "layers-retry", "reqwest-rustls-tls",
+    "services-s3", "executors-tokio", "layers-retry",
+] }
+
+# reqwest is a transitive dependency of opendal (its S3 HTTP client).  We pin it
+# here only to control TLS feature selection: `rustls-no-provider` gives a rustls
+# backend with NO built-in crypto provider, so the ring provider enabled by our
+# `rustls`/`tokio-rustls` deps is the only one compiled in.  `default-features =
+# false` keeps aws-lc-rs (reqwest's default `rustls`/`default-tls`) out.
+reqwest = { version = "0.13", default-features = false, features = [
+    "rustls-no-provider", "stream",
 ] }
 
 # ZIP archive (one bundle per session uploaded alongside the other files).
