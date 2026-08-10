@@ -42,7 +42,7 @@ RUN npm ci --omit=dev --ignore-scripts
 
 # The compiled SvelteKit bundle.
 COPY --from=builder --chown=fleetshell:fleetshell /build/build ./build
-COPY ./dist/fleetshell-client_0.12.5_x64-setup.exe .
+COPY ./dist/fleetshell-client_0.13.0_x64-setup.exe .
 USER fleetshell
 
 # ── Runtime configuration ──────────────────────────────────────────────────────
@@ -72,7 +72,7 @@ USER fleetshell
 #
 # The file in static/ is served during development; point to a stable directory
 # outside the build folder in production so binaries survive redeployments.
-# DOWNLOAD_FLEETSHELL_CLIENT=/fleetshell-portal/fleetshell-client_0.12.5_x64-setup.exe
+# DOWNLOAD_FLEETSHELL_CLIENT=/fleetshell-portal/fleetshell-client_0.13.0_x64-setup.exe
 # DOWNLOAD_VNC_VIEWER=
 # DOWNLOAD_TEAMVIEWER_CLIENT=
 # DOWNLOAD_SSH_TERMINAL=
@@ -97,8 +97,8 @@ USER fleetshell
 # BODY_SIZE_LIMIT — Optional.  adapter-node default is 512 kB.
 
 ENV PORT=3000 \
-	DOWNLOAD_FLEETSHELL_CLIENT=/fleetshell-portal/fleetshell-client_0.12.5_x64-setup.exe \
-	PUBLIC_GITHUB_RELEASE_URL=https://github.com/michaelrommel/fleetshell/releases/download/v0.12.5-beta/fleetshell-client_0.12.5_x64-setup.exe \
+	DOWNLOAD_FLEETSHELL_CLIENT=/fleetshell-portal/fleetshell-client_0.13.0_x64-setup.exe \
+	PUBLIC_GITHUB_RELEASE_URL=https://github.com/michaelrommel/fleetshell/releases/download/v0.13.0-beta/fleetshell-client_0.13.0_x64-setup.exe \
     NODE_ENV=production
 
 EXPOSE 3000

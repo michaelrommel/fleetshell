@@ -205,6 +205,13 @@
 	let connectedToken = $state<string | null>(null);
 	let connectedBindIp = $state<string>('');
 	let connectedRows  = $state<PortRow[]>([]);
+	// Local-port reassignments reported by the client: { requested, actual, reason }.
+	interface PortRemap { requested: number; actual: number; reason: string; }
+	let connectRemaps = $state<PortRemap[]>([]);
+	// Resolve the actual local port for a requested port, honouring any remap.
+	function actualPort(requested: number): number {
+		return connectRemaps.find(r => r.requested === requested)?.actual ?? requested;
+	}
 	let probeState = $state<'idle' | 'checking' | 'unreachable'>('idle');
 	let probeMsg   = $state('');
 	let probeBtn   = $state<ResultButton | null>(null);
@@ -309,9 +316,14 @@
 			if (!row.selected) continue;
 			if (row.guac || !guacApplicable(row)) continue;
 			if (row.application === 'ssh' && hasSshWs) continue;
-			const port = firstPort(row.ports);
-			if (!port) continue;
-			buttons.push({ label: `Open ${row.application.toUpperCase()} :${port}`, kind: 'launch', url: '', app: row.application, port });
+			const reqPort = firstPort(row.ports);
+			if (!reqPort) continue;
+			const port = actualPort(reqPort);
+			const remapped = port !== reqPort;
+			const label = remapped
+				? `Open ${row.application.toUpperCase()} :${port} (was :${reqPort})`
+				: `Open ${row.application.toUpperCase()} :${port}`;
+			buttons.push({ label, kind: 'launch', url: '', app: row.application, port });
 		}
 		return buttons;
 	})());
@@ -399,6 +411,7 @@
 			connectedBindIp = body.bind_ip ?? '';
 			connectedRows   = rows.map(r => ({ ...r }));
 			connectedToken  = token;
+			connectRemaps   = Array.isArray(body.remaps) ? body.remaps : [];
 			probeState      = 'idle';
 			const portList  = (body.ports ?? []).join(', ');
 			connectMsg = connectedBindIp
@@ -414,6 +427,7 @@
 	function resetConnect(): void {
 		connectState = 'idle'; connectMsg = ''; connectUrls = [];
 		connectedToken = null; connectedBindIp = ''; connectedRows = [];
+		connectRemaps = [];
 		probeState = 'idle'; probeMsg = ''; probeBtn = null;
 	}
 
@@ -448,6 +462,7 @@
 					connectUrls    = Array.isArray(body.urls) ? body.urls : [];
 					connectedRows  = rows.map(r => ({ ...r }));
 					connectedBindIp = body.bind_ip ?? '';
+					connectRemaps  = Array.isArray(body.remaps) ? body.remaps : [];
 					connectMsg     = `Gateway tunnel open on port(s): ${(body.ports ?? []).join(', ')}`;
 					connectState   = 'done';
 					connectedToken = token;
