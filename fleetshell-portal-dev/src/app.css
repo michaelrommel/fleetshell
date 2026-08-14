@@ -1,0 +1,66 @@
+/* src/app.css -- design tokens + base.
+ *
+ * Every component uses var(--token), never a raw hex, so switching themes is
+ * just flipping <html data-theme="...">. Default (:root) = Nucleus (Siemens
+ * Healthineers Remote Service look). [data-theme="gruvbox"] overrides for the
+ * alternative. A light Nucleus variant can be added later as its own block.
+ */
+
+:root,
+[data-theme='nucleus'] {
+	--bg-header: #0d0d0d;
+	--bg-app: #1c1c1c;
+	--surface: #242424;
+	--surface-2: #2f2f2f;
+	--surface-active: #313131;
+	--border: rgba(255, 255, 255, 0.09);
+	--divider: rgba(255, 255, 255, 0.06);
+	--text: #efefef;
+	--text-muted: #a0a0a0;
+	--text-subtle: #7d7d7d;
+	--accent: #ec6602; /* Siemens Healthineers orange */
+	--accent-hover: #ff7a1a;
+	--accent-press: #cc5600;
+	--on-accent: #ffffff;
+	--success: #43ac4a;
+	--danger: #e5484d;
+	--focus: var(--accent);
+	--radius: 6px;
+	--font-ui: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+}
+
+[data-theme='gruvbox'] {
+	--bg-header: #1d2021;
+	--bg-app: #282828;
+	--surface: #32302f;
+	--surface-2: #3c3836;
+	--surface-active: #45403d;
+	--border: #504945;
+	--divider: #3c3836;
+	--text: #ebdbb2;
+	--text-muted: #a89984;
+	--text-subtle: #928374;
+	--accent: #fe8019;
+	--accent-hover: #fabd2f;
+	--accent-press: #d65d0e;
+	--on-accent: #1d2021;
+	--success: #b8bb26;
+	--danger: #fb4934;
+}
+
+* { box-sizing: border-box; }
+
+html,
+body {
+	margin: 0;
+	background: var(--bg-app);
+	color: var(--text);
+	font-family: var(--font-ui);
+}
+
+a { color: var(--accent); }
+
+:focus-visible {
+	outline: 2px solid var(--focus);
+	outline-offset: 2px;
+}
