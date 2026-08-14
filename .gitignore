@@ -21,3 +21,11 @@ fleetshell-client/src-tauri/gen/
 
 # Docs
 fleetshell-gateway/docs/
+
+# bulk import (never commit real/anonymized data or run maps)
+infrastructure/import/staging/
+infrastructure/import/copy/
+infrastructure/import/*.map.json
+infrastructure/import/.venv/
+infrastructure/import/__pycache__/
+infrastructure/import/old_database/

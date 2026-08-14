@@ -1,0 +1,18 @@
+SET
+                                                          QUERY PLAN                                                           
+-------------------------------------------------------------------------------------------------------------------------------
+ Function Scan on authz_list_devices  (cost=117.20..127.20 rows=1000 width=328) (actual time=562.280..562.288 rows=50 loops=1)
+   Buffers: shared hit=280802
+   InitPlan 1 (returns $0)
+     ->  Limit  (cost=0.00..116.95 rows=1 width=16) (actual time=0.011..0.011 rows=1 loops=1)
+           Buffers: shared hit=1
+           ->  Seq Scan on principal_group  (cost=0.00..116.95 rows=1 width=16) (actual time=0.010..0.010 rows=1 loops=1)
+                 Filter: (label = 'RSC'::text)
+                 Rows Removed by Filter: 2
+                 Buffers: shared hit=1
+ Planning:
+   Buffers: shared hit=91
+ Planning Time: 2.959 ms
+ Execution Time: 562.343 ms
+(13 rows)
+

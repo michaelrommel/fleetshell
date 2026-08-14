@@ -1,0 +1,360 @@
+Timing is on.
+=== widest groups by grant count ===
+     label      | grants 
+----------------+--------
+ user:334917870 |   1861
+ Helpdesk RoW   |   1699
+ HQ_SRS         |   1051
+ user:2215025   |   1002
+ Helpdesk USA   |    974
+ user:1245345   |    945
+ user:1027657   |    784
+ HQ_SLM         |    752
+ user:317144    |    729
+ user:10512     |    717
+(10 rows)
+
+Time: 183.238 ms
+=== pick one broad group ===
+Time: 26.049 ms
+=== effective view scope count for that group ===
+ count 
+-------
+   248
+(1 row)
+
+Time: 605.395 ms
+=== LIST first page (keyset) -- plan + timing ===
+                                                                                                                                                                                                                 QUERY PLAN                                                                                                                                                                                                                 
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=62661.69..62661.81 rows=50 width=234) (actual time=947.345..947.375 rows=50 loops=1)
+   Buffers: shared hit=91604 read=361, temp read=3581 written=4313
+   I/O Timings: shared read=274.314, temp read=3.999 write=19.017
+   ->  Sort  (cost=62661.69..63141.88 rows=192076 width=234) (actual time=947.344..947.369 rows=50 loops=1)
+         Sort Key: d.updated_at DESC, d.id DESC
+         Sort Method: top-N heapsort  Memory: 46kB
+         Buffers: shared hit=91604 read=361, temp read=3581 written=4313
+         I/O Timings: shared read=274.314, temp read=3.999 write=19.017
+         ->  Hash Join  (cost=35441.85..56281.06 rows=192076 width=234) (actual time=761.385..914.653 rows=192071 loops=1)
+               Hash Cond: (d.id = d_1.id)
+               Buffers: shared hit=91601 read=361, temp read=3581 written=4313
+               I/O Timings: shared read=274.314, temp read=3.999 write=19.017
+               ->  Seq Scan on device d  (cost=0.00..7004.53 rows=192253 width=234) (actual time=0.011..29.328 rows=192253 loops=1)
+                     Buffers: shared hit=5082
+               ->  Hash  (cost=32102.90..32102.90 rows=192076 width=16) (actual time=760.696..760.717 rows=192071 loops=1)
+                     Buckets: 262144  Batches: 2  Memory Usage: 6537kB
+                     Buffers: shared hit=86519 read=361, temp read=774 written=1929
+                     I/O Timings: shared read=274.314, temp read=0.953 write=9.168
+                     ->  HashAggregate  (cost=28306.40..32102.90 rows=192076 width=16) (actual time=673.698..730.654 rows=192071 loops=1)
+                           Group Key: d_1.id
+                           Planned Partitions: 4  Batches: 5  Memory Usage: 10289kB  Disk Usage: 7496kB
+                           Buffers: shared hit=86519 read=361, temp read=774 written=1506
+                           I/O Timings: shared read=274.314, temp read=0.953 write=7.275
+                           CTE es
+                             ->  GroupAggregate  (cost=180.90..212.39 rows=3 width=122) (actual time=26.928..130.229 rows=248 loops=1)
+                                   Group Key: g.scope_id, s.kind
+                                   Buffers: shared hit=5081 read=83
+                                   I/O Timings: shared read=103.171
+                                   ->  Nested Loop Left Join  (cost=180.90..212.15 rows=6 width=72) (actual time=25.712..129.181 rows=248 loops=1)
+                                         Buffers: shared hit=5081 read=83
+                                         I/O Timings: shared read=103.171
+                                         ->  Unique  (cost=176.59..176.62 rows=3 width=26) (actual time=21.949..22.241 rows=248 loops=1)
+                                               Buffers: shared hit=4420
+                                               ->  Sort  (cost=176.59..176.60 rows=3 width=26) (actual time=21.947..22.080 rows=248 loops=1)
+                                                     Sort Key: g.scope_id, s.kind
+                                                     Sort Method: quicksort  Memory: 38kB
+                                                     Buffers: shared hit=4420
+                                                     ->  Nested Loop  (cost=87.84..176.57 rows=3 width=26) (actual time=0.156..21.888 rows=248 loops=1)
+                                                           Buffers: shared hit=4420
+                                                           ->  Hash Join  (cost=87.56..175.64 rows=3 width=16) (actual time=0.139..21.310 rows=248 loops=1)
+                                                                 Hash Cond: (g.group_id = gg.group_id)
+                                                                 Buffers: shared hit=3676
+                                                                 ->  Nested Loop  (cost=8.47..95.44 rows=290 width=32) (actual time=0.075..16.999 rows=62557 loops=1)
+                                                                       Buffers: shared hit=3667
+                                                                       ->  Hash Join  (cost=8.18..10.72 rows=1 width=16) (actual time=0.035..0.073 rows=37 loops=1)
+                                                                             Hash Cond: (rp.privilege_id = p.id)
+                                                                             Buffers: shared hit=3
+                                                                             ->  Seq Scan on authz_role_privilege rp  (cost=0.00..2.22 rows=122 width=32) (actual time=0.008..0.021 rows=128 loops=1)
+                                                                                   Buffers: shared hit=1
+                                                                             ->  Hash  (cost=8.17..8.17 rows=1 width=16) (actual time=0.016..0.017 rows=1 loops=1)
+                                                                                   Buckets: 1024  Batches: 1  Memory Usage: 9kB
+                                                                                   Buffers: shared hit=2
+                                                                                   ->  Index Scan using authz_privilege_resource_type_verb_key on authz_privilege p  (cost=0.15..8.17 rows=1 width=16) (actual time=0.011..0.012 rows=1 loops=1)
+                                                                                         Index Cond: ((resource_type = 'device'::text) AND (verb = 'view'::text))
+                                                                                         Buffers: shared hit=2
+                                                                       ->  Index Scan using ix_grant_role on authz_grant g  (cost=0.29..66.47 rows=1824 width=48) (actual time=0.010..0.283 rows=1691 loops=37)
+                                                                             Index Cond: (role_id = rp.role_id)
+                                                                             Buffers: shared hit=3664
+                                                                 ->  Hash  (cost=78.53..78.53 rows=44 width=16) (actual time=0.056..0.059 rows=1 loops=1)
+                                                                       Buckets: 1024  Batches: 1  Memory Usage: 9kB
+                                                                       Buffers: shared hit=9
+                                                                       ->  Nested Loop  (cost=9.06..78.53 rows=44 width=16) (actual time=0.053..0.056 rows=1 loops=1)
+                                                                             Buffers: shared hit=9
+                                                                             ->  Index Scan using principal_group_pkey on principal_group ug  (cost=0.28..8.30 rows=1 width=61) (actual time=0.014..0.014 rows=1 loops=1)
+                                                                                   Index Cond: (group_id = ANY ('{1f8b861b-6bfb-469f-a9ac-c7df3f9eb060}'::uuid[]))
+                                                                                   Buffers: shared hit=3
+                                                                             ->  Bitmap Heap Scan on principal_group gg  (cost=8.78..69.79 rows=44 width=61) (actual time=0.036..0.038 rows=1 loops=1)
+                                                                                   Recheck Cond: ((path @> ug.path) OR (group_id = ug.group_id))
+                                                                                   Heap Blocks: exact=1
+                                                                                   Buffers: shared hit=6
+                                                                                   ->  BitmapOr  (cost=8.78..8.78 rows=44 width=0) (actual time=0.031..0.032 rows=0 loops=1)
+                                                                                         Buffers: shared hit=5
+                                                                                         ->  Bitmap Index Scan on ix_group_path  (cost=0.00..4.47 rows=43 width=0) (actual time=0.021..0.021 rows=1 loops=1)
+                                                                                               Index Cond: (path @> ug.path)
+                                                                                               Buffers: shared hit=3
+                                                                                         ->  Bitmap Index Scan on principal_group_pkey  (cost=0.00..4.29 rows=1 width=0) (actual time=0.002..0.002 rows=1 loops=1)
+                                                                                               Index Cond: (group_id = ug.group_id)
+                                                                                               Buffers: shared hit=2
+                                                           ->  Index Scan using authz_scope_pkey on authz_scope s  (cost=0.29..0.31 rows=1 width=26) (actual time=0.002..0.002 rows=1 loops=248)
+                                                                 Index Cond: (id = g.scope_id)
+                                                                 Filter: (resource_type = 'device'::text)
+                                                                 Buffers: shared hit=744
+                                         ->  Bitmap Heap Scan on authz_scope_constraint c  (cost=4.30..11.83 rows=2 width=62) (actual time=0.429..0.430 rows=1 loops=248)
+                                               Recheck Cond: (scope_id = g.scope_id)
+                                               Heap Blocks: exact=248
+                                               Buffers: shared hit=661 read=83
+                                               I/O Timings: shared read=103.171
+                                               ->  Bitmap Index Scan on ix_scope_constraint_scope  (cost=0.00..4.30 rows=2 width=0) (actual time=0.336..0.336 rows=1 loops=248)
+                                                     Index Cond: (scope_id = g.scope_id)
+                                                     Buffers: shared hit=429 read=67
+                                                     I/O Timings: shared read=82.229
+                           ->  Append  (cost=90.71..16269.33 rows=192076 width=16) (actual time=30.363..560.488 rows=383452 loops=1)
+                                 Buffers: shared hit=86519 read=361
+                                 I/O Timings: shared read=274.314
+                                 ->  Nested Loop  (cost=90.71..3876.79 rows=1 width=16) (actual time=30.362..525.657 rows=383452 loops=1)
+                                       Buffers: shared hit=86519 read=361
+                                       I/O Timings: shared read=274.314
+                                       ->  CTE Scan on es  (cost=0.00..0.07 rows=1 width=96) (actual time=26.934..130.532 rows=248 loops=1)
+                                             Filter: ((region_path IS NOT NULL) AND (kind = 'attribute'::text))
+                                             Buffers: shared hit=5081 read=83
+                                             I/O Timings: shared read=103.171
+                                       ->  Bitmap Heap Scan on device d_1  (cost=90.71..3876.72 rows=1 width=113) (actual time=0.815..1.459 rows=1546 loops=248)
+                                             Recheck Cond: (region_path <@ es.region_path)
+                                             Filter: (((es.product_path IS NULL) OR (product_path <@ es.product_path)) AND ((es.customer_id IS NULL) OR (customer_id = es.customer_id)) AND ((es.site_id IS NULL) OR (site_id = es.site_id)) AND ((access_requirement = 'open'::text) OR ((access_requirement = 'customer'::text) AND (es.customer_id IS NOT NULL)) OR ((access_requirement = 'site'::text) AND (es.site_id IS NOT NULL))))
+                                             Rows Removed by Filter: 1
+                                             Heap Blocks: exact=76262
+                                             Buffers: shared hit=81438 read=278
+                                             I/O Timings: shared read=171.143
+                                             ->  Bitmap Index Scan on ix_device_region_path  (cost=0.00..90.70 rows=1923 width=0) (actual time=0.758..0.758 rows=1548 loops=248)
+                                                   Index Cond: (region_path <@ es.region_path)
+                                                   Buffers: shared hit=5344 read=110
+                                                   I/O Timings: shared read=152.168
+                                 ->  Nested Loop  (cost=118.71..3899.99 rows=1 width=16) (actual time=0.034..0.035 rows=0 loops=1)
+                                       ->  CTE Scan on es es_1  (cost=0.00..0.07 rows=1 width=64) (actual time=0.033..0.033 rows=0 loops=1)
+                                             Filter: ((region_path IS NULL) AND (product_path IS NOT NULL) AND (kind = 'attribute'::text))
+                                             Rows Removed by Filter: 248
+                                       ->  Bitmap Heap Scan on device d_2  (cost=118.71..3899.91 rows=1 width=90) (never executed)
+                                             Recheck Cond: (product_path <@ es_1.product_path)
+                                             Filter: (((es_1.customer_id IS NULL) OR (customer_id = es_1.customer_id)) AND ((es_1.site_id IS NULL) OR (site_id = es_1.site_id)) AND ((access_requirement = 'open'::text) OR ((access_requirement = 'customer'::text) AND (es_1.customer_id IS NOT NULL)) OR ((access_requirement = 'site'::text) AND (es_1.site_id IS NOT NULL))))
+                                             ->  Bitmap Index Scan on ix_device_product_path  (cost=0.00..118.70 rows=1923 width=0) (never executed)
+                                                   Index Cond: (product_path <@ es_1.product_path)
+                                 ->  Nested Loop  (cost=0.29..8.40 rows=1 width=16) (actual time=0.013..0.014 rows=0 loops=1)
+                                       ->  CTE Scan on es es_2  (cost=0.00..0.07 rows=1 width=32) (actual time=0.013..0.013 rows=0 loops=1)
+                                             Filter: ((region_path IS NULL) AND (product_path IS NULL) AND (customer_id IS NOT NULL) AND (kind = 'attribute'::text))
+                                             Rows Removed by Filter: 248
+                                       ->  Index Scan using ix_device_customer on device d_3  (cost=0.29..8.32 rows=1 width=48) (never executed)
+                                             Index Cond: (customer_id = es_2.customer_id)
+                                             Filter: ((access_requirement = ANY ('{open,customer}'::text[])) AND ((es_2.site_id IS NULL) OR (site_id = es_2.site_id)))
+                                 ->  Nested Loop  (cost=4.33..24.06 rows=5 width=16) (actual time=0.013..0.014 rows=0 loops=1)
+                                       ->  CTE Scan on es es_3  (cost=0.00..0.07 rows=1 width=16) (actual time=0.013..0.013 rows=0 loops=1)
+                                             Filter: ((region_path IS NULL) AND (product_path IS NULL) AND (customer_id IS NULL) AND (site_id IS NOT NULL) AND (kind = 'attribute'::text))
+                                             Rows Removed by Filter: 248
+                                       ->  Bitmap Heap Scan on device d_4  (cost=4.33..23.94 rows=5 width=32) (never executed)
+                                             Recheck Cond: (site_id = es_3.site_id)
+                                             Filter: (access_requirement = ANY ('{open,site}'::text[]))
+                                             ->  Bitmap Index Scan on ix_device_site  (cost=0.00..4.33 rows=5 width=0) (never executed)
+                                                   Index Cond: (site_id = es_3.site_id)
+                                 ->  Result  (cost=0.07..7485.23 rows=192061 width=16) (actual time=0.015..0.016 rows=0 loops=1)
+                                       One-Time Filter: $6
+                                       InitPlan 2 (returns $6)
+                                         ->  CTE Scan on es es_5  (cost=0.00..0.07 rows=1 width=0) (actual time=0.013..0.013 rows=0 loops=1)
+                                               Filter: ((region_path IS NULL) AND (product_path IS NULL) AND (customer_id IS NULL) AND (site_id IS NULL) AND (kind = 'attribute'::text))
+                                               Rows Removed by Filter: 248
+                                       ->  Seq Scan on device d_5  (cost=0.07..7485.23 rows=192061 width=16) (never executed)
+                                             Filter: (access_requirement = 'open'::text)
+                                 ->  Nested Loop  (cost=4.21..14.49 rows=7 width=16) (actual time=0.013..0.014 rows=0 loops=1)
+                                       ->  CTE Scan on es es_4  (cost=0.00..0.07 rows=1 width=16) (actual time=0.013..0.013 rows=0 loops=1)
+                                             Filter: (kind = 'single_system'::text)
+                                             Rows Removed by Filter: 248
+                                       ->  Bitmap Heap Scan on authz_scope_device sd  (cost=4.21..14.35 rows=7 width=32) (never executed)
+                                             Recheck Cond: (scope_id = es_4.scope_id)
+                                             ->  Bitmap Index Scan on authz_scope_device_pkey  (cost=0.00..4.21 rows=7 width=0) (never executed)
+                                                   Index Cond: (scope_id = es_4.scope_id)
+ Planning:
+   Buffers: shared hit=592
+ Planning Time: 5.184 ms
+ Execution Time: 949.488 ms
+(157 rows)
+
+Time: 1016.027 ms (00:01.016)
+=== LIST count of the full visible set (worst case) ===
+                                                                                                                                                                                                                    QUERY PLAN                                                                                                                                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=123658.13..123658.14 rows=1 width=8) (actual time=718.036..718.060 rows=1 loops=1)
+   Buffers: shared hit=91963, temp read=2705 written=3441
+   I/O Timings: temp read=6.424 write=16.897
+   ->  Limit  (cost=120776.99..121257.18 rows=192076 width=328) (actual time=672.917..708.512 rows=192071 loops=1)
+         Buffers: shared hit=91963, temp read=2705 written=3441
+         I/O Timings: temp read=6.424 write=16.897
+         ->  Sort  (cost=120776.99..121257.18 rows=192076 width=328) (actual time=672.915..693.830 rows=192071 loops=1)
+               Sort Key: d.updated_at DESC, d.id DESC
+               Sort Method: external merge  Disk: 7912kB
+               Buffers: shared hit=91963, temp read=2705 written=3441
+               I/O Timings: temp read=6.424 write=16.897
+               ->  Hash Join  (cost=35441.85..46143.06 rows=192076 width=328) (actual time=452.456..585.403 rows=192071 loops=1)
+                     Hash Cond: (d.id = d_1.id)
+                     Buffers: shared hit=91963, temp read=1716 written=2448
+                     I/O Timings: temp read=5.388 write=12.922
+                     ->  Seq Scan on device d  (cost=0.00..7004.53 rows=192253 width=24) (actual time=0.009..25.265 rows=192253 loops=1)
+                           Buffers: shared hit=5082
+                     ->  Hash  (cost=32102.90..32102.90 rows=192076 width=16) (actual time=452.390..452.411 rows=192071 loops=1)
+                           Buckets: 262144  Batches: 2  Memory Usage: 6537kB
+                           Buffers: shared hit=86881, temp read=774 written=1929
+                           I/O Timings: temp read=0.931 write=8.939
+                           ->  HashAggregate  (cost=28306.40..32102.90 rows=192076 width=16) (actual time=365.325..422.205 rows=192071 loops=1)
+                                 Group Key: d_1.id
+                                 Planned Partitions: 4  Batches: 5  Memory Usage: 10289kB  Disk Usage: 7496kB
+                                 Buffers: shared hit=86881, temp read=774 written=1506
+                                 I/O Timings: temp read=0.931 write=6.980
+                                 CTE es
+                                   ->  GroupAggregate  (cost=180.90..212.39 rows=3 width=122) (actual time=22.528..24.252 rows=248 loops=1)
+                                         Group Key: g.scope_id, s.kind
+                                         Buffers: shared hit=5165
+                                         ->  Nested Loop Left Join  (cost=180.90..212.15 rows=6 width=72) (actual time=22.505..23.772 rows=248 loops=1)
+                                               Buffers: shared hit=5165
+                                               ->  Unique  (cost=176.59..176.62 rows=3 width=26) (actual time=22.478..22.648 rows=248 loops=1)
+                                                     Buffers: shared hit=4421
+                                                     ->  Sort  (cost=176.59..176.60 rows=3 width=26) (actual time=22.476..22.559 rows=248 loops=1)
+                                                           Sort Key: g.scope_id, s.kind
+                                                           Sort Method: quicksort  Memory: 38kB
+                                                           Buffers: shared hit=4421
+                                                           ->  Nested Loop  (cost=87.84..176.57 rows=3 width=26) (actual time=0.124..22.432 rows=248 loops=1)
+                                                                 Buffers: shared hit=4421
+                                                                 ->  Hash Join  (cost=87.56..175.64 rows=3 width=16) (actual time=0.115..21.933 rows=248 loops=1)
+                                                                       Hash Cond: (g.group_id = gg.group_id)
+                                                                       Buffers: shared hit=3677
+                                                                       ->  Nested Loop  (cost=8.47..95.44 rows=290 width=32) (actual time=0.062..17.688 rows=62557 loops=1)
+                                                                             Buffers: shared hit=3668
+                                                                             ->  Hash Join  (cost=8.18..10.72 rows=1 width=16) (actual time=0.024..0.062 rows=37 loops=1)
+                                                                                   Hash Cond: (rp.privilege_id = p.id)
+                                                                                   Buffers: shared hit=3
+                                                                                   ->  Seq Scan on authz_role_privilege rp  (cost=0.00..2.22 rows=122 width=32) (actual time=0.005..0.017 rows=128 loops=1)
+                                                                                         Buffers: shared hit=1
+                                                                                   ->  Hash  (cost=8.17..8.17 rows=1 width=16) (actual time=0.015..0.016 rows=1 loops=1)
+                                                                                         Buckets: 1024  Batches: 1  Memory Usage: 9kB
+                                                                                         Buffers: shared hit=2
+                                                                                         ->  Index Scan using authz_privilege_resource_type_verb_key on authz_privilege p  (cost=0.15..8.17 rows=1 width=16) (actual time=0.011..0.012 rows=1 loops=1)
+                                                                                               Index Cond: ((resource_type = 'device'::text) AND (verb = 'view'::text))
+                                                                                               Buffers: shared hit=2
+                                                                             ->  Index Scan using ix_grant_role on authz_grant g  (cost=0.29..66.47 rows=1824 width=48) (actual time=0.011..0.305 rows=1691 loops=37)
+                                                                                   Index Cond: (role_id = rp.role_id)
+                                                                                   Buffers: shared hit=3665
+                                                                       ->  Hash  (cost=78.53..78.53 rows=44 width=16) (actual time=0.047..0.050 rows=1 loops=1)
+                                                                             Buckets: 1024  Batches: 1  Memory Usage: 9kB
+                                                                             Buffers: shared hit=9
+                                                                             ->  Nested Loop  (cost=9.06..78.53 rows=44 width=16) (actual time=0.043..0.046 rows=1 loops=1)
+                                                                                   Buffers: shared hit=9
+                                                                                   ->  Index Scan using principal_group_pkey on principal_group ug  (cost=0.28..8.30 rows=1 width=61) (actual time=0.009..0.009 rows=1 loops=1)
+                                                                                         Index Cond: (group_id = ANY ('{1f8b861b-6bfb-469f-a9ac-c7df3f9eb060}'::uuid[]))
+                                                                                         Buffers: shared hit=3
+                                                                                   ->  Bitmap Heap Scan on principal_group gg  (cost=8.78..69.79 rows=44 width=61) (actual time=0.032..0.033 rows=1 loops=1)
+                                                                                         Recheck Cond: ((path @> ug.path) OR (group_id = ug.group_id))
+                                                                                         Heap Blocks: exact=1
+                                                                                         Buffers: shared hit=6
+                                                                                         ->  BitmapOr  (cost=8.78..8.78 rows=44 width=0) (actual time=0.028..0.029 rows=0 loops=1)
+                                                                                               Buffers: shared hit=5
+                                                                                               ->  Bitmap Index Scan on ix_group_path  (cost=0.00..4.47 rows=43 width=0) (actual time=0.022..0.022 rows=1 loops=1)
+                                                                                                     Index Cond: (path @> ug.path)
+                                                                                                     Buffers: shared hit=3
+                                                                                               ->  Bitmap Index Scan on principal_group_pkey  (cost=0.00..4.29 rows=1 width=0) (actual time=0.001..0.001 rows=1 loops=1)
+                                                                                                     Index Cond: (group_id = ug.group_id)
+                                                                                                     Buffers: shared hit=2
+                                                                 ->  Index Scan using authz_scope_pkey on authz_scope s  (cost=0.29..0.31 rows=1 width=26) (actual time=0.001..0.001 rows=1 loops=248)
+                                                                       Index Cond: (id = g.scope_id)
+                                                                       Filter: (resource_type = 'device'::text)
+                                                                       Buffers: shared hit=744
+                                               ->  Bitmap Heap Scan on authz_scope_constraint c  (cost=4.30..11.83 rows=2 width=62) (actual time=0.003..0.004 rows=1 loops=248)
+                                                     Recheck Cond: (scope_id = g.scope_id)
+                                                     Heap Blocks: exact=248
+                                                     Buffers: shared hit=744
+                                                     ->  Bitmap Index Scan on ix_scope_constraint_scope  (cost=0.00..4.30 rows=2 width=0) (actual time=0.002..0.002 rows=1 loops=248)
+                                                           Index Cond: (scope_id = g.scope_id)
+                                                           Buffers: shared hit=496
+                                 ->  Append  (cost=90.71..16269.33 rows=192076 width=16) (actual time=22.629..260.282 rows=383452 loops=1)
+                                       Buffers: shared hit=86881
+                                       ->  Nested Loop  (cost=90.71..3876.79 rows=1 width=16) (actual time=22.628..231.298 rows=383452 loops=1)
+                                             Buffers: shared hit=86881
+                                             ->  CTE Scan on es  (cost=0.00..0.07 rows=1 width=96) (actual time=22.533..24.384 rows=248 loops=1)
+                                                   Filter: ((region_path IS NOT NULL) AND (kind = 'attribute'::text))
+                                                   Buffers: shared hit=5165
+                                             ->  Bitmap Heap Scan on device d_1  (cost=90.71..3876.72 rows=1 width=113) (actual time=0.167..0.707 rows=1546 loops=248)
+                                                   Recheck Cond: (region_path <@ es.region_path)
+                                                   Filter: (((es.product_path IS NULL) OR (product_path <@ es.product_path)) AND ((es.customer_id IS NULL) OR (customer_id = es.customer_id)) AND ((es.site_id IS NULL) OR (site_id = es.site_id)) AND ((access_requirement = 'open'::text) OR ((access_requirement = 'customer'::text) AND (es.customer_id IS NOT NULL)) OR ((access_requirement = 'site'::text) AND (es.site_id IS NOT NULL))))
+                                                   Rows Removed by Filter: 1
+                                                   Heap Blocks: exact=76262
+                                                   Buffers: shared hit=81716
+                                                   ->  Bitmap Index Scan on ix_device_region_path  (cost=0.00..90.70 rows=1923 width=0) (actual time=0.122..0.122 rows=1548 loops=248)
+                                                         Index Cond: (region_path <@ es.region_path)
+                                                         Buffers: shared hit=5454
+                                       ->  Nested Loop  (cost=118.71..3899.99 rows=1 width=16) (actual time=0.021..0.023 rows=0 loops=1)
+                                             ->  CTE Scan on es es_1  (cost=0.00..0.07 rows=1 width=64) (actual time=0.021..0.021 rows=0 loops=1)
+                                                   Filter: ((region_path IS NULL) AND (product_path IS NOT NULL) AND (kind = 'attribute'::text))
+                                                   Rows Removed by Filter: 248
+                                             ->  Bitmap Heap Scan on device d_2  (cost=118.71..3899.91 rows=1 width=90) (never executed)
+                                                   Recheck Cond: (product_path <@ es_1.product_path)
+                                                   Filter: (((es_1.customer_id IS NULL) OR (customer_id = es_1.customer_id)) AND ((es_1.site_id IS NULL) OR (site_id = es_1.site_id)) AND ((access_requirement = 'open'::text) OR ((access_requirement = 'customer'::text) AND (es_1.customer_id IS NOT NULL)) OR ((access_requirement = 'site'::text) AND (es_1.site_id IS NOT NULL))))
+                                                   ->  Bitmap Index Scan on ix_device_product_path  (cost=0.00..118.70 rows=1923 width=0) (never executed)
+                                                         Index Cond: (product_path <@ es_1.product_path)
+                                       ->  Nested Loop  (cost=0.29..8.40 rows=1 width=16) (actual time=0.014..0.014 rows=0 loops=1)
+                                             ->  CTE Scan on es es_2  (cost=0.00..0.07 rows=1 width=32) (actual time=0.013..0.013 rows=0 loops=1)
+                                                   Filter: ((region_path IS NULL) AND (product_path IS NULL) AND (customer_id IS NOT NULL) AND (kind = 'attribute'::text))
+                                                   Rows Removed by Filter: 248
+                                             ->  Index Scan using ix_device_customer on device d_3  (cost=0.29..8.32 rows=1 width=48) (never executed)
+                                                   Index Cond: (customer_id = es_2.customer_id)
+                                                   Filter: ((access_requirement = ANY ('{open,customer}'::text[])) AND ((es_2.site_id IS NULL) OR (site_id = es_2.site_id)))
+                                       ->  Nested Loop  (cost=4.33..24.06 rows=5 width=16) (actual time=0.013..0.014 rows=0 loops=1)
+                                             ->  CTE Scan on es es_3  (cost=0.00..0.07 rows=1 width=16) (actual time=0.013..0.013 rows=0 loops=1)
+                                                   Filter: ((region_path IS NULL) AND (product_path IS NULL) AND (customer_id IS NULL) AND (site_id IS NOT NULL) AND (kind = 'attribute'::text))
+                                                   Rows Removed by Filter: 248
+                                             ->  Bitmap Heap Scan on device d_4  (cost=4.33..23.94 rows=5 width=32) (never executed)
+                                                   Recheck Cond: (site_id = es_3.site_id)
+                                                   Filter: (access_requirement = ANY ('{open,site}'::text[]))
+                                                   ->  Bitmap Index Scan on ix_device_site  (cost=0.00..4.33 rows=5 width=0) (never executed)
+                                                         Index Cond: (site_id = es_3.site_id)
+                                       ->  Result  (cost=0.07..7485.23 rows=192061 width=16) (actual time=0.014..0.015 rows=0 loops=1)
+                                             One-Time Filter: $6
+                                             InitPlan 2 (returns $6)
+                                               ->  CTE Scan on es es_5  (cost=0.00..0.07 rows=1 width=0) (actual time=0.012..0.013 rows=0 loops=1)
+                                                     Filter: ((region_path IS NULL) AND (product_path IS NULL) AND (customer_id IS NULL) AND (site_id IS NULL) AND (kind = 'attribute'::text))
+                                                     Rows Removed by Filter: 248
+                                             ->  Seq Scan on device d_5  (cost=0.07..7485.23 rows=192061 width=16) (never executed)
+                                                   Filter: (access_requirement = 'open'::text)
+                                       ->  Nested Loop  (cost=4.21..14.49 rows=7 width=16) (actual time=0.014..0.014 rows=0 loops=1)
+                                             ->  CTE Scan on es es_4  (cost=0.00..0.07 rows=1 width=16) (actual time=0.013..0.013 rows=0 loops=1)
+                                                   Filter: (kind = 'single_system'::text)
+                                                   Rows Removed by Filter: 248
+                                             ->  Bitmap Heap Scan on authz_scope_device sd  (cost=4.21..14.35 rows=7 width=32) (never executed)
+                                                   Recheck Cond: (scope_id = es_4.scope_id)
+                                                   ->  Bitmap Index Scan on authz_scope_device_pkey  (cost=0.00..4.21 rows=7 width=0) (never executed)
+                                                         Index Cond: (scope_id = es_4.scope_id)
+ Planning:
+   Buffers: shared hit=46
+ Planning Time: 1.622 ms
+ Execution Time: 720.522 ms
+(151 rows)
+
+Time: 774.757 ms
+=== CHECK a single device (point auth) ===
+Time: 26.132 ms
+                                       QUERY PLAN                                       
+----------------------------------------------------------------------------------------
+ Result  (cost=0.00..0.26 rows=1 width=1) (actual time=125.546..125.547 rows=1 loops=1)
+   Buffers: shared hit=192665 read=16
+   I/O Timings: shared read=19.535
+ Planning:
+   Buffers: shared hit=2
+ Planning Time: 0.257 ms
+ Execution Time: 125.561 ms
+(7 rows)
+
+Time: 152.211 ms

@@ -1,0 +1,110 @@
+=== effective scope SHAPE histogram for the group ===
+ has_region | has_product | has_customer | has_site |   kind    | count 
+------------+-------------+--------------+----------+-----------+-------
+ t          | f           | f            | f        | attribute |   248
+(1 row)
+
+=== REAL plan of the visible-id union (inlined, count only) ===
+                                                                                                                                                                                                                QUERY PLAN                                                                                                                                                                                                                
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=32911.55..32911.56 rows=1 width=8) (actual time=308.392..308.407 rows=1 loops=1)
+   Buffers: shared hit=203411, temp read=394 written=746
+   I/O Timings: temp read=0.563 write=2.696
+   CTE es
+     ->  Function Scan on authz_effective_scope_rows  (cost=117.20..127.20 rows=1000 width=144) (actual time=104.807..104.821 rows=248 loops=1)
+           Buffers: shared hit=192875
+           InitPlan 1 (returns $0)
+             ->  Limit  (cost=0.00..116.95 rows=1 width=16) (actual time=0.009..0.010 rows=1 loops=1)
+                   Buffers: shared hit=1
+                   ->  Seq Scan on principal_group  (cost=0.00..116.95 rows=1 width=16) (actual time=0.008..0.009 rows=1 loops=1)
+                         Filter: (label = 'RSC'::text)
+                         Rows Removed by Filter: 2
+                         Buffers: shared hit=1
+   ->  HashAggregate  (cost=31956.10..32324.21 rows=36811 width=16) (actual time=253.188..299.062 rows=192071 loops=1)
+         Group Key: d.id
+         Batches: 5  Memory Usage: 10289kB  Disk Usage: 3664kB
+         Buffers: shared hit=203411, temp read=394 written=746
+         I/O Timings: temp read=0.563 write=2.696
+         ->  Append  (cost=855.77..31864.07 rows=36811 width=16) (actual time=132.709..203.862 rows=192071 loops=1)
+               Buffers: shared hit=203411
+               ->  Nested Loop  (cost=855.77..6581.00 rows=18364 width=16) (actual time=132.708..187.945 rows=192071 loops=1)
+                     Buffers: shared hit=203411
+                     ->  Aggregate  (cost=22.51..22.52 rows=1 width=32) (actual time=104.890..104.892 rows=1 loops=1)
+                           Filter: (array_agg(es.region_path) IS NOT NULL)
+                           Buffers: shared hit=192875
+                           ->  CTE Scan on es  (cost=0.00..22.50 rows=1 width=32) (actual time=104.811..104.864 rows=248 loops=1)
+                                 Filter: ((region_path IS NOT NULL) AND (product_path IS NULL) AND (customer_id IS NULL) AND (site_id IS NULL) AND (kind = 'attribute'::text))
+                                 Buffers: shared hit=192875
+                     ->  Bitmap Heap Scan on device d  (cost=833.27..6374.84 rows=18364 width=39) (actual time=27.813..67.163 rows=192071 loops=1)
+                           Recheck Cond: (region_path <@ ANY ((array_agg(es.region_path))))
+                           Filter: (access_requirement = 'open'::text)
+                           Rows Removed by Filter: 182
+                           Heap Blocks: exact=5082
+                           Buffers: shared hit=10536
+                           ->  Bitmap Index Scan on ix_device_region_path  (cost=0.00..828.68 rows=18383 width=0) (actual time=27.408..27.408 rows=383816 loops=1)
+                                 Index Cond: (region_path <@ ANY ((array_agg(es.region_path))))
+                                 Buffers: shared hit=5454
+               ->  Nested Loop  (cost=1123.77..6849.00 rows=18364 width=16) (actual time=0.030..0.032 rows=0 loops=1)
+                     ->  Aggregate  (cost=22.51..22.52 rows=1 width=32) (actual time=0.030..0.030 rows=0 loops=1)
+                           Filter: (array_agg(es_1.product_path) IS NOT NULL)
+                           Rows Removed by Filter: 1
+                           ->  CTE Scan on es es_1  (cost=0.00..22.50 rows=1 width=32) (actual time=0.028..0.028 rows=0 loops=1)
+                                 Filter: ((product_path IS NOT NULL) AND (region_path IS NULL) AND (customer_id IS NULL) AND (site_id IS NULL) AND (kind = 'attribute'::text))
+                                 Rows Removed by Filter: 248
+                     ->  Bitmap Heap Scan on device d_1  (cost=1101.27..6642.84 rows=18364 width=53) (never executed)
+                           Recheck Cond: (product_path <@ ANY ((array_agg(es_1.product_path))))
+                           Filter: (access_requirement = 'open'::text)
+                           ->  Bitmap Index Scan on ix_device_product_path  (cost=0.00..1096.67 rows=18383 width=0) (never executed)
+                                 Index Cond: (product_path <@ ANY ((array_agg(es_1.product_path))))
+               ->  Nested Loop  (cost=22.80..69.56 rows=1 width=16) (actual time=0.014..0.015 rows=0 loops=1)
+                     ->  Aggregate  (cost=22.51..22.52 rows=1 width=32) (actual time=0.014..0.014 rows=0 loops=1)
+                           Filter: (array_agg(es_2.customer_id) IS NOT NULL)
+                           Rows Removed by Filter: 1
+                           ->  CTE Scan on es es_2  (cost=0.00..22.50 rows=1 width=16) (actual time=0.013..0.013 rows=0 loops=1)
+                                 Filter: ((customer_id IS NOT NULL) AND (region_path IS NULL) AND (product_path IS NULL) AND (site_id IS NULL) AND (kind = 'attribute'::text))
+                                 Rows Removed by Filter: 248
+                     ->  Index Scan using ix_device_customer on device d_2  (cost=0.29..47.04 rows=1 width=32) (never executed)
+                           Index Cond: (customer_id = ANY ((array_agg(es_2.customer_id))))
+                           Filter: (access_requirement = ANY ('{open,customer}'::text[]))
+               ->  Nested Loop  (cost=65.84..238.33 rows=46 width=16) (actual time=0.014..0.015 rows=0 loops=1)
+                     ->  Aggregate  (cost=22.51..22.52 rows=1 width=32) (actual time=0.013..0.014 rows=0 loops=1)
+                           Filter: (array_agg(es_3.site_id) IS NOT NULL)
+                           Rows Removed by Filter: 1
+                           ->  CTE Scan on es es_3  (cost=0.00..22.50 rows=1 width=16) (actual time=0.012..0.012 rows=0 loops=1)
+                                 Filter: ((site_id IS NOT NULL) AND (region_path IS NULL) AND (product_path IS NULL) AND (customer_id IS NULL) AND (kind = 'attribute'::text))
+                                 Rows Removed by Filter: 248
+                     ->  Bitmap Heap Scan on device d_3  (cost=43.34..215.36 rows=46 width=32) (never executed)
+                           Recheck Cond: (site_id = ANY ((array_agg(es_3.site_id))))
+                           Filter: (access_requirement = ANY ('{open,site}'::text[]))
+                           ->  Bitmap Index Scan on ix_device_site  (cost=0.00..43.33 rows=46 width=0) (never executed)
+                                 Index Cond: (site_id = ANY ((array_agg(es_3.site_id))))
+               ->  Nested Loop  (cost=89.11..13968.11 rows=1 width=16) (actual time=0.016..0.017 rows=0 loops=1)
+                     ->  CTE Scan on es es_4  (cost=0.00..22.50 rows=5 width=96) (actual time=0.015..0.016 rows=0 loops=1)
+                           Filter: ((region_path IS NOT NULL) AND ((product_path IS NOT NULL) OR (customer_id IS NOT NULL) OR (site_id IS NOT NULL)) AND (kind = 'attribute'::text))
+                           Rows Removed by Filter: 248
+                     ->  Bitmap Heap Scan on device d_4  (cost=89.11..2789.11 rows=1 width=113) (never executed)
+                           Recheck Cond: (region_path <@ es_4.region_path)
+                           Filter: (((es_4.product_path IS NULL) OR (product_path <@ es_4.product_path)) AND ((es_4.customer_id IS NULL) OR (customer_id = es_4.customer_id)) AND ((es_4.site_id IS NULL) OR (site_id = es_4.site_id)) AND ((access_requirement = 'open'::text) OR ((access_requirement = 'customer'::text) AND (es_4.customer_id IS NOT NULL)) OR ((access_requirement = 'site'::text) AND (es_4.site_id IS NOT NULL))))
+                           ->  Bitmap Index Scan on ix_device_region_path  (cost=0.00..89.11 rows=1923 width=0) (never executed)
+                                 Index Cond: (region_path <@ es_4.region_path)
+               ->  Nested Loop  (cost=118.71..3922.42 rows=1 width=16) (actual time=0.013..0.014 rows=0 loops=1)
+                     ->  CTE Scan on es es_5  (cost=0.00..22.50 rows=1 width=64) (actual time=0.013..0.013 rows=0 loops=1)
+                           Filter: ((region_path IS NULL) AND (product_path IS NOT NULL) AND ((customer_id IS NOT NULL) OR (site_id IS NOT NULL)) AND (kind = 'attribute'::text))
+                           Rows Removed by Filter: 248
+                     ->  Bitmap Heap Scan on device d_5  (cost=118.71..3899.91 rows=1 width=90) (never executed)
+                           Recheck Cond: (product_path <@ es_5.product_path)
+                           Filter: (((es_5.customer_id IS NULL) OR (customer_id = es_5.customer_id)) AND ((es_5.site_id IS NULL) OR (site_id = es_5.site_id)) AND ((access_requirement = 'open'::text) OR ((access_requirement = 'customer'::text) AND (es_5.customer_id IS NOT NULL)) OR ((access_requirement = 'site'::text) AND (es_5.site_id IS NOT NULL))))
+                           ->  Bitmap Index Scan on ix_device_product_path  (cost=0.00..118.70 rows=1923 width=0) (never executed)
+                                 Index Cond: (product_path <@ es_5.product_path)
+               ->  Hash Join  (cost=22.56..51.60 rows=34 width=16) (actual time=0.009..0.011 rows=0 loops=1)
+                     Hash Cond: (sd.scope_id = es_6.scope_id)
+                     ->  Seq Scan on authz_scope_device sd  (cost=0.00..23.60 rows=1360 width=32) (actual time=0.009..0.009 rows=0 loops=1)
+                     ->  Hash  (cost=22.50..22.50 rows=5 width=16) (never executed)
+                           ->  CTE Scan on es es_6  (cost=0.00..22.50 rows=5 width=16) (never executed)
+                                 Filter: (kind = 'single_system'::text)
+ Planning:
+   Buffers: shared hit=261
+ Planning Time: 1.009 ms
+ Execution Time: 309.589 ms
+(99 rows)
+
