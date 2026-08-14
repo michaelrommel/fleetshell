@@ -42,6 +42,10 @@ class IdMap:
             self._m[k] = v
         return v
 
+    def has(self, real_key: object) -> bool:
+        """True if real_key already has a mapping (does NOT create one)."""
+        return str(real_key) in self._m
+
     def save(self) -> None:
         with open(self.path, "w") as f:
             json.dump(self._m, f)

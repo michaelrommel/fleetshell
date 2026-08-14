@@ -897,7 +897,9 @@ fleetshell-portal-dev/       # NEW SvelteKit portal, served under /dev/ (base pa
     devices/ gateways/ products/ customers/ support/ settings/
     administration/           #   admin-gated tabbed sub-nav
       accounts/ personas/     #     built: login accounts + identities (paginated)
-      roles/ groups/ grants/  #     stubs
+      roles/                  #     built: role list + editable privilege matrix (CRUD x types)
+      groups/                 #     built: flat group list, grants (read) + member mgmt
+      grants/                 #     stub
   src/lib/server/db.ts        #   postgres.js pools: global + local Aurora
   src/lib/server/authz.ts     #   resolveGroupIds (local) + listDevices/can (global)
   src/lib/server/theme.ts     #   Nucleus/Gruvbox theme resolution (cookie/DB/admin)
@@ -920,6 +922,7 @@ infrastructure/
     migrate_identity_local.sql # person/persona split + region-prefixed text user_id
     migrate_identity_primary.sql # account_persona.is_primary (default persona)
     migrate_persona_rename.sql # account_identity -> account_persona (naming consistency)
+    migrate_authz_catalog.sql  # normalize privileges to CRUD x extensible types (+ device:connect)
     seed_demo.sql / verify_demo.sql   # correctness proof (all green)
   import/
     load.py                    # anonymizing CSV importer (192k devices, ~1M grants)

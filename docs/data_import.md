@@ -88,3 +88,43 @@ destroy run maps                   # irreversible
 
 Note: no continent layer is synthesized (RDCOUNTRY2DMZ/RDDMZ is a VPN routing
 table, not geography); the region tree is World > Country > State from RDREGION.
+
+## Known import gaps (verified against BU_AX; see chat 2026-xx)
+
+The importer reads `RDGRANTVIEWV1`, a denormalized grant x grantee VIEW. Three
+faithfully-diagnosed gaps, to fix in the importer (1-2) or in the production
+export (3):
+
+1. **Single-system (per-device) grants** -- **FIXED in load.py.** Rows whose
+   "item" is a device serial in `FUNCTIONALLOCATION` (no region/product/
+   customer/site) now become a `single_system` `authz_scope` + `authz_scope_device`
+   row. `FUNCTIONALLOCATION` -> `RDSERVICEDSYSTEM.IDENTIFIER1` -> `device.id`
+   resolves 100% (287 distinct devices; ~4,038 grantee-rows). Also folds in the
+   few system-based service domains (e.g. Vestre Viken HF), which the export
+   already decomposes into per-device rows. Takes effect on the NEXT FULL RELOAD
+   (`--stage all`): the importer mints fresh scope/grant UUIDs each run, so a
+   `--stage grants`-only re-run would duplicate, not patch.
+
+2. **Named-customer / site grants -- NOT recoverable from this dump; deferred
+   to the production load.** `CUSTOMERID=1`=ANY, `CUSTOMERID=0`=named customer
+   whose id is lost (only `CUSTOMERNAME`); ~2,438 rows drop their customer and
+   dedup into ANY siblings (~600 rows with a real numeric id import fine). The
+   missing link is genuinely absent: there is NO RDCUSTOMER/RDSITE export;
+   `RDSERVICEDSYSTEMBW1` has no customer/site columns (only hospital/router);
+   `RDSERVICEDSYSTEM.CUSTOMERID` is empty for every device; and its
+   `CUSTOMERSITEID` space does NOT overlap the grant view's `SITEID` (0 of 31
+   match). Static/dynamic site membership (e.g. Marburg's 61, Uni Mainz's 58 via
+   gateway) and the customer/site "requires explicit grant" flags live in tables
+   that were not exported. Needs proper customer + site + site-membership exports
+   in the production load. Interim risk: dropping the customer silently WIDENS a
+   customer-restricted grant to ANY where the group has no wildcard sibling.
+
+3. **Grants on member-less groups are invisible.** `RDGRANTVIEWV1` only
+   materializes a row when a grant has a grantee (member). A group with grants
+   but no members (e.g. `BU_AX_CS_SI_Sensis`, and its grants are inherited by
+   sub-group members) produces zero rows, so neither the group nor its grants
+   import. NOT fixable from this view. Production load MUST use a proper export
+   of the group table + the group-grant table (not the grantee view).
+
+Also note System Mgmt grants (roles like `System Mgmt Package Creator`) are a
+separate subsystem not present in `RDGRANTVIEWV1` at all.

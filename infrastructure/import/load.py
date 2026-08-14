@@ -247,6 +247,15 @@ def stage_users(l: psycopg.Connection, limit: int | None):
 # STAGE: grants  (-> groups, memberships, roles, scopes, grants)
 # =============================================================================
 def stage_grants(g: psycopg.Connection, l: psycopg.Connection, limit: int | None):
+    # Device IDENTIFIER1 -> RDSERVICEDSYSTEM.ID, for single-system (per-device)
+    # grants: those grant rows carry the device serial in FUNCTIONALLOCATION and
+    # no region/product/customer/site. 100% resolve via IDENTIFIER1.
+    ident1_to_sysid: dict[str, str] = {}
+    for r in read("RDSERVICEDSYSTEM"):
+        ident = (r.get("IDENTIFIER1") or "").strip()
+        if ident:
+            ident1_to_sysid[ident] = r["ID"]
+
     role_cache: dict[str,str] = {}          # rolename -> role uuid
     role_priv_rows = []
     def role_uuid(name):
@@ -257,7 +266,7 @@ def stage_grants(g: psycopg.Connection, l: psycopg.Connection, limit: int | None
         return role_cache[name]
 
     scope_cache: dict[tuple,str] = {}
-    scope_rows, constraint_rows = [], []
+    scope_rows, constraint_rows, scope_device_rows = [], [], []
     def scope_uuid(region_p, product_p, cust_u, site_u):
         key = (region_p, product_p, cust_u, site_u)
         if key not in scope_cache:
@@ -267,6 +276,15 @@ def stage_grants(g: psycopg.Connection, l: psycopg.Connection, limit: int | None
             if product_p: constraint_rows.append((u, "product_path", "subtree", "{"+product_p+"}"))
             if cust_u:    constraint_rows.append((u, "customer_id", "in", "{"+cust_u+"}"))
             if site_u:    constraint_rows.append((u, "site_id", "in", "{"+site_u+"}"))
+        return scope_cache[key]
+
+    def single_scope_uuid(device_u, label):
+        # A single_system scope naming exactly one device (shared across groups).
+        key = ("single", device_u)
+        if key not in scope_cache:
+            u = str(uuid.uuid4()); scope_cache[key] = u
+            scope_rows.append((u, "device", "single_system", label[:60]))
+            scope_device_rows.append((u, device_u))
         return scope_cache[key]
 
     group_rows, seen_groups = [], set()
@@ -297,9 +315,16 @@ def stage_grants(g: psycopg.Connection, l: psycopg.Connection, limit: int | None
         product_p = product_path.get(r["PRODUCTID"]) if r["PRODUCTNAME"] not in ("ANY","","") and r["PRODUCTID"] not in ("0","1","") else None
         cust_u = customer_map.get("C"+r["CUSTOMERID"]) if r["CUSTOMERID"] not in ("0","1","") else None
         site_u = site_map.get(r["SITEID"]) if r["SITEID"] not in ("0","1","") else None
-        if not any((region_p, product_p, cust_u, site_u)):
-            continue                                 # nothing to scope -> skip
-        sc = scope_uuid(region_p, product_p, cust_u, site_u)
+        if any((region_p, product_p, cust_u, site_u)):
+            sc = scope_uuid(region_p, product_p, cust_u, site_u)
+        else:
+            # Single-system (per-device) grant: the item is a device serial in
+            # FUNCTIONALLOCATION. Resolve IDENTIFIER1 -> device -> single_system.
+            fl = (r["FUNCTIONALLOCATION"] or "").strip()
+            sysid = ident1_to_sysid.get(fl) if fl and fl != "-" else None
+            if not sysid or not device_map.has(sysid):
+                continue                             # unknown/absent device -> skip
+            sc = single_scope_uuid(device_map.get(sysid), fl)
         rl = role_uuid(r["ROLENAME"] or "User")
         key = (grp, rl, sc)
         if key in seen_grants:
@@ -308,18 +333,19 @@ def stage_grants(g: psycopg.Connection, l: psycopg.Connection, limit: int | None
         grant_rows.append((str(uuid.uuid4()), grp, rl, sc)); kept += 1
         if len(grant_rows) >= 20000:
             _flush_grants(g, group_rows, role_cache, role_priv_rows, scope_rows,
-                          constraint_rows, grant_rows)
+                          constraint_rows, scope_device_rows, grant_rows)
             group_rows.clear(); role_priv_rows.clear(); scope_rows.clear()
-            constraint_rows.clear(); grant_rows.clear()
+            constraint_rows.clear(); scope_device_rows.clear(); grant_rows.clear()
     _flush_grants(g, group_rows, role_cache, role_priv_rows, scope_rows,
-                  constraint_rows, grant_rows)
+                  constraint_rows, scope_device_rows, grant_rows)
     # memberships -> LOCAL plane
     copy_rows(l, "group_membership (group_id,user_id)", member_rows, on_conflict="group_id,user_id")
+    singles = sum(1 for k in scope_cache if isinstance(k, tuple) and len(k) == 2 and k[0] == "single")
     print(f"  grants: scanned {n}, kept {kept}, groups {len(seen_groups)}, "
-          f"scopes {len(scope_cache)}, roles {len(role_cache)}, members {len(member_rows)}")
+          f"scopes {len(scope_cache)} (single-system {singles}), roles {len(role_cache)}, members {len(member_rows)}")
 
 
-def _flush_grants(g, group_rows, role_cache, role_priv_rows, scope_rows, constraint_rows, grant_rows):
+def _flush_grants(g, group_rows, role_cache, role_priv_rows, scope_rows, constraint_rows, scope_device_rows, grant_rows):
     if group_rows:
         copy_rows(g, "principal_group (group_id,home_region,label,path,parent_id)", group_rows, on_conflict="group_id")
     if role_cache:
@@ -337,6 +363,9 @@ def _flush_grants(g, group_rows, role_cache, role_priv_rows, scope_rows, constra
         copy_rows(g, "authz_scope (id,resource_type,kind,label)", scope_rows, on_conflict="id")
     if constraint_rows:
         copy_rows(g, "authz_scope_constraint (scope_id,dimension,op,values)", constraint_rows)
+    if scope_device_rows:
+        copy_rows(g, "authz_scope_device (scope_id,device_id)", scope_device_rows,
+                  on_conflict="scope_id,device_id")
     if grant_rows:
         copy_rows(g, "authz_grant (id,group_id,role_id,scope_id)", grant_rows, on_conflict="id")
 
@@ -399,7 +428,7 @@ def main():
     with g.cursor() as c:
         c.execute("ANALYZE region; ANALYZE product; ANALYZE gateway; ANALYZE device;"
                   "ANALYZE principal_group; ANALYZE authz_grant; ANALYZE authz_scope;"
-                  "ANALYZE authz_scope_constraint;")
+                  "ANALYZE authz_scope_constraint; ANALYZE authz_scope_device;")
     g.commit()
     with l.cursor() as c:
         c.execute("ANALYZE app_user; ANALYZE group_membership;")

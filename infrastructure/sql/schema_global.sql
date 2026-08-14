@@ -245,21 +245,27 @@ CREATE TABLE IF NOT EXISTS app_setting (
 INSERT INTO authz_resource_type (key, description) VALUES
     ('device',   'Managed field devices'),
     ('gateway',  'Regional tunnel gateways'),
-    ('group',    'User groups'),
     ('product',  'Product tree nodes'),
     ('customer', 'Customers'),
     ('site',     'Customer sites (named device sets)'),
     ('region',   'Region / country structure'),
-    ('grant',    'Authorization grants (delegated administration)')
+    ('group',    'User groups'),
+    ('role',     'Authorization roles'),
+    ('grant',    'Authorization grants (delegated administration)'),
+    ('account',  'Login accounts (the human who signs in)'),
+    ('persona',  'Personas (the authorization subject)')
 ON CONFLICT (key) DO NOTHING;
 
-INSERT INTO authz_privilege (resource_type, verb) VALUES
-    ('device','view'), ('device','edit'), ('device','connect'),
-    ('group','view'),  ('group','add_member'), ('group','remove_member'),
-    ('product','maintain'),
-    ('region','view'), ('region','create'), ('region','edit'), ('region','delete'),
-    ('customer','create'), ('site','create'), ('site','edit'),
-    ('grant','create'), ('grant','view')
+-- Canonical privilege catalog: fixed CRUD verbs on every type (types are
+-- extensible -- add rows above as portal functions land) + the one action verb
+-- device:connect. See migrate_authz_catalog.sql and docs/mdm_design.md.
+INSERT INTO authz_privilege (resource_type, verb)
+SELECT t.rt, v.vb
+FROM (VALUES ('device'),('gateway'),('product'),('customer'),('site'),
+             ('region'),('group'),('role'),('grant'),('account'),('persona')) AS t(rt)
+CROSS JOIN (VALUES ('create'),('view'),('edit'),('delete')) AS v(vb)
+ON CONFLICT (resource_type, verb) DO NOTHING;
+INSERT INTO authz_privilege (resource_type, verb) VALUES ('device','connect')
 ON CONFLICT (resource_type, verb) DO NOTHING;
 
 INSERT INTO app_setting (key, value) VALUES ('default_theme', 'nucleus')

@@ -56,6 +56,7 @@ ssh -L 5433:$LOCAL_WRITER_ENDPOINT:5432  aerocli    # local
 psql "$LOCAL_WRITER_URL" -f infrastructure/sql/migrate_identity_local.sql
 psql "$LOCAL_WRITER_URL" -f infrastructure/sql/migrate_identity_primary.sql
 psql "$LOCAL_WRITER_URL" -f infrastructure/sql/migrate_persona_rename.sql
+psql "$GLOBAL_WRITER_URL" -f infrastructure/sql/migrate_authz_catalog.sql
 node infrastructure/import/seed_login_accounts.mjs | psql "$LOCAL_WRITER_URL"
 
 # 3. Portal
@@ -68,15 +69,45 @@ Global DB password = the self-set `MASTER_PW` (Aurora Global can't use managed
 secrets). Local DB password = from Secrets Manager (managed). See
 `make_aurora_global.sh` STEP 5-SECRET.
 
-## Re-running the data pipeline (if needed)
+## Re-running the data pipeline / full reload
+
+The importer mints fresh scope/grant UUIDs each run, so it is TRUNCATE-and-reload
+(a `--stage grants`-only re-run would duplicate). The schema is already the final
+shape in the live DBs, so a reload does NOT re-run the identity migrations -- only
+the two post-load steps (catalog normalize + group hierarchy).
 
 ```bash
 export IMPORT_GLOBAL_DSN="host=localhost port=5432 dbname=fleetshell       user=fsadmin password=... sslmode=require"
 export IMPORT_LOCAL_DSN="host=localhost port=5433 dbname=fleetshell_local user=fsadmin password=... sslmode=require"
-# clean, then load (see infrastructure/import/README.md + docs/data_import.md):
-python load.py --stage all
+export GLOBAL_WRITER_URL="postgresql://fsadmin:...@localhost:5432/fleetshell?sslmode=require"
+export LOCAL_WRITER_URL="postgresql://fsadmin:...@localhost:5433/fleetshell_local?sslmode=require"
+cd infrastructure
+
+# 1. Reset the loaded/derived data (keeps schema + authz_privilege canonical seed).
+psql "$GLOBAL_WRITER_URL" -c "TRUNCATE region, product, gateway, device, customer, customer_site, principal_group, authz_role, authz_scope, authz_grant CASCADE;"
+psql "$LOCAL_WRITER_URL"  -c "TRUNCATE app_user, login_account CASCADE;"
+
+# 2. Re-import from the legacy CSVs (fresh id maps; maps destroyed at the end).
+cd import && rm -f *.map.json
+python load.py --stage all                # now includes single-system (per-device) grants
+
+# 3. Post-load, GLOBAL: normalize privileges to CRUD, then build the group tree.
+psql "$GLOBAL_WRITER_URL" -f ../sql/migrate_authz_catalog.sql
+python build_group_hierarchy.py           # dry-run: prints node/structural/roots counts
+python build_group_hierarchy.py --apply   # sets path + parent_id (enables inheritance)
+
+# 4. Test personas + login accounts, LOCAL.
 python seed_test_users.py
+node seed_login_accounts.mjs | psql "$LOCAL_WRITER_URL"
 ```
+
+Notes:
+- `build_group_hierarchy.py` matches groups by DB label (not the id maps), so no
+  `--keep` is needed; the maps are destroyed after the load as designed.
+- Spot-check after: `CCC_NO_Vestre Viken` = 17 device grants, `BU_AX` = 486,
+  `BU_AX_DE` = 5 attribute + 6 single-system. Customer/site scopes remain
+  deferred (see `docs/data_import.md` gap #2).
+- The portal reads live data; just refresh -- no rebuild needed.
 
 ## WHERE TO START NEXT (priority order)
 

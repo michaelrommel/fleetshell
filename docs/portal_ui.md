@@ -198,12 +198,12 @@ section is admin-gated (`administration/+layout.server.ts` + per-action checks).
 |---|---|---|---|
 | Accounts | **built** | Login accounts (the sign-in entity). Each has one non-unlinkable DEFAULT persona + optional additional linked personas. | local `login_account` / `account_persona` |
 | Personas | **built** | Identities (the authz subject): search, paginate, edit, group memberships. | local `app_user` / `group_membership` (+ global `principal_group` for labels) |
-| Roles | stub | List roles and the privileges they bundle. | global `role` / `privilege` |
-| Groups | stub | Browse the group tree (ltree), view members and grants. | global `principal_group` + local membership |
+| Roles | **built** | Roles = named bundles of privileges. Editable privilege matrix (types x CRUD). | global `authz_role` / `authz_role_privilege` / `authz_privilege` |
+| Groups | **built** | Flat group list; view grants on a group + manage members. | global `principal_group` / `authz_grant` + local `group_membership` |
 | Grants | stub | View/create grants `(group, role, scope)`. **Hardest**: enforce `authz_can(..., 'create', grant)` and the grant-on-grant subset guard (`mdm_design.md` §5.1). | global `grant` / `scope` / `scope_constraint` |
 
-Build order for the rest: Roles (read) -> Groups (read + membership) -> Grants
-(read) -> Grants (create, with the subset guard).
+Build order for the rest: Grants (read) -> Grants (create, with the subset
+guard).
 
 ### Accounts and Personas tabs (built)
 
@@ -237,6 +237,52 @@ Seed for a working starting point: `seed_test_users.py` (6 personas) ->
 `migrate_identity_local.sql` -> `migrate_identity_primary.sql` ->
 `seed_login_accounts.mjs | psql` (labels + accounts `super/super123` covering all
 6 with the first as default, `nora/nora123` single-persona).
+
+### Roles tab (built)
+
+The authorization vocabulary is **(fixed CRUD verbs) x (extensible types)**:
+`authz_privilege(resource_type, verb)` where `verb` is the fixed set
+`create/view/edit/delete` plus the one action verb `device:connect`, and
+`resource_type` is a row in `authz_resource_type` (add types as portal functions
+land). Starting types (11): device, gateway, product, customer, site, region,
+group, role, grant, account, persona. A role (`authz_role`) is a set of ticked
+privileges (`authz_role_privilege`), consumed by grants as the "what".
+
+`migrate_authz_catalog.sql` normalizes the imported ad-hoc catalog to this
+(remaps `product:maintain` -> `edit`, `group:add_member/remove_member` -> `edit`,
+drops the fine-grained legacy verbs); `authz_grant` is untouched (grants
+reference roles, not privileges).
+
+UI: master-detail. Left: role list (name, privilege count, grant usage). Right:
+rename; an editable **privilege matrix** (rows = types, columns = CRUD verbs +
+`connect`) saved as a whole; a read-only usage readout; Create; and a guarded
+Delete (blocked while any grant references the role, since `authz_grant.role_id`
+has no cascade).
+
+### Groups tab (built)
+
+Group hierarchy: `infrastructure/import/build_group_hierarchy.py` builds the FULL
+org tree from `old_database/groups.txt` (tab-indented) + strict
+`BU_`/`CCC_`/`CountryAdmin_`/... naming. It **materializes structural nodes** --
+labels in the file that carry no grants (so `load.py` never created them, e.g.
+`All`, `CCC`, `CCC_DE`, `Support`, `Partner`) become grant-less, member-less
+`principal_group` rows -- so the tree is complete and `path`/`parent_id` chain
+through them. Grant-less nodes add nothing to inheritance; they only give shape.
+Run `python build_group_hierarchy.py` (dry-run) then `--apply` after each data
+reload (idempotent; structural nodes matched by label).
+
+**Single User Grants:** `user:<granteeid>` entries are LEGACY personal grants;
+excluded from the tree (`WHERE label NOT LIKE 'user:%'`) and left flat.
+(`granteeid` = holder; `grantorid` = granter = `authz_grant.created_by`.)
+
+UI: the left column is an **expandable tree** (whole tree loaded once, ~660
+nodes; client-side expand/collapse + a filter that reveals matches with their
+ancestors; roots and the selected node's ancestors auto-expand). Each node shows
+grant/member counts. The right detail panel (unchanged shape): rename + region;
+a collapsible **Grants on this group** list where each grant is decoded to
+`Region | Product | Customer[/Site]` (single-system grants show the device
+serial); **members** (count + first 50 + name filter) with add (persona
+type-ahead) / remove; create, rename, guarded Delete.
 
 ## 8. Hard rules carried into the UI
 
