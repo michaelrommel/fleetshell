@@ -1,9 +1,9 @@
 // src/lib/server/identity.ts
 //
-// Local-plane identity helpers: the person (login_account) authenticates, then
+// Local-plane account + persona helpers: the person (login_account) authenticates, then
 // assumes one of their linked personas (app_user). See docs/portal_ui.md.
 //
-// Only these functions touch login_account / account_identity, so swapping the
+// Only these functions touch login_account / account_persona, so swapping the
 // password check for SAML/OAuth later is contained to verifyLogin().
 
 import { localDb } from './db';
@@ -23,6 +23,10 @@ export interface Persona {
 	role_label: string | null;
 	is_admin: boolean;
 	home_region: string;
+}
+
+export interface LinkedPersona extends Persona {
+	is_primary: boolean;
 }
 
 /** Verify a username-or-email + password against login_account. */
@@ -45,21 +49,21 @@ export async function verifyLogin(login: string, password: string): Promise<Acco
 	};
 }
 
-/** The personas a person may assume (for the identity selector / switcher). */
-export async function listIdentities(accountId: string): Promise<Persona[]> {
-	return await localDb<Persona[]>`
-		SELECT u.user_id, u.firstname, u.lastname, u.role_label, u.is_admin, u.home_region
-		FROM account_identity ai
+/** The personas a person may assume (for the persona selector / switcher). */
+export async function listPersonas(accountId: string): Promise<LinkedPersona[]> {
+	return await localDb<LinkedPersona[]>`
+		SELECT u.user_id, u.firstname, u.lastname, u.role_label, u.is_admin, u.home_region, ai.is_primary
+		FROM account_persona ai
 		JOIN app_user u ON u.user_id = ai.user_id
 		WHERE ai.account_id = ${accountId}
-		ORDER BY u.is_admin DESC, u.lastname, u.firstname
+		ORDER BY ai.is_primary DESC, u.is_admin DESC, u.lastname, u.firstname
 	`;
 }
 
 /** Guard: does this account actually own this persona? */
 export async function accountCanAssume(accountId: string, userId: string): Promise<boolean> {
 	const [row] = await localDb<{ ok: boolean }[]>`
-		SELECT true AS ok FROM account_identity
+		SELECT true AS ok FROM account_persona
 		WHERE account_id = ${accountId} AND user_id = ${userId}
 	`;
 	return row?.ok ?? false;

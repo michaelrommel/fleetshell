@@ -892,11 +892,11 @@ fleetshell-portal-dev/       # NEW SvelteKit portal, served under /dev/ (base pa
   src/lib/server/password.ts  #   scrypt hash/verify (dev login; SAML/OAuth later)
   src/lib/server/session.ts   #   signed cookie {accountId, active userId}
   src/routes/login/           #   password login
-  src/routes/select-identity/ #   post-login persona picker + top-bar switcher target
+  src/routes/select-persona/  #   post-login persona picker + top-bar switcher target
   src/routes/(app)/           #   auth-guarded shell group (account -> persona)
     devices/ gateways/ products/ customers/ support/ settings/
     administration/           #   admin-gated tabbed sub-nav
-      users/                  #     personas + login accounts CRUD (built)
+      accounts/ personas/     #     built: login accounts + identities (paginated)
       roles/ groups/ grants/  #     stubs
   src/lib/server/db.ts        #   postgres.js pools: global + local Aurora
   src/lib/server/authz.ts     #   resolveGroupIds (local) + listDevices/can (global)
@@ -918,6 +918,8 @@ infrastructure/
     migrate_region_access.sql  # region hierarchy + graded access_requirement
     migrate_theme_*.sql        # per-user theme + org default
     migrate_identity_local.sql # person/persona split + region-prefixed text user_id
+    migrate_identity_primary.sql # account_persona.is_primary (default persona)
+    migrate_persona_rename.sql # account_identity -> account_persona (naming consistency)
     seed_demo.sql / verify_demo.sql   # correctness proof (all green)
   import/
     load.py                    # anonymizing CSV importer (192k devices, ~1M grants)
@@ -940,7 +942,7 @@ docs/
 Two-plane split: GLOBAL Aurora (master data + authz, replicated worldwide) holds
 `device / gateway / customer / customer_site / product / region` + the authz
 model (`privilege/role/grant/scope/scope_constraint`); LOCAL Aurora (per region)
-holds `login_account` (the human) + `app_user` persona PII + `account_identity`
+holds `login_account` (the human) + `app_user` persona PII + `account_persona`
 (N:M) + `group_membership`. Authorization is ABAC: a `grant` =
 (group, role, scope); scopes are attribute predicates over region/product ltree
 subtrees + customer/site, with a graded `access_requirement` (open/device/
@@ -957,11 +959,15 @@ Gateways, Products, Customers/Sites, Administration; Support, Settings) matching
 the Nucleus look. Every page lives in the `(app)` route group behind the guard.
 
 The person/persona identity model is built: password login to a `login_account`
-(the human), a post-login Identity Selector picking one of its linked `app_user`
+(the human), a post-login Persona Selector picking one of its linked `app_user`
 personas (region-prefixed text `user_id`), a top-bar switcher, and an
-admin-gated Administration > Users tab that does persona + login-account CRUD.
-Apply `infrastructure/sql/migrate_identity_local.sql` then run
-`seed_login_accounts.mjs` (accounts `super/super123`, `nora/nora123`).
+admin-gated Administration section with **Accounts** and **Personas** tabs
+(paginated master-detail): Personas manages identities + group memberships;
+Accounts manages login accounts, each with a non-unlinkable default persona
+(created fresh or linked from an existing identity) plus optional extra linked
+personas. Apply `migrate_identity_local.sql` + `migrate_identity_primary.sql`
+then run `seed_login_accounts.mjs | psql` (accounts `super/super123`,
+`nora/nora123`).
 
 See `docs/portal_ui.md` §6-§7 for the remaining roadmap: (1) device
 detail/view+edit and Gateways (adapt from `fleetshell-portal/`), (2) Products and

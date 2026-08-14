@@ -32,8 +32,8 @@ export const PRIMARY_NAV: NavItem[] = [
 	{ href: '/devices',        icon: 'devices',        label: 'Devices' },
 	{ href: '/gateways',       icon: 'gateways',       label: 'Gateways' },
 	{ href: '/products',       icon: 'products',       label: 'Products' },
-	{ href: '/customers',      icon: 'customers',      label: 'Customers / Sites' },
-	{ href: '/administration', icon: 'administration', label: 'Administration', requiresAdmin: true },
+	{ href: '/customers',      icon: 'customers',      label: 'Customers\nSites' },
+	{ href: '/administration', icon: 'administration', label: 'Admin', requiresAdmin: true },
 ];
 
 /** Utility sections (pinned to the bottom of the rail). */

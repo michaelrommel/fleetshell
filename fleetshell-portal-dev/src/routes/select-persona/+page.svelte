@@ -8,17 +8,17 @@
 	<div class="card">
 		<div class="head">
 			<div class="mark"><Logo /></div>
-			<h1>Choose an identity</h1>
+			<h1>Choose a persona</h1>
 		</div>
 		<p class="hint">
 			Signed in as <strong>{data.account?.display_name ?? data.account?.username}</strong>.
-			Pick the identity to work as. You can switch again at any time from the top bar.
+			Pick the persona to work as. You can switch again at any time from the top bar.
 		</p>
 
 		{#if form?.error}<p class="error">{form.error}</p>{/if}
 
 		<ul>
-			{#each data.identities as p (p.user_id)}
+			{#each data.personas as p (p.user_id)}
 				<li>
 					<form method="POST">
 						<input type="hidden" name="user_id" value={p.user_id} />

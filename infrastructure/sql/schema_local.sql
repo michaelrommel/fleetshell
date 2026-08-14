@@ -16,7 +16,7 @@
 -- the authz plane; user_id stays local.
 --
 -- Person vs persona: a login_account (one human) may assume several app_user
--- personas via account_identity (N:M). After login, if more than one persona is
+-- personas via account_persona (N:M). After login, if more than one persona is
 -- linked, the portal shows an Identity Selector. See docs/portal_ui.md.
 --
 -- Apply with:  psql "$LOCAL_WRITER_URL" -f schema_local.sql
@@ -60,14 +60,20 @@ CREATE TABLE IF NOT EXISTS login_account (
 );
 
 -- Which personas a person may assume (N:M). The identity selector reads this.
-CREATE TABLE IF NOT EXISTS account_identity (
+-- Exactly one linked persona per account is the PRIMARY (default) identity:
+-- always present, cannot be unlinked in the UI.
+CREATE TABLE IF NOT EXISTS account_persona (
     account_id text NOT NULL REFERENCES login_account(account_id) ON DELETE CASCADE,
     user_id    text NOT NULL REFERENCES app_user(user_id)         ON DELETE CASCADE,
+    is_primary boolean NOT NULL DEFAULT false,
     added_at   timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY (account_id, user_id)
 );
-CREATE INDEX IF NOT EXISTS ix_identity_account ON account_identity(account_id);
-CREATE INDEX IF NOT EXISTS ix_identity_user    ON account_identity(user_id);
+CREATE INDEX IF NOT EXISTS ix_account_persona_account ON account_persona(account_id);
+CREATE INDEX IF NOT EXISTS ix_account_persona_user    ON account_persona(user_id);
+-- At most one primary persona per account.
+CREATE UNIQUE INDEX IF NOT EXISTS ux_account_persona_primary
+    ON account_persona(account_id) WHERE is_primary;
 
 -- Membership: group_id references principal_group in the GLOBAL plane
 -- (cross-DB, so no FK). One row per (group, persona).

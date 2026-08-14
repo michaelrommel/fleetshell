@@ -39,9 +39,9 @@ untouched and still serves `/`.
   <50 ms expected for narrow users, point check 25 ms. Down from 173 s.
 - **Portal dev slice working** (`fleetshell-portal-dev/`): password login for a
   `login_account` (the human) that assumes one of its linked `app_user` personas
-  via a post-login **Identity Selector** (switchable from the top bar); Nucleus
-  AppShell (top bar + icon rail); authorized device list; Administration Users
-  tab (persona + account CRUD, admin-gated); two selectable themes (Nucleus
+  via a post-login **Persona Selector** (switchable from the top bar); Nucleus
+  AppShell (top bar + icon rail); authorized device list; Administration with
+  Accounts + Personas tabs (paginated CRUD, default persona, admin-gated); two selectable themes (Nucleus
   default / Gruvbox), base-path-aware WebSocket server, postgres.js to both
   planes.
 
@@ -54,8 +54,9 @@ ssh -L 5433:$LOCAL_WRITER_ENDPOINT:5432  aerocli    # local
 
 # 2. Identity model migration + seed (once, against the local plane):
 psql "$LOCAL_WRITER_URL" -f infrastructure/sql/migrate_identity_local.sql
-cd fleetshell-portal-dev
-LOCAL_DB_PASSWORD=... node ../infrastructure/import/seed_login_accounts.mjs
+psql "$LOCAL_WRITER_URL" -f infrastructure/sql/migrate_identity_primary.sql
+psql "$LOCAL_WRITER_URL" -f infrastructure/sql/migrate_persona_rename.sql
+node infrastructure/import/seed_login_accounts.mjs | psql "$LOCAL_WRITER_URL"
 
 # 3. Portal
 cp .env.example .env            # fill GLOBAL_/LOCAL_DB_PASSWORD, SESSION_SECRET
@@ -85,9 +86,9 @@ python seed_test_users.py
    Devices, Gateways, Products, Customers/Sites, Administration, then Support,
    Settings. Top bar: logo + "FleetShell Portal" left; theme toggle, bell (news
    placeholder), name/role + persona switcher, logout right. Password login ->
-   `login_account` -> Identity Selector -> active `app_user` persona
-   (region-prefixed `user_id`); Administration Users tab does persona + account
-   CRUD (admin-gated). See `docs/portal_ui.md`. **Next UI work:** device
+   `login_account` -> Persona Selector -> active `app_user` persona
+   (region-prefixed `user_id`); Administration has Accounts + Personas tabs
+   (paginated CRUD, non-unlinkable default persona, admin-gated). See `docs/portal_ui.md`. **Next UI work:** device
    detail/view + edit (adapt `fleetshell-portal/.../devices`), then Gateways,
    then the rest of Administration (Roles -> Groups -> Grants; grant-create last
    because of the subset guard). See `docs/portal_ui.md` §6-§7.
@@ -101,7 +102,7 @@ python seed_test_users.py
 4. **Real auth** (SAML/OAuth) - replace the password check in
    `src/lib/server/identity.ts` `verifyLogin` (and `session.ts`) with the IdP.
    The person/persona split already anticipates this: the IdP identifies the
-   `login_account`; the Identity Selector + `account_identity` mapping are
+   `login_account`; the Persona Selector + `account_persona` mapping are
    unchanged. Callers read `locals.userId` (active persona), so it stays
    contained.
 5. **Deploy** — Dockerfile for `fleetshell-portal-dev` (mirror

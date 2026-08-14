@@ -11,7 +11,7 @@
 			<div class="mark"><Logo /></div>
 			<h1>FleetShell&nbsp;Portal <span class="tag">dev</span></h1>
 		</div>
-		<p class="hint">Sign in with your account. You will pick a working identity next if you have more than one.</p>
+		<p class="hint">Sign in with your account. You will pick a persona next if you have more than one.</p>
 
 		{#if form?.error}<p class="error">{form.error}</p>{/if}
 

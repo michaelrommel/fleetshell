@@ -134,9 +134,9 @@
 			<a
 				class="who"
 				class:switchable={canSwitch}
-				href={canSwitch ? `${base}/select-identity` : undefined}
-				title={canSwitch ? 'Switch identity' : undefined}
-				aria-label={canSwitch ? 'Switch identity' : undefined}
+				href={canSwitch ? `${base}/select-persona` : undefined}
+				title={canSwitch ? 'Switch persona' : undefined}
+				aria-label={canSwitch ? 'Switch persona' : undefined}
 			>
 				<span class="who-name">
 					{user}{#if canSwitch}<span class="caret">▾</span>{/if}
@@ -388,12 +388,16 @@
 		font-size: 0.66rem;
 		line-height: 1.15;
 		letter-spacing: 0.01em;
+		white-space: pre-line;
 	}
 
 	/* Routed content */
 	.content {
 		flex: 1;
+		min-height: 0;
 		overflow-y: auto;
 		padding: 28px 32px;
+		display: flex;
+		flex-direction: column;
 	}
 </style>

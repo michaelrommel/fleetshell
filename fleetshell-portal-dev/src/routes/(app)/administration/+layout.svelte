@@ -6,10 +6,11 @@
 	let { children }: { children: Snippet } = $props();
 
 	const tabs = [
-		{ href: '/administration/users',  label: 'Users' },
-		{ href: '/administration/roles',  label: 'Roles' },
-		{ href: '/administration/groups', label: 'Groups' },
-		{ href: '/administration/grants', label: 'Grants' },
+		{ href: '/administration/accounts', label: 'Accounts' },
+		{ href: '/administration/personas', label: 'Personas' },
+		{ href: '/administration/roles',    label: 'Roles' },
+		{ href: '/administration/groups',   label: 'Groups' },
+		{ href: '/administration/grants',   label: 'Grants' },
 	];
 
 	function active(href: string): boolean {
@@ -37,8 +38,9 @@
 </div>
 
 <style>
-	.admin { max-width: 80rem; }
+	.admin { max-width: 80rem; width: 100%; flex: 1; min-height: 0; display: flex; flex-direction: column; }
 	.page-head { margin-bottom: 1rem; }
+	.tab-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 	h1 { font-size: 1.3rem; margin: 0 0 0.2rem; }
 	.sub { margin: 0; color: var(--text-muted); font-size: 0.9rem; }
 

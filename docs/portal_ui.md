@@ -68,7 +68,7 @@ The chrome lives in a SvelteKit route group so the login page stays bare.
 src/routes/
   +layout.svelte              global: imports app.css only
   login/                      password login (no shell)
-  select-identity/            persona picker (no shell; also the switcher target)
+  select-persona/            persona picker (no shell; also the switcher target)
   logout/  theme/  api/       endpoints
   (app)/                      <- everything inside gets the AppShell
     +layout.server.ts         guard: account -> persona; loads name/role/isAdmin/canSwitch
@@ -77,7 +77,8 @@ src/routes/
     devices/                  authorized device list (authz_list_devices)
     gateways/ products/ customers/ support/ settings/   stubs
     administration/           admin-gated; tabbed sub-nav
-      users/                  built (personas + accounts CRUD)
+      accounts/               built (login accounts; default + linked personas, paginated)
+      personas/               built (identities; search, paginate, group memberships)
       roles/ groups/ grants/  stubs
 ```
 
@@ -103,12 +104,36 @@ The local plane separates the **person** from the **working identity**:
 - `app_user` (the persona = authz subject): region-prefixed text `user_id`
   (`eu:123`), name, `role_label` (display), `is_admin` (interim capability gate),
   plus `group_membership` -> effective grants.
-- `account_identity` (N:M): which personas a person may assume.
+- `account_persona` (N:M): which personas a person may assume.
 
 See `docs/mdm_design.md` (two-plane split) and
 `infrastructure/sql/migrate_identity_local.sql` (+ the updated `schema_local.sql`).
 Only `group_id` crosses to the global authz plane, so making `user_id` text has
 no authz-function impact.
+
+### How identities link to grants (NOT per group)
+
+```
+groups --carry--> grants (scope: DE, JP+KR, ...)
+  ^
+  | join (group_membership)
+  |
+identity (app_user)  <- the authz subject; joins MANY groups, like a normal user
+  ^
+  | account_persona (N:M)
+  |
+person (login_account) -- authenticates
+```
+
+- An identity is **not** created per group. One identity joins many groups
+  (CCC_DE, and CCC_JP too if needed); the grants live on the groups.
+- **Normal employee** = one person + **one** identity that joins their groups.
+  They never see the selector (single linked identity).
+- **Tester / demo** = one person linked to **several** identities (a broad one
+  and a narrow one) to exercise different rights live.
+- A person needs **at least one** linked identity to sign in. The Accounts tab
+  gives every new account a DEFAULT persona (created fresh or linked from an
+  existing identity) that is always present and cannot be unlinked (see §7).
 
 ### Flow
 
@@ -117,15 +142,15 @@ no authz-function impact.
      |                     |
      |            0 personas -> error
      |            1 persona  -> set session {account, persona} -> app
-     |           >1 personas -> set session {account, null}    -> /select-identity
+     |           >1 personas -> set session {account, null}    -> /select-persona
      |
-/select-identity   ->  pick persona -> session {account, persona} -> app
+/select-persona   ->  pick persona -> session {account, persona} -> app
 ```
 
 Session (`src/lib/server/session.ts`) is a signed cookie carrying `accountId`
 (who authenticated) + `userId` (active persona, or null before selection).
 `hooks.server.ts` sets `locals.accountId` + `locals.userId`. The `(app)` guard:
-no account -> `/login`; account but no persona -> `/select-identity`; otherwise
+no account -> `/login`; account but no persona -> `/select-persona`; otherwise
 render.
 
 ### Switcher and gating in the shell
@@ -133,7 +158,7 @@ render.
 - **Name**: active persona "Lastname, Firstname".
 - **Role**: `role_label` if set, else group-count fallback. Display only.
 - **Switch identity**: when the account has >1 linked persona the name block
-  becomes a control (caret) linking to `/select-identity`; you can jump between
+  becomes a control (caret) linking to `/select-persona`; you can jump between
   personas live (SuperUser <-> BURepresentative) to demo the grant concept.
 - **Grayed-out rights**: the Administration rail item is disabled unless the
   active persona `is_admin`; the Administration routes + actions re-check it
@@ -141,7 +166,7 @@ render.
   ...)`; per-action grant gating replaces it as CRUD lands.
 
 Relevant files: `src/lib/server/{identity,password,session}.ts`,
-`src/routes/{login,select-identity}/`, `src/routes/(app)/+layout.server.ts`.
+`src/routes/{login,select-persona}/`, `src/routes/(app)/+layout.server.ts`.
 Bell/news is still a placeholder (`newsCount` = 0, `TODO(news)`).
 
 ## 6. Section views (roadmap)
@@ -171,7 +196,8 @@ section is admin-gated (`administration/+layout.server.ts` + per-action checks).
 
 | Tab | Status | Purpose | Backing |
 |---|---|---|---|
-| Users | **built** | Manage personas and login accounts (below). | local `app_user` / `login_account` / `account_identity` / `group_membership` (+ global `principal_group` for labels) |
+| Accounts | **built** | Login accounts (the sign-in entity). Each has one non-unlinkable DEFAULT persona + optional additional linked personas. | local `login_account` / `account_persona` |
+| Personas | **built** | Identities (the authz subject): search, paginate, edit, group memberships. | local `app_user` / `group_membership` (+ global `principal_group` for labels) |
 | Roles | stub | List roles and the privileges they bundle. | global `role` / `privilege` |
 | Groups | stub | Browse the group tree (ltree), view members and grants. | global `principal_group` + local membership |
 | Grants | stub | View/create grants `(group, role, scope)`. **Hardest**: enforce `authz_can(..., 'create', grant)` and the grant-on-grant subset guard (`mdm_design.md` §5.1). | global `grant` / `scope` / `scope_constraint` |
@@ -179,26 +205,38 @@ section is admin-gated (`administration/+layout.server.ts` + per-action checks).
 Build order for the rest: Roles (read) -> Groups (read + membership) -> Grants
 (read) -> Grants (create, with the subset guard).
 
-### Users tab (built)
+### Accounts and Personas tabs (built)
 
-Two columns, each a list + create form + detail panel (selection via `?persona=`
-/ `?account=` query params, mutation via named form actions in
-`administration/users/+page.server.ts`, all `requireAdmin`-guarded):
+Both are master-detail with a **full-height layout**: the tab fills the viewport
+(app-shell flex column with internal scroll), the searchable list scrolls
+internally, and a Prev / `from-to of total` / Next bar is pinned at the bottom;
+the edit panel on the right is its own scroll region (always in view).
+Pagination is **keyset** (cursor over `lastname,firstname,user_id` for personas,
+`username` for accounts, encoded in the URL as `after`/`before`; a `page` counter
+drives the position readout) - stable under inserts and fast at any depth, no
+offset. `?account=` / `?sel=` selects (preserving the list position), `?new=1`
+opens the create form; actions in the tab's `+page.server.ts`, all
+`requireAdmin`.
 
-- **Personas**: search/list; create (name, `role_label`, `home_region`,
-  `is_admin`; `user_id` auto-generated `<region>:<seq>`); edit; add/remove group
-  memberships via a type-ahead over `principal_group`
-  (`/api/administration/groups?q=`).
-- **Login accounts**: list; create (username, email, password -> scrypt hash);
-  link/unlink personas (`account_identity`).
+**Personas** (identities = authz subjects): create (name, `role_label`,
+`home_region`, `is_admin`; `user_id` auto `<region>:<seq>`); edit; add/remove
+group memberships via a type-ahead over `principal_group`
+(`/api/administration/groups?q=`). Memberships are what give an identity its
+rights - one identity joins many groups; grants live on the groups.
 
-This is the "add users for testing" surface: create a persona with specific
-memberships (its rights), then a login account linked to several personas to
-exercise the identity selector and the grant concept end-to-end.
+**Accounts** (login accounts): create with a DEFAULT persona that is either
+freshly created OR an existing one picked via persona type-ahead
+(`/api/administration/personas?q=`) - the latter is how a real/imported user is
+onboarded without duplicating their identity. `account_persona.is_primary`
+marks the default (partial-unique: one per account); the default shows a **View**
+button (jumps to it in the Personas tab) and cannot be unlinked. Additional
+identities are linked/created below, each with **View** + **Unlink**. The detail
+also resets email / display name / password.
 
 Seed for a working starting point: `seed_test_users.py` (6 personas) ->
-`migrate_identity_local.sql` -> `seed_login_accounts.mjs` (labels + accounts
-`super/super123` covering all 6, `nora/nora123` single-persona).
+`migrate_identity_local.sql` -> `migrate_identity_primary.sql` ->
+`seed_login_accounts.mjs | psql` (labels + accounts `super/super123` covering all
+6 with the first as default, `nora/nora123` single-persona).
 
 ## 8. Hard rules carried into the UI
 

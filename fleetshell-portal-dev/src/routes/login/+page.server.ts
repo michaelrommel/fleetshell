@@ -2,7 +2,7 @@ import type { PageServerLoad, Actions } from './$types';
 import { fail, redirect } from '@sveltejs/kit';
 import { base } from '$app/paths';
 import { signSession, SESSION_COOKIE, verifySession } from '$lib/server/session';
-import { verifyLogin, listIdentities } from '$lib/server/identity';
+import { verifyLogin, listPersonas } from '$lib/server/identity';
 
 function setSession(cookies: Parameters<Actions['default']>[0]['cookies'], accountId: string, userId: string | null) {
 	cookies.set(SESSION_COOKIE, signSession({ accountId, userId }), {
@@ -17,7 +17,7 @@ export const load: PageServerLoad = async ({ cookies }) => {
 	// Already signed in? Skip straight past the form.
 	const session = verifySession(cookies.get(SESSION_COOKIE));
 	if (session?.userId) throw redirect(303, base || '/');
-	if (session?.accountId) throw redirect(303, `${base}/select-identity`);
+	if (session?.accountId) throw redirect(303, `${base}/select-persona`);
 	return {};
 };
 
@@ -31,16 +31,16 @@ export const actions: Actions = {
 		const account = await verifyLogin(login, password);
 		if (!account) return fail(401, { error: 'Invalid username or password.', login });
 
-		const identities = await listIdentities(account.account_id);
-		if (identities.length === 0) {
-			return fail(403, { error: 'This account has no linked identities.', login });
+		const personas = await listPersonas(account.account_id);
+		if (personas.length === 0) {
+			return fail(403, { error: 'This account has no linked personas.', login });
 		}
-		if (identities.length === 1) {
-			setSession(cookies, account.account_id, identities[0].user_id);
+		if (personas.length === 1) {
+			setSession(cookies, account.account_id, personas[0].user_id);
 			throw redirect(303, base || '/');
 		}
 		// Multiple personas: authenticate the account, defer persona choice.
 		setSession(cookies, account.account_id, null);
-		throw redirect(303, `${base}/select-identity`);
+		throw redirect(303, `${base}/select-persona`);
 	},
 };
