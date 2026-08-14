@@ -76,7 +76,10 @@ secrets). Local DB password = from Secrets Manager (managed). See
 The importer mints fresh scope/grant UUIDs each run, so it is TRUNCATE-and-reload
 (a `--stage grants`-only re-run would duplicate). The schema is already the final
 shape in the live DBs, so a reload does NOT re-run the identity migrations -- only
-the two post-load steps (catalog normalize + group hierarchy).
+the post-load steps (catalog normalize + group hierarchy). **One exception**:
+`migrate_product_model.sql` (product/model split) must run **before** `load.py`,
+because the new importer writes the `product.kind/family` columns and the
+`product_model` table it creates. It is idempotent, so running it first is safe.
 
 ```bash
 export IMPORT_GLOBAL_DSN="host=localhost port=5432 dbname=fleetshell       user=fsadmin password=... sslmode=require"
@@ -85,13 +88,18 @@ export GLOBAL_WRITER_URL="postgresql://fsadmin:...@localhost:5432/fleetshell?ssl
 export LOCAL_WRITER_URL="postgresql://fsadmin:...@localhost:5433/fleetshell_local?sslmode=require"
 cd infrastructure
 
+# 0. Product/model schema (idempotent; MUST precede load.py so the new columns +
+#    product_model / product_model_app tables exist before the importer writes them).
+psql "$GLOBAL_WRITER_URL" -f sql/migrate_product_model.sql
+
 # 1. Reset the loaded/derived data (keeps schema + authz_privilege canonical seed).
+#    product CASCADE also clears product_model + product_model_app via their FK.
 psql "$GLOBAL_WRITER_URL" -c "TRUNCATE region, product, gateway, device, customer, customer_site, principal_group, authz_role, authz_scope, authz_grant CASCADE;"
 psql "$LOCAL_WRITER_URL"  -c "TRUNCATE app_user, login_account CASCADE;"
 
 # 2. Re-import from the legacy CSVs (fresh id maps; maps destroyed at the end).
 cd import && rm -f *.map.json
-python load.py --stage all                # now includes single-system (per-device) grants
+python load.py --stage all                # single-system grants + product models (RDPRODUCTMODEL: ~1386 models)
 
 # 3. Post-load, GLOBAL: normalize privileges to CRUD, then build the group tree.
 psql "$GLOBAL_WRITER_URL" -f ../sql/migrate_authz_catalog.sql
@@ -113,9 +121,9 @@ Notes:
 
 ## WHERE TO START NEXT (priority order)
 
-**Resume here: build the Products page (product tree), then the Devices page.**
-The whole Administration section is done; the two remaining primary sidebar
-sections with no view yet are Products and Devices.
+**Resume here: build the Devices page.** The Products page (product tree) and
+the whole Administration section are done; Devices is the remaining primary
+sidebar section with no view yet.
 
 0. **DONE so far** (see `docs/portal_ui.md` for detail):
    - Nucleus AppShell (top bar + icon rail) + identity model (password login ->
@@ -132,12 +140,17 @@ sections with no view yet are Products and Devices.
      (`build_group_hierarchy.py`) materializes the full tree from `groups.txt`.
      Reload steps are in "Re-running the data pipeline / full reload" above.
 
-1. **Products page** (NEXT). `/products` is still a stub. Build a product-tree
-   browser/editor over the `product` ltree (id-based path; modality = the
-   level-2 label, `subltree(path,0,2)`, per `load.py`). Reuse the tree pattern
-   from `GroupTree.svelte` (a generic tree component may be worth extracting).
-   Show modality > product; the Grants product picker already restricts to the
-   first two levels below the empty root (`nlevel <= 3`).
+1. **Products page** (BUILT). `/products` is a master-detail product-tree
+   editor per `docs/product_admin.md`: a four-level tree (modality > product >
+   model) via a `kind` discriminator, `family` on products, a `product_model`
+   satellite (partno + integer serial range + host flag), a `product_model_app`
+   Connect-app list (`AppEditor.svelte`; devices inherit live with full
+   per-device override), and a deep link to a future central `/services/infoproxy`
+   for device authorization. Model master data is imported from `RDPRODUCTMODEL`
+   (`load.py`, 1386 models). Components: `ProductTree.svelte`, `AppEditor.svelte`.
+   Schema: `migrate_product_model.sql`. **Remaining product follow-ups**: device
+   re-pointing (`device.product_path` -> matching model by serial range) and the
+   `/services` section (Infoproxy / E-Mail Relay / File Transfer).
 
 2. **Devices page** (AFTER Products). `/devices` currently shows the authorized
    list (`authz_list_devices`). Build the detail/view + edit (adapt

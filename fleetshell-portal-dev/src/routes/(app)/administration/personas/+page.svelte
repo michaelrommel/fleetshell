@@ -2,6 +2,7 @@
 	import { base } from '$app/paths';
 	import { page as pageState } from '$app/state';
 	import { enhance } from '$app/forms';
+	import SplitPane from '$lib/components/SplitPane.svelte';
 
 	let { data, form } = $props();
 
@@ -35,9 +36,8 @@
 	}
 </script>
 
-<div class="grid">
-	<!-- List column -->
-	<section>
+<SplitPane storageKey="personas" defaultLeft={40}>
+	{#snippet left()}
 		<div class="col-head">
 			<h2>Personas <span class="count">{data.total}</span></h2>
 			<a class="new-btn" href={newHref}>+ New persona</a>
@@ -69,10 +69,9 @@
 				<a class="pg" class:disabled={!data.hasNext} href={nextHref}>Next</a>
 			</div>
 		{/if}
-	</section>
+	{/snippet}
 
-	<!-- Detail column -->
-	<section>
+	{#snippet right()}
 		{#if data.detail}
 			<div class="card detail">
 				<h3>Edit persona <code>{data.detail.user_id}</code></h3>
@@ -124,6 +123,31 @@
 					{/if}
 				</div>
 
+				<details class="grants-box">
+					<summary>Effective grants <span class="count">{data.grantTotal}</span></summary>
+					{#if data.effectiveGrants.length}
+						<p class="hint">Grants from joined groups <em>and</em> their ancestors (inheritance is ancestor-or-self). <span class="inh-key">↑ = inherited</span>.</p>
+						<ul class="egrants">
+							{#each data.effectiveGrants as g (g.grant_id)}
+								<li>
+									<span class="role">{g.role_name}</span>
+									<span class="scope">
+										{#if g.scope_kind === 'single_system'}
+											<span class="kind">device</span>{g.single_label || 'single system'}
+										{:else}
+											{g.region}<span class="sep">·</span>{g.product}<span class="sep">·</span>{g.customer}{#if g.site !== 'ANY'}/{g.site}{/if}
+										{/if}
+									</span>
+									<span class="src" class:inh={g.inherited} title={g.inherited ? 'Inherited from an ancestor group' : 'Direct on a joined group'}>{g.source_group}{#if g.inherited} ↑{/if}</span>
+								</li>
+							{/each}
+						</ul>
+						{#if data.grantTotal > data.effectiveGrants.length}<p class="muted">Showing first {data.effectiveGrants.length} of {data.grantTotal}.</p>{/if}
+					{:else}
+						<p class="muted">No effective grants (no group memberships, or joined groups carry none).</p>
+					{/if}
+				</details>
+
 				<div class="danger-zone">
 					<form method="POST" action="?/deletePersona"
 					      onsubmit={(e) => confirmSubmit(e, `Delete persona "${data.detail?.firstname} ${data.detail?.lastname}"?`)}>
@@ -153,12 +177,10 @@
 			<div class="card placeholder">Select a persona, or click <strong>+ New</strong>.</div>
 		{/if}
 		{#if form?.error}<p class="error">{form.error}</p>{/if}
-	</section>
-</div>
+	{/snippet}
+</SplitPane>
 
 <style>
-	.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.4rem; flex: 1; min-height: 0; }
-	section { min-width: 0; display: flex; flex-direction: column; min-height: 0; }
 	.col-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.6rem; gap: 0.6rem; flex: none; }
 	h2 { font-size: 1rem; margin: 0; }
 	.count { color: var(--text-subtle); font-weight: 400; font-size: 0.85rem; }
@@ -174,7 +196,6 @@
 
 	.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.5rem 0.6rem; margin-bottom: 0.8rem; }
 	.list { padding: 0.25rem; flex: 1; min-height: 0; overflow-y: auto; }
-	section:last-child { overflow-y: auto; }
 	.placeholder { padding: 2rem; text-align: center; color: var(--text-subtle); }
 	.row { display: flex; align-items: center; justify-content: space-between; gap: 0.6rem; padding: 0.45rem 0.55rem; border-radius: var(--radius); text-decoration: none; color: var(--text); font-size: 0.88rem; }
 	.row:hover { background: var(--surface-2); }
@@ -215,5 +236,25 @@
 	button[type='submit'].danger-btn:hover { background: color-mix(in srgb, var(--danger) 82%, #000); }
 	code { background: var(--surface-2); padding: 0 0.3rem; border-radius: 3px; font-size: 0.78rem; color: var(--text-muted); }
 
-	@media (max-width: 60rem) { .grid { grid-template-columns: 1fr; } }
+	.grants-box { margin-top: 1.3rem; }
+	.grants-box > summary {
+		cursor: pointer; list-style: none; user-select: none;
+		font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-subtle);
+	}
+	.grants-box > summary::-webkit-details-marker { display: none; }
+	.grants-box > summary::before {
+		content: ''; display: inline-block; width: 0; height: 0; margin-right: 0.5rem;
+		border-left: 7px solid var(--text-muted); border-top: 5px solid transparent; border-bottom: 5px solid transparent;
+		vertical-align: middle; transition: transform 0.12s;
+	}
+	.grants-box[open] > summary::before { transform: rotate(90deg); }
+	.inh-key { text-transform: none; letter-spacing: 0; }
+	.egrants { list-style: none; padding: 0; margin: 0.5rem 0 0; display: flex; flex-direction: column; gap: 0.25rem; }
+	.egrants li { display: flex; align-items: baseline; gap: 0.6rem; font-size: 0.83rem; }
+	.egrants .role { flex: none; min-width: 3.5rem; font-weight: 600; color: var(--text-muted); font-size: 0.76rem; }
+	.egrants .scope { flex: 1; min-width: 0; color: var(--text); font-variant-numeric: tabular-nums; }
+	.egrants .kind { color: var(--accent); font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.03em; margin-right: 0.3rem; }
+	.egrants .sep { color: var(--text-subtle); margin: 0 0.3rem; }
+	.egrants .src { flex: none; color: var(--text-subtle); font-size: 0.74rem; white-space: nowrap; }
+	.egrants .src.inh { color: var(--text-muted); font-style: italic; }
 </style>

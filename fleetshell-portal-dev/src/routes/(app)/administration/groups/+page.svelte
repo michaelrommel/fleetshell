@@ -2,6 +2,7 @@
 	import { base } from '$app/paths';
 	import { page as pageState } from '$app/state';
 	import { enhance } from '$app/forms';
+	import SplitPane from '$lib/components/SplitPane.svelte';
 	import GroupTree from '$lib/components/GroupTree.svelte';
 
 	let { data, form } = $props();
@@ -27,16 +28,16 @@
 	}
 </script>
 
-<div class="grid">
-	<section class="tree-col">
+<SplitPane storageKey="groups" defaultLeft={30}>
+	{#snippet left()}
 		<div class="col-head">
 			<h2>Groups <span class="count">{data.nodes.length}</span></h2>
 			<a class="new-btn" href={newHref}>+ New group</a>
 		</div>
 		<GroupTree nodes={data.nodes} selectedId={data.sel} hrefFor={selHref} />
-	</section>
+	{/snippet}
 
-	<section>
+	{#snippet right()}
 		{#if data.detail}
 			<div class="card detail">
 				<h3>{displayLabel(data.detail.label)}</h3>
@@ -132,13 +133,10 @@
 			<div class="card placeholder">Select a group in the tree, or click <strong>+ New group</strong>.</div>
 		{/if}
 		{#if form?.error}<p class="error">{form.error}</p>{/if}
-	</section>
-</div>
+	{/snippet}
+</SplitPane>
 
 <style>
-	.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.4rem; flex: 1; min-height: 0; }
-	section { min-width: 0; display: flex; flex-direction: column; min-height: 0; }
-	section:last-child { overflow-y: auto; }
 	.col-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.6rem; gap: 0.6rem; flex: none; }
 	h2 { font-size: 1rem; margin: 0; }
 	.count { color: var(--text-subtle); font-weight: 400; font-size: 0.85rem; }
@@ -201,5 +199,4 @@
 	button[type='submit'].danger-btn { background: var(--danger); color: #fff; border: none; border-radius: var(--radius); padding: 0.4rem 0.8rem; font: inherit; font-size: 0.82rem; font-weight: 600; cursor: pointer; }
 	button[type='submit'].danger-btn:hover { background: color-mix(in srgb, var(--danger) 82%, #000); }
 
-	@media (max-width: 60rem) { .grid { grid-template-columns: 1fr; } }
 </style>

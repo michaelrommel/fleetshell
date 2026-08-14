@@ -2,6 +2,7 @@
 	import { base } from '$app/paths';
 	import { page as pageState } from '$app/state';
 	import { enhance } from '$app/forms';
+	import SplitPane from '$lib/components/SplitPane.svelte';
 	import GroupTree from '$lib/components/GroupTree.svelte';
 	import ScopePicker from '$lib/components/ScopePicker.svelte';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
@@ -36,13 +37,13 @@
 	}
 </script>
 
-<div class="grid">
-	<section class="tree-col">
+<SplitPane storageKey="grants" defaultLeft={30}>
+	{#snippet left()}
 		<div class="col-head"><h2>Grants <span class="count">by group</span></h2></div>
 		<GroupTree nodes={data.nodes} selectedId={data.sel} hrefFor={selHref} />
-	</section>
+	{/snippet}
 
-	<section>
+	{#snippet right()}
 		{#if data.detail}
 			<div class="card detail">
 				<h3>{data.detail.label}</h3>
@@ -117,8 +118,8 @@
 			<div class="card placeholder">Select a group in the tree to view and add its grants.</div>
 		{/if}
 		{#if form?.error}<p class="error">{form.error}</p>{/if}
-	</section>
-</div>
+	{/snippet}
+</SplitPane>
 
 <ConfirmDialog bind:open={confirmOpen} title="Delete grant?" message="This removes the grant and its scope.">
 	<form class="modal-form" method="POST" action="?/deleteGrant"
@@ -130,9 +131,6 @@
 </ConfirmDialog>
 
 <style>
-	.grid { display: grid; grid-template-columns: 1fr 1.2fr; gap: 1.4rem; flex: 1; min-height: 0; }
-	section { min-width: 0; display: flex; flex-direction: column; min-height: 0; }
-	section:last-child { overflow-y: auto; }
 	.col-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.6rem; gap: 0.6rem; flex: none; }
 	h2 { font-size: 1rem; margin: 0; }
 	.count { color: var(--text-subtle); font-weight: 400; font-size: 0.85rem; }
@@ -170,5 +168,5 @@
 	button[type='submit']:hover { background: var(--accent-hover); }
 	.error { color: var(--danger); font-size: 0.85rem; margin: 0.4rem 0 0; }
 
-	@media (max-width: 60rem) { .grid, .scope-grid { grid-template-columns: 1fr; } }
+	@media (max-width: 60rem) { .scope-grid { grid-template-columns: 1fr; } }
 </style>

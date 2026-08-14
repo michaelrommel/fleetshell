@@ -39,13 +39,14 @@ group_map   = IdMap(os.path.join(HERE, "group.map.json"))
 device_map  = IdMap(os.path.join(HERE, "device.map.json"))
 gateway_map = IdMap(os.path.join(HERE, "gateway.map.json"))
 product_map = IdMap(os.path.join(HERE, "product.map.json"))
+model_map   = IdMap(os.path.join(HERE, "model.map.json"))
 customer_map= IdMap(os.path.join(HERE, "customer.map.json"))
 site_map    = IdMap(os.path.join(HERE, "site.map.json"))
 hospital_lbl= LabelMap(os.path.join(HERE, "hospital.map.json"), hospital_generator())
 customer_lbl= LabelMap(os.path.join(HERE, "customer_lbl.map.json"), company_generator())
 site_lbl    = LabelMap(os.path.join(HERE, "site_lbl.map.json"), site_generator())
 
-ALL_MAPS = [user_map, group_map, device_map, gateway_map, product_map, customer_map, site_map,
+ALL_MAPS = [user_map, group_map, device_map, gateway_map, product_map, model_map, customer_map, site_map,
             hospital_lbl, customer_lbl, site_lbl]
 
 # --- role name -> (resource_type, verb) list ---------------------------------
@@ -142,10 +143,40 @@ def stage_reference(g: psycopg.Connection, emit: bool = True):
         labels = path.split(".")
         top = labels[1] if len(labels) > 1 else labels[0]
         product_modality[pid] = (pname.get(top) or "").strip()
-        prows.append((product_map.get(pid), path, None, None, None, pname.get(pid) or ""))
+        # kind by tree depth: root/modality <= L2, product = L3 (models are L4,
+        # loaded from RDPRODUCTMODEL below). Mirrors migrate_product_model.sql.
+        depth = len(labels)
+        kind = "modality" if depth <= 2 else "product"
+        prows.append((product_map.get(pid), path, kind, None, pname.get(pid) or ""))
     if emit:
-        copy_rows(g, "product (id,path,partno,serial_from,serial_to,name)", prows, on_conflict="id")
+        copy_rows(g, "product (id,path,kind,family,name)", prows, on_conflict="id")
         print(f"  product: {len(prows)}")
+
+    # --- product models (the leaf level below products) ---
+    # RDPRODUCTMODEL carries the rich per-model master data the old importer
+    # never moved: partno, integer serial range, host-computer flag. Each model
+    # becomes a kind='model' product node (child of its RDPRODUCT product, so
+    # nlevel 4) plus a 1:1 product_model satellite row. Names are catalog data
+    # (not PII), kept as-is. Serial ranges stay REAL (they are catalog bounds);
+    # note that device serials are faked, so demo devices won't fall in range.
+    def _int(s):
+        s = (s or "").strip()
+        return int(s) if s.isdigit() else None
+    mnodes, msat = [], []
+    for m in read("RDPRODUCTMODEL"):
+        mid, ppid = m["ID"], m["PRODUCTID"]
+        base = product_path.get(ppid)
+        if not base:
+            continue                       # orphan model -> skip
+        node = model_map.get(mid)
+        mnodes.append((node, f"{base}.{mid}", "model", None, (m["NAME"] or "").strip()))
+        msat.append((node, _int(m["PARTNUMBER"]), _int(m["SERIALFROM"]),
+                     _int(m["SERIALTO"]), (m["SYSTEMHOST"] or "").strip() == "1"))
+    if emit:
+        copy_rows(g, "product (id,path,kind,family,name)", mnodes, on_conflict="id")
+        copy_rows(g, "product_model (product_id,partno,serial_from,serial_to,is_host_computer)",
+                  msat, on_conflict="product_id")
+        print(f"  product_model: {len(mnodes)}")
 
     # --- gateways from the detail view (has region/country/identifier names) ---
     grows = []

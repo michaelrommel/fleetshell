@@ -171,14 +171,23 @@ Bell/news is still a placeholder (`newsCount` = 0, `TODO(news)`).
 
 ## 6. Section views (roadmap)
 
-**NEXT: Products, then Devices.** Administration (§7) is fully built.
+**NEXT: Devices.** Products (below) and Administration (§7) are built.
 
-1. **Products** (RESUME HERE): `/products` is a stub. Build a product-tree
-   browser/editor over the `product` ltree. The path is id-based; the **modality
-   = the level-2 label** (`subltree(path,0,2)`, per `load.py`), and the Grants
-   product picker already restricts to the first two levels below the empty root
-   (`nlevel <= 3`). Reuse the tree pattern from `GroupTree.svelte` (consider
-   extracting a generic tree component).
+1. **Products** (BUILT): `/products` is a master-detail product-tree
+   browser/editor over the `product` ltree (modality > product > model), built
+   per `docs/product_admin.md`. Left = `ProductTree.svelte` (whole tree, filter,
+   kind badges, collapsed by default); right = per-kind detail: rename (all),
+   `family` (product), model form (name/partno/serial range/host flag,
+   integer-validated) + `AppEditor.svelte` (the Connect-app list, adopting the
+   legacy fleetshell-portal port-rows layout: Name | Ports | Application | Guac |
+   E2E | x with Path/SNI + Guac sub-rows; edits a local array, saves all at once
+   to `?/saveApps`), a deep link to `/services/infoproxy?product=<id>`,
+   add-child + guarded delete. Writes admin-gated; view open. Model master data
+   is imported from `RDPRODUCTMODEL` (`load.py`).
+
+   The two columns use `SplitPane.svelte` -- a reusable draggable split with a
+   localStorage-persisted width (`storageKey`). The Administration master-detail
+   tabs (Groups, Grants, Accounts, Personas) use it too.
 2. **Devices** (AFTER Products): the list is built (`authz_list_devices`). Add a
    detail/view card (serial, material, product, region, customer/site, gateway,
    connection status) + edit gated by `authz_can(..., 'edit', device)`, adapted

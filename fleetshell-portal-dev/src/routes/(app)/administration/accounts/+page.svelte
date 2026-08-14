@@ -2,6 +2,7 @@
 	import { base } from '$app/paths';
 	import { page as pageState } from '$app/state';
 	import { enhance } from '$app/forms';
+	import SplitPane from '$lib/components/SplitPane.svelte';
 
 	let { data, form } = $props();
 
@@ -44,9 +45,8 @@
 	const others = $derived(data.linked.filter((p) => !p.is_primary));
 </script>
 
-<div class="grid">
-	<!-- List column -->
-	<section>
+<SplitPane storageKey="accounts" defaultLeft={40}>
+	{#snippet left()}
 		<div class="col-head">
 			<h2>Accounts <span class="count">{data.total}</span></h2>
 			<a class="new-btn" href={newHref}>+ New account</a>
@@ -81,10 +81,9 @@
 				<a class="pg" class:disabled={!data.hasNext} href={nextHref}>Next</a>
 			</div>
 		{/if}
-	</section>
+	{/snippet}
 
-	<!-- Detail column -->
-	<section>
+	{#snippet right()}
 		{#if data.detail}
 			<div class="card detail">
 				<h3>{data.detail.username} <code>{data.detail.account_id}</code></h3>
@@ -234,13 +233,10 @@
 			<div class="card placeholder">Select an account, or click <strong>+ New Account</strong>.</div>
 		{/if}
 		{#if form?.error}<p class="error">{form.error}</p>{/if}
-	</section>
-</div>
+	{/snippet}
+</SplitPane>
 
 <style>
-	.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.4rem; flex: 1; min-height: 0; }
-	section { min-width: 0; display: flex; flex-direction: column; min-height: 0; }
-	section:last-child { overflow-y: auto; }
 	.col-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.6rem; gap: 0.6rem; flex: none; }
 	h2 { font-size: 1rem; margin: 0; }
 	.count { color: var(--text-subtle); font-weight: 400; font-size: 0.85rem; }
@@ -301,5 +297,4 @@
 	.error { color: var(--danger); font-size: 0.85rem; margin: 0.4rem 0 0; }
 	code { background: var(--surface-2); padding: 0 0.3rem; border-radius: 3px; font-size: 0.78rem; color: var(--text-muted); }
 
-	@media (max-width: 60rem) { .grid { grid-template-columns: 1fr; } }
 </style>

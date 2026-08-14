@@ -174,16 +174,53 @@ CREATE TABLE IF NOT EXISTS region (
 );
 CREATE INDEX IF NOT EXISTS ix_region_path ON region USING gist (path);
 
--- The product tree (CT -> models -> partno -> serial ranges) as an ltree.
+-- The product tree (modality -> product -> model) as an ltree. The rich
+-- per-model attributes (partno, serial range, host flag, apps) live on the
+-- model level in the satellites below, NOT on this shared node -- see
+-- docs/product_admin.md.
 CREATE TABLE IF NOT EXISTS product (
-    id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    path        ltree NOT NULL,            -- e.g. 'ct.somatom.force'
-    partno      text,
-    serial_from text,
-    serial_to   text,
-    name        text NOT NULL DEFAULT ''
+    id     uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    path   ltree NOT NULL,                 -- id-based: modality.product.model
+    kind   text  NOT NULL DEFAULT 'product' -- level discriminator
+           CHECK (kind IN ('modality','product','model')),
+    family text,                           -- only meaningful on kind='product'
+    name   text  NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS ix_product_path ON product USING gist (path);
+CREATE INDEX IF NOT EXISTS ix_product_kind ON product(kind);
+
+-- Model-level typed attributes (1:1 with a kind='model' product node).
+CREATE TABLE IF NOT EXISTS product_model (
+    product_id       uuid PRIMARY KEY REFERENCES product(id) ON DELETE CASCADE,
+    partno           bigint,
+    serial_from      bigint,               -- inclusive lower bound (integer serials)
+    serial_to        bigint,               -- inclusive upper bound
+    is_host_computer boolean NOT NULL DEFAULT false
+);
+
+-- The Connect-application defaults for a model. Column-for-column identical to
+-- the client AppProfile (fleetshell-portal .../devices) so one editor component
+-- serves both the product-model page and the device page. Devices inherit these
+-- live unless they carry their own override rows (device_app, defined later).
+CREATE TABLE IF NOT EXISTS product_model_app (
+    id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    product_id  uuid NOT NULL REFERENCES product(id) ON DELETE CASCADE,  -- the model node
+    name        text NOT NULL,
+    application text NOT NULL
+                CHECK (application IN ('http','https','expert-i','rdp','vnc','ssh')),
+    ports       text NOT NULL DEFAULT '',   -- '3389' or a range like '3000-3020'
+    guac        boolean NOT NULL DEFAULT false,
+    e2ecrypt    boolean NOT NULL DEFAULT false,
+    sni         text NOT NULL DEFAULT '',
+    path        text NOT NULL DEFAULT '/',
+    width       int  NOT NULL DEFAULT 1920,
+    height      int  NOT NULL DEFAULT 1080,
+    dpi         int  NOT NULL DEFAULT 96,
+    drive       boolean NOT NULL DEFAULT false,
+    record      boolean NOT NULL DEFAULT false,
+    sort_order  int  NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS ix_product_model_app_product ON product_model_app(product_id);
 
 -- Devices: scope dimensions promoted to indexed columns; long tail in jsonb.
 CREATE TABLE IF NOT EXISTS device (

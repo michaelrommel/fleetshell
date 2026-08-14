@@ -23,6 +23,14 @@ async function requireAdmin(locals: App.Locals): Promise<void> {
 	if (!persona?.is_admin) throw error(403, 'forbidden');
 }
 
+const GRANT_LIMIT = 500;
+
+type EffectiveGrant = {
+	grant_id: string; role_name: string; scope_kind: string;
+	region: string; product: string; customer: string; site: string; single_label: string;
+	source_group: string; inherited: boolean;
+};
+
 type PersonaRow = {
 	user_id: string; firstname: string; lastname: string;
 	role_label: string | null; is_admin: boolean; home_region: string; group_count: number;
@@ -76,6 +84,8 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 
 	let detail: PersonaRow | null = null;
 	let memberships: { group_id: string; label: string }[] = [];
+	let effectiveGrants: EffectiveGrant[] = [];
+	let grantTotal = 0;
 	if (sel) {
 		[detail] = await localDb<PersonaRow[]>`
 			SELECT u.user_id, u.firstname, u.lastname, u.role_label, u.is_admin, u.home_region, 0 AS group_count
@@ -90,6 +100,46 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 			const byId = new Map(labels.map((l) => [l.group_id, l.label]));
 			memberships = gids.map((g) => ({ group_id: g, label: byId.get(g) ?? '(unknown)' }))
 				.sort((a, b) => a.label.localeCompare(b.label));
+
+			// Effective grants: grants on the joined groups + all ANCESTOR groups
+			// (inheritance is ancestor-or-self -- same expansion as authz_fastpath).
+			// Decoded so an investigator sees exactly which scope each grant carries
+			// and which group it came from (direct vs inherited).
+			const mg = globalDb`
+				SELECT DISTINCT gg.group_id, gg.label, gg.path
+				FROM principal_group ug
+				JOIN principal_group gg ON gg.path @> ug.path OR gg.group_id = ug.group_id
+				WHERE ug.group_id = ANY(${gids}::uuid[])`;
+			[{ total: grantTotal }] = await globalDb<{ total: number }[]>`
+				WITH mg AS (${mg})
+				SELECT count(*)::int AS total FROM mg JOIN authz_grant g ON g.group_id = mg.group_id`;
+			effectiveGrants = await globalDb<EffectiveGrant[]>`
+				WITH mg AS (${mg})
+				SELECT g.id::text AS grant_id, r.name AS role_name, s.kind AS scope_kind,
+				  COALESCE((SELECT string_agg(reg.name, ', ') FROM authz_scope_constraint c
+				            JOIN region reg ON reg.path = ANY(c.values::ltree[])
+				            WHERE c.scope_id = s.id AND c.dimension = 'region_path'), 'ANY') AS region,
+				  COALESCE((SELECT string_agg(
+				              COALESCE((SELECT tp.name FROM product tp WHERE tp.path = subltree(p.path, 0, LEAST(nlevel(p.path), 2))), p.name)
+				                || ' / ' || CASE WHEN nlevel(p.path) <= 2 THEN 'ANY' ELSE p.name END, ', ')
+				            FROM authz_scope_constraint c
+				            JOIN product p ON p.path = ANY(c.values::ltree[])
+				            WHERE c.scope_id = s.id AND c.dimension = 'product_path'), 'ANY') AS product,
+				  COALESCE((SELECT string_agg(cu.name, ', ') FROM authz_scope_constraint c
+				            JOIN customer cu ON cu.id = ANY(c.values::uuid[])
+				            WHERE c.scope_id = s.id AND c.dimension = 'customer_id'), 'ANY') AS customer,
+				  COALESCE((SELECT string_agg(si.name, ', ') FROM authz_scope_constraint c
+				            JOIN customer_site si ON si.id = ANY(c.values::uuid[])
+				            WHERE c.scope_id = s.id AND c.dimension = 'site_id'), 'ANY') AS site,
+				  COALESCE(s.label, '') AS single_label,
+				  mg.label AS source_group,
+				  (mg.group_id <> ALL(${gids}::uuid[])) AS inherited
+				FROM mg
+				JOIN authz_grant g ON g.group_id = mg.group_id
+				JOIN authz_role r  ON r.id = g.role_id
+				JOIN authz_scope s ON s.id = g.scope_id
+				ORDER BY inherited, r.name, source_group, region, product
+				LIMIT ${GRANT_LIMIT}`;
 		}
 	}
 
@@ -99,7 +149,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 		hasNext: page * PAGE_SIZE < total,
 		prevCursor: firstKey ? encodeKey(firstKey) : null,
 		nextCursor: lastKey ? encodeKey(lastKey) : null,
-		personas, sel, isNew, detail, memberships,
+		personas, sel, isNew, detail, memberships, effectiveGrants, grantTotal, grantLimit: GRANT_LIMIT,
 	};
 };
 
