@@ -19,6 +19,7 @@ and have enough context to proceed.
 5. [Component: fleetshell-gateway](#5-component-fleetshell-gateway)
 6. [Cross-cutting concerns](#6-cross-cutting-concerns)
 7. [Open work items](#7-open-work-items)
+8. [Master Data Management (MDM) rebuild](#8-master-data-management-mdm-rebuild)
 
 ---
 
@@ -867,3 +868,109 @@ JWT claim matches automatically without extra env vars.
 ### Simulated test devices (AWS VPC)
 
 - [ ] Windows VMs with RDP, VNC, HTTP, HTTPS (self-signed certs)
+
+---
+
+## 8. Master Data Management (MDM) rebuild
+
+A parallel effort replacing the Valkey key/value store as the system of record
+for device/gateway/customer relations and authorization. **New agents working on
+MDM: read `docs/mdm_status.md` first** (start-here handoff), then
+`docs/mdm_design.md`, `docs/authz_caching.md`, `docs/data_import.md`,
+`docs/portal_ui.md` (portal-dev UI: AppShell shell + section roadmap).
+
+### New components (not in §1's original layout)
+
+```
+fleetshell-portal-dev/       # NEW SvelteKit portal, served under /dev/ (base path)
+  src/lib/components/
+    AppShell.svelte           #   brand top-bar + icon-rail sidebar (Nucleus look)
+    Logo.svelte               #   inlined Siemens Healthineers wordmark (--logo-fg)
+    PagePlaceholder.svelte    #   stub card for not-yet-built sections
+  src/lib/nav.ts              #   sidebar source of truth (PRIMARY_NAV / UTILITY_NAV)
+  src/lib/server/identity.ts  #   person(login_account)/persona(app_user) helpers
+  src/lib/server/password.ts  #   scrypt hash/verify (dev login; SAML/OAuth later)
+  src/lib/server/session.ts   #   signed cookie {accountId, active userId}
+  src/routes/login/           #   password login
+  src/routes/select-identity/ #   post-login persona picker + top-bar switcher target
+  src/routes/(app)/           #   auth-guarded shell group (account -> persona)
+    devices/ gateways/ products/ customers/ support/ settings/
+    administration/           #   admin-gated tabbed sub-nav
+      users/                  #     personas + login accounts CRUD (built)
+      roles/ groups/ grants/  #     stubs
+  src/lib/server/db.ts        #   postgres.js pools: global + local Aurora
+  src/lib/server/authz.ts     #   resolveGroupIds (local) + listDevices/can (global)
+  src/lib/server/theme.ts     #   Nucleus/Gruvbox theme resolution (cookie/DB/admin)
+  src/app.css                 #   design tokens (data-theme)
+  ws-server.js / server.js    #   base-path-aware WebSocket + prod entry (node server.js)
+  theme-reference/*.png       #   Siemens Healthineers "Remote Service" look to match
+  theme-reference/logo.div    #   source of the Healthineers wordmark SVG
+  theme-reference/logo.div    #   source of the Healthineers wordmark SVG
+
+infrastructure/
+  make_aurora_global.sh        # Aurora Global DB (master data + authz), + reader + RDS Proxy
+  make_aurora_local.sh         # Standalone Aurora (user PII + group membership)
+  sql/
+    schema_global.sql          # master data + polymorphic authz model + region ltree
+    schema_local.sql           # login_account + app_user personas + group_membership
+    authz_resolve.sql          # reference authz functions (executable spec)
+    authz_fastpath.sql         # INDEX-USING authz_list_devices / authz_can (production)
+    migrate_region_access.sql  # region hierarchy + graded access_requirement
+    migrate_theme_*.sql        # per-user theme + org default
+    migrate_identity_local.sql # person/persona split + region-prefixed text user_id
+    seed_demo.sql / verify_demo.sql   # correctness proof (all green)
+  import/
+    load.py                    # anonymizing CSV importer (192k devices, ~1M grants)
+    anonymize.py               # IdMap/LabelMap/fakers (destroyed after run)
+    seed_test_users.py         # curated broad->narrow test personas for the dev login
+    seed_login_accounts.mjs    # dev login accounts + persona role_label/is_admin
+    old_database/              # legacy CSV exports (gitignored; never commit)
+
+docs/
+  mdm_status.md                # START HERE: current state + where to start next
+  mdm_design.md                # architecture: two planes, authz model, §5.1 hard rules
+  authz_caching.md             # perf: L0/L1 caches, §11 validated benchmark
+  data_import.md               # import + anonymization plan
+  portal_ui.md                 # portal-dev UI: AppShell (top bar + icon rail),
+                               #   routing, theming, section + Administration roadmap
+```
+
+### One-paragraph model
+
+Two-plane split: GLOBAL Aurora (master data + authz, replicated worldwide) holds
+`device / gateway / customer / customer_site / product / region` + the authz
+model (`privilege/role/grant/scope/scope_constraint`); LOCAL Aurora (per region)
+holds `login_account` (the human) + `app_user` persona PII + `account_identity`
+(N:M) + `group_membership`. Authorization is ABAC: a `grant` =
+(group, role, scope); scopes are attribute predicates over region/product ltree
+subtrees + customer/site, with a graded `access_requirement` (open/device/
+customer/site). Hot path: resolve user->groups locally, then evaluate
+groups->grants->scopes against globally-replicated master data. The list query
+is index-using SQL (GiST on ltree paths), no bitmaps.
+
+### Status: infra + schema + import + perf DONE; UI shell + identity model DONE.
+
+The portal-dev application chrome is built (`docs/portal_ui.md`): brand top-bar
+(Healthineers logo + "FleetShell Portal"; theme toggle, bell/news placeholder,
+name/role + persona switcher, logout) and an icon-rail sidebar (Devices,
+Gateways, Products, Customers/Sites, Administration; Support, Settings) matching
+the Nucleus look. Every page lives in the `(app)` route group behind the guard.
+
+The person/persona identity model is built: password login to a `login_account`
+(the human), a post-login Identity Selector picking one of its linked `app_user`
+personas (region-prefixed text `user_id`), a top-bar switcher, and an
+admin-gated Administration > Users tab that does persona + login-account CRUD.
+Apply `infrastructure/sql/migrate_identity_local.sql` then run
+`seed_login_accounts.mjs` (accounts `super/super123`, `nora/nora123`).
+
+See `docs/portal_ui.md` §6-§7 for the remaining roadmap: (1) device
+detail/view+edit and Gateways (adapt from `fleetshell-portal/`), (2) Products and
+Customers/Sites, (3) the rest of Administration (Roles -> Groups -> Grants,
+grant-create last), plus (4) L0/L1 Valkey caches, (5) real SAML/OAuth (swaps
+`verifyLogin`), (6) Dockerfile + ECS/ALB `/dev/*` deploy.
+
+### Hard rules (do not break — see `docs/mdm_design.md` §5.1)
+
+NULL device attribute = does NOT match; graded `access_requirement` gating;
+region/product are ltree subtree scopes; grant inheritance is ancestor-or-self;
+grant-on-grant needs the "can't grant what you don't hold" subset guard.
