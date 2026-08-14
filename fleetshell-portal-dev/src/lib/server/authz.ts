@@ -73,3 +73,22 @@ export async function can(
 	`;
 	return row?.ok ?? false;
 }
+
+/**
+ * Enumerate the device ids a set of groups may `verb`, capped. Used by the
+ * Devices page 'My scope' mode to constrain a searchable/paginated query to the
+ * authorized set. For very broad scopes (whole fleet) admins use 'All devices'
+ * mode instead, so the cap is a safety bound, not a correctness limit.
+ */
+export async function authorizedDeviceIds(
+	groupIds: string[],
+	verb: string,
+	cap = 20000,
+): Promise<string[]> {
+	if (groupIds.length === 0) return [];
+	const rows = await globalDb<{ id: string }[]>`
+		SELECT id::text AS id
+		FROM authz_list_devices(${groupIds}::uuid[], ${verb}, ${null}, ${null}, ${cap})
+	`;
+	return rows.map((r) => r.id);
+}

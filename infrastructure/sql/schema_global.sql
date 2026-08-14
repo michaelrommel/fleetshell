@@ -239,6 +239,15 @@ CREATE TABLE IF NOT EXISTS device (
     -- 'device', and 'customer'/'site' need a grant that names that dimension.
     access_requirement text NOT NULL DEFAULT 'open'
                        CHECK (access_requirement IN ('open','device','customer','site')),
+    -- device-identity fields (searchable; anonymized in the dev dump)
+    serial             text,              -- SERIAL
+    functional_location text,             -- IDENTIFIER3 (NNN-NNNNNN)
+    technical_ident    text,              -- SYSTEMID2 ("Technical Ident")
+    host_hw_id         text,              -- HOSTID ("Host/Hardware ID")
+    order_number       text,              -- ORDERNO
+    ip_address         text,              -- IPADDRESS1 (primary)
+    ip_real            text,              -- REALIPADDRESS (secondary)
+    contact            text,              -- CONTACT (PII; anonymized)
     attrs              jsonb NOT NULL DEFAULT '{}'::jsonb,   -- extensible dimensions
     updated_at         timestamptz NOT NULL DEFAULT now()
 );
@@ -250,6 +259,15 @@ CREATE INDEX IF NOT EXISTS ix_device_customer     ON device(customer_id);
 CREATE INDEX IF NOT EXISTS ix_device_site         ON device(site_id);
 CREATE INDEX IF NOT EXISTS ix_device_gateway      ON device(gateway_id);
 CREATE INDEX IF NOT EXISTS ix_device_attrs        ON device USING gin (attrs);
+-- Trigram indexes for the Google-style device search (serial / FL / IP / etc.).
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+CREATE INDEX IF NOT EXISTS ix_device_serial_trgm   ON device USING gin (serial gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS ix_device_fl_trgm       ON device USING gin (functional_location gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS ix_device_ip_trgm       ON device USING gin (ip_address gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS ix_device_ipreal_trgm   ON device USING gin (ip_real gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS ix_device_tid_trgm      ON device USING gin (technical_ident gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS ix_device_host_trgm     ON device USING gin (host_hw_id gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS ix_device_ordno_trgm    ON device USING gin (order_number gin_trgm_ops);
 
 -- customer_site membership: the manual list and the dynamic-filter link.
 CREATE TABLE IF NOT EXISTS customer_site_member_static (

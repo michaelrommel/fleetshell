@@ -21,7 +21,9 @@ from __future__ import annotations
 import argparse, csv, gzip, os, sys, uuid
 import psycopg
 from anonymize import IdMap, LabelMap, fake_person, fake_email, fake_serial, \
-    hospital_generator, company_generator, site_generator
+    hospital_generator, company_generator, site_generator, \
+    functional_location_generator, ip_generator, technical_ident_generator, \
+    hostid_generator, orderno_generator, contact_generator
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SRC = os.path.join(HERE, "old_database")
@@ -45,9 +47,15 @@ site_map    = IdMap(os.path.join(HERE, "site.map.json"))
 hospital_lbl= LabelMap(os.path.join(HERE, "hospital.map.json"), hospital_generator())
 customer_lbl= LabelMap(os.path.join(HERE, "customer_lbl.map.json"), company_generator())
 site_lbl    = LabelMap(os.path.join(HERE, "site_lbl.map.json"), site_generator())
+fl_lbl      = LabelMap(os.path.join(HERE, "fl.map.json"),        functional_location_generator())
+ip_lbl      = LabelMap(os.path.join(HERE, "ip.map.json"),        ip_generator())
+tid_lbl     = LabelMap(os.path.join(HERE, "tid.map.json"),       technical_ident_generator())
+host_lbl    = LabelMap(os.path.join(HERE, "host.map.json"),      hostid_generator())
+ord_lbl     = LabelMap(os.path.join(HERE, "ord.map.json"),       orderno_generator())
+contact_lbl = LabelMap(os.path.join(HERE, "contact.map.json"),   contact_generator())
 
 ALL_MAPS = [user_map, group_map, device_map, gateway_map, product_map, model_map, customer_map, site_map,
-            hospital_lbl, customer_lbl, site_lbl]
+            hospital_lbl, customer_lbl, site_lbl, fl_lbl, ip_lbl, tid_lbl, host_lbl, ord_lbl, contact_lbl]
 
 # --- role name -> (resource_type, verb) list ---------------------------------
 CRUD_DEVICE = [("device","view"),("device","connect"),("device","edit"),("device","delete")]
@@ -82,6 +90,7 @@ region_path: dict[str,str] = {}      # RDREGION.ID -> id-based ltree
 region_iso:  dict[str,str] = {}      # RDREGION.ID -> ISO (country ancestor)
 product_path: dict[str,str] = {}     # RDPRODUCT.ID -> id-based ltree
 product_modality: dict[str,str] = {} # RDPRODUCT.ID -> top-level category name
+product_model_path: dict[str,str] = {} # RDPRODUCTMODEL.ID -> model node ltree
 gateway_src_ids: set = set()         # RSROUTER ids that actually got a gateway row
 
 
@@ -169,7 +178,9 @@ def stage_reference(g: psycopg.Connection, emit: bool = True):
         if not base:
             continue                       # orphan model -> skip
         node = model_map.get(mid)
-        mnodes.append((node, f"{base}.{mid}", "model", None, (m["NAME"] or "").strip()))
+        mpath = f"{base}.{mid}"
+        product_model_path[mid] = mpath
+        mnodes.append((node, mpath, "model", None, (m["NAME"] or "").strip()))
         msat.append((node, _int(m["PARTNUMBER"]), _int(m["SERIALFROM"]),
                      _int(m["SERIALTO"]), (m["SYSTEMHOST"] or "").strip() == "1"))
     if emit:
@@ -223,24 +234,39 @@ def stage_devices(g: psycopg.Connection, limit: int | None):
         did = device_map.get(r["ID"])
         rid = r["REGIONID"]
         pid = r["PRODUCTID"]
+        pmid = (r.get("PRODUCTMODELID") or "").strip()
         iso = region_iso.get(rid) or None
         exp, esite = r["EXPLICITAUTHEXP"], r["EXPLICITAUTHSITE"]
         access = "device" if exp == "1" else ("site" if esite == "1" else "open")
         cust_u = cust_uuid(r.get("CUSTOMERID",""), iso)
         site_u = site_uuid(r.get("CUSTOMERSITEID",""), cust_u, iso, access == "site")
+
+        # Anonymize a source field via a stable LabelMap; empty -> NULL.
+        def an(m, raw):
+            v = (raw or "").strip()
+            return m.get(v) if v else None
+
         drows.append((
             did,
             region_path.get(rid),
             iso,
             (product_modality.get(pid) or None),
-            product_path.get(pid),
+            product_model_path.get(pmid) or product_path.get(pid),   # re-point to the MODEL node
             cust_u,
             site_u,
             gateway_map.get(r["RSROUTERID"]) if r.get("RSROUTERID") in gateway_src_ids else None,
             hospital_lbl.get(r.get("HOSPITAL") or r["ID"]),
             None,                                   # software_version unknown in export
             access,
-            psycopg.types.json.Json({"serial": fake_serial(), "city": None}),
+            psycopg.types.json.Json({"city": None}),
+            fake_serial(),                          # serial (SERIAL)
+            an(fl_lbl,   r.get("IDENTIFIER3")),     # functional_location
+            an(tid_lbl,  r.get("SYSTEMID2")),       # technical_ident
+            an(host_lbl, r.get("HOSTID")),          # host_hw_id
+            an(ord_lbl,  r.get("ORDERNO")),         # order_number
+            an(ip_lbl,   r.get("IPADDRESS1")),      # ip_address
+            an(ip_lbl,   r.get("REALIPADDRESS")),   # ip_real (same map -> same fake per real ip)
+            an(contact_lbl, r.get("CONTACT")),      # contact (PII)
         ))
         if len(drows) >= 10000:
             _flush_devices(g, drows, cust_rows, site_rows); drows.clear()
@@ -255,7 +281,9 @@ def _flush_devices(g, drows, cust_rows, site_rows):
         copy_rows(g, "customer_site (id,customer_id,country,name,requires_explicit_grant,membership_kind)", site_rows, on_conflict="id"); site_rows.clear()
     if drows:
         copy_rows(g, "device (id,region_path,country_iso,modality,product_path,customer_id,"
-                     "site_id,gateway_id,hospital_name,software_version,access_requirement,attrs)", drows, on_conflict="id")
+                     "site_id,gateway_id,hospital_name,software_version,access_requirement,attrs,"
+                     "serial,functional_location,technical_ident,host_hw_id,order_number,"
+                     "ip_address,ip_real,contact)", drows, on_conflict="id")
 
 
 # =============================================================================

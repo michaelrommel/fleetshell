@@ -18,6 +18,7 @@ Requires: Faker  (see requirements.txt)
 from __future__ import annotations
 import json
 import os
+import random
 import uuid
 from faker import Faker
 
@@ -110,3 +111,44 @@ def company_generator():
 
 def site_generator():
     return lambda: f"{fake.city()} Site"
+
+
+# --- device-identity generators (format-preserving, stable via LabelMap) -----
+# These fake the VALUE while keeping the general SHAPE, so the anonymized dump
+# stays realistic and searchable without being identifying.
+
+def functional_location_generator():
+    # IDENTIFIER3 shape: NNN-NNNNNN (a 3-digit prefix + a numeric tail).
+    return lambda: f"{random.randint(0, 999):03d}-{random.randint(0, 999999):06d}"
+
+
+def ip_generator():
+    # A plausible private-range IPv4 (10/172.16-31/192.168), like the source.
+    def gen():
+        block = random.choice(("10", "172", "192"))
+        if block == "10":
+            return f"10.{random.randint(0,255)}.{random.randint(0,255)}.{random.randint(1,254)}"
+        if block == "172":
+            return f"172.{random.randint(16,31)}.{random.randint(0,255)}.{random.randint(1,254)}"
+        return f"192.168.{random.randint(0,255)}.{random.randint(1,254)}"
+    return gen
+
+
+def technical_ident_generator():
+    # SYSTEMID2 shape: a free-form asset tag (letters + digits, sometimes dashed).
+    return lambda: fake.bothify("??####-##").upper()
+
+
+def hostid_generator():
+    # HOSTID shape: a hex host/hardware id, e.g. '9-0f28c0e2'.
+    return lambda: f"{random.randint(8,9)}-{fake.hexify('^^^^^^^^')}"
+
+
+def orderno_generator():
+    # ORDERNO shape: a numeric order/PO number.
+    return lambda: fake.numerify("########")
+
+
+def contact_generator():
+    # CONTACT is PII (name + phone). Replace wholesale with a fake person + phone.
+    return lambda: f"{fake.first_name()} {fake.last_name()} {fake.phone_number()}"

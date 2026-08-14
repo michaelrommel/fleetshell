@@ -188,12 +188,34 @@ Bell/news is still a placeholder (`newsCount` = 0, `TODO(news)`).
    The two columns use `SplitPane.svelte` -- a reusable draggable split with a
    localStorage-persisted width (`storageKey`). The Administration master-detail
    tabs (Groups, Grants, Accounts, Personas) use it too.
-2. **Devices** (AFTER Products): the list is built (`authz_list_devices`). Add a
-   detail/view card (serial, material, product, region, customer/site, gateway,
-   connection status) + edit gated by `authz_can(..., 'edit', device)`, adapted
-   from `fleetshell-portal/.../devices`. A **device browser/search** here also
-   unblocks **single-system grant creation** in the Grants tab (deferred; device
-   serials are anonymized in the dump).
+2. **Devices** (BUILT): master-detail (`SplitPane`, storageKey `devices`).
+   **Left**: a Google-style search box -- bare terms hit serial / functional
+   location / IP; qualifiers `sn:` `fl:` `ip:` `tid:` `host:` `ord:` restrict to a
+   field, ANDed (stage 1: runs on submit; stage 2 debounced live search TODO) --
+   an admin **My scope | All devices** toggle (scope = `authorizedDeviceIds`,
+   all = whole fleet), a results table (serial / FL / model / IP / customer),
+   and keyset pagination over `id`. **Right**: device detail with view + edit
+   (admin) of the identity fields (serial, functional_location, technical_ident,
+   host_hw_id, order_number, ip_address, ip_real, contact, hospital,
+   software_version, access_requirement) and relations via `EntityPicker`
+   type-aheads (product **model**, region, customer, site, gateway; save
+   recomputes denormalized modality + country_iso). Admin **create + delete**
+   (delete blocked when a single-system grant references the device, since
+   `authz_scope_device` has no FK cascade). New APIs: `/api/administration/models`
+   (kind='model') and `/api/administration/gateways`. Device identity fields +
+   model re-point come from `migrate_device_identity.sql` + `load.py`
+   (RDSERVICEDSYSTEM). Components: `EntityPicker.svelte`.
+
+   **Count / performance**: the list total uses **approach A (URL-carry)** --
+   the page query alone is ~455ms (scope) / instant (all, PK keyset); the
+   expensive exact count (~800ms, materializes the visible-id set) is computed
+   **only when the filter changes**, via a client fetch to `/devices/count`, and
+   threaded through the pagination links as `&n=` so paging never recomputes it.
+   Footer shows `from-to of <n>` with a spinner until the count arrives. Next
+   step (see `docs/authz_caching.md`): a Valkey L1 cache for the count and the
+   ~455ms visible-id-set floor (the earlier `authorizedDeviceIds` +
+   `id = ANY(20000)` approach was the cause of the original 4-7s loads and is
+   removed).
 3. **Gateways**: list + view-edit adapted from the legacy gateway page.
 4. **Customers / Sites**: customer list with their sites; view-edit;
    `access_requirement` (open/device/customer/site) surfaced. (Customer/site

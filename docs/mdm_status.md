@@ -91,6 +91,7 @@ cd infrastructure
 # 0. Product/model schema (idempotent; MUST precede load.py so the new columns +
 #    product_model / product_model_app tables exist before the importer writes them).
 psql "$GLOBAL_WRITER_URL" -f sql/migrate_product_model.sql
+psql "$GLOBAL_WRITER_URL" -f sql/migrate_device_identity.sql   # device serial/FL/IP/tid/host/ord/contact + trigram indexes
 
 # 1. Reset the loaded/derived data (keeps schema + authz_privilege canonical seed).
 #    product CASCADE also clears product_model + product_model_app via their FK.
@@ -99,7 +100,7 @@ psql "$LOCAL_WRITER_URL"  -c "TRUNCATE app_user, login_account CASCADE;"
 
 # 2. Re-import from the legacy CSVs (fresh id maps; maps destroyed at the end).
 cd import && rm -f *.map.json
-python load.py --stage all                # single-system grants + product models (RDPRODUCTMODEL: ~1386 models)
+python load.py --stage all                # single-system grants + product models (RDPRODUCTMODEL: ~1386 models) + device identity fields
 
 # 3. Post-load, GLOBAL: normalize privileges to CRUD, then build the group tree.
 psql "$GLOBAL_WRITER_URL" -f ../sql/migrate_authz_catalog.sql
@@ -152,12 +153,24 @@ sidebar section with no view yet.
    re-pointing (`device.product_path` -> matching model by serial range) and the
    `/services` section (Infoproxy / E-Mail Relay / File Transfer).
 
-2. **Devices page** (AFTER Products). `/devices` currently shows the authorized
-   list (`authz_list_devices`). Build the detail/view + edit (adapt
-   `fleetshell-portal/.../devices`), and a **device browser/search** -- which is
-   also the prerequisite for **single-system grant creation** in the Grants tab
-   (deferred because device serials are anonymized in the current dump; needs a
-   real device identifier/search).
+2. **Devices page** (BUILT). `/devices` is a master-detail browser: Google-style
+   search (bare terms over serial/FL/IP; qualifiers `sn:`/`fl:`/`ip:`/`tid:`/
+   `host:`/`ord:`), admin `My scope | All devices` toggle, keyset pagination,
+   detail view+edit of identity fields + relations (`EntityPicker` type-aheads:
+   model/region/customer/site/gateway), admin create+delete (delete blocked when
+   a single-system grant references the device). The device identity fields
+   (serial, functional_location=IDENTIFIER3, technical_ident=SYSTEMID2,
+   host_hw_id=HOSTID, order_number, ip_address/ip_real, contact) are imported
+   anonymized from RDSERVICEDSYSTEM, and `product_path` now points at the **model**
+   node (via PRODUCTMODELID). Schema: `migrate_device_identity.sql` (+ pg_trgm
+   indexes). New APIs: `/api/administration/{models,gateways}`. **TODO**: stage-2
+   debounced live search; wire the Devices browser into single-system grant
+   creation in the Grants tab (now unblocked -- real device search exists).
+   **Performance**: scope-mode paging is ~455ms (joins the tuned
+   `authz_visible_device_ids`); the exact count (~800ms) is computed only on
+   filter change (client fetch to `/devices/count`) and carried through paging
+   links as `&n=` (approach A). NEXT PERF STEP: Valkey L1 cache for the count +
+   the visible-id-set floor (see `docs/authz_caching.md`).
 
 3. **Slice C -- group-membership enforcement.** Replace the interim `is_admin`
    check on Groups' add/remove member with a real group-scoped `authz_can`
