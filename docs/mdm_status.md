@@ -40,9 +40,11 @@ untouched and still serves `/`.
 - **Portal dev slice working** (`fleetshell-portal-dev/`): password login for a
   `login_account` (the human) that assumes one of its linked `app_user` personas
   via a post-login **Persona Selector** (switchable from the top bar); Nucleus
-  AppShell (top bar + icon rail); authorized device list; Administration with
-  Accounts + Personas tabs (paginated CRUD, default persona, admin-gated); two selectable themes (Nucleus
-  default / Gruvbox), base-path-aware WebSocket server, postgres.js to both
+  AppShell (top bar + icon rail); authorized device list; **full Administration**
+  (Accounts, Personas, Roles = editable privilege matrix, Groups = expandable
+  tree, Grants v1 = group-centric scope builder), admin-gated; two selectable
+  themes (Nucleus default / Gruvbox), base-path-aware WebSocket server,
+  postgres.js to both
   planes.
 
 ## How to run it (local dev)
@@ -111,32 +113,55 @@ Notes:
 
 ## WHERE TO START NEXT (priority order)
 
-1. **Nucleus AppShell + identity model** - DONE. The brand top-bar + icon-rail
-   sidebar are built (`src/lib/components/AppShell.svelte`, `Logo.svelte`,
-   `nav.ts`) and every page lives inside the `(app)` route group. Sidebar:
-   Devices, Gateways, Products, Customers/Sites, Administration, then Support,
-   Settings. Top bar: logo + "FleetShell Portal" left; theme toggle, bell (news
-   placeholder), name/role + persona switcher, logout right. Password login ->
-   `login_account` -> Persona Selector -> active `app_user` persona
-   (region-prefixed `user_id`); Administration has Accounts + Personas tabs
-   (paginated CRUD, non-unlinkable default persona, admin-gated). See `docs/portal_ui.md`. **Next UI work:** device
-   detail/view + edit (adapt `fleetshell-portal/.../devices`), then Gateways,
-   then the rest of Administration (Roles -> Groups -> Grants; grant-create last
-   because of the subset guard). See `docs/portal_ui.md` §6-§7.
-2. **L0/L1 Valkey caches** per `docs/authz_caching.md` (resolved-scope cache +
-   scope-signature page cache). Not yet built; the DB is fast enough that it's
-   only needed under the login thundering herd.
-3. **CRUD forms** (groups, grants, devices) with `authz_can` enforcement and the
-   grant-on-grant "can't grant what you don't hold" invariant
-   (`docs/mdm_design.md` §5.1). The persona `is_admin` gate on Administration is
-   an INTERIM stand-in for `authz_can(persona, 'admin', ...)`; replace it here.
-4. **Real auth** (SAML/OAuth) - replace the password check in
-   `src/lib/server/identity.ts` `verifyLogin` (and `session.ts`) with the IdP.
-   The person/persona split already anticipates this: the IdP identifies the
-   `login_account`; the Persona Selector + `account_persona` mapping are
-   unchanged. Callers read `locals.userId` (active persona), so it stays
-   contained.
-5. **Deploy** — Dockerfile for `fleetshell-portal-dev` (mirror
+**Resume here: build the Products page (product tree), then the Devices page.**
+The whole Administration section is done; the two remaining primary sidebar
+sections with no view yet are Products and Devices.
+
+0. **DONE so far** (see `docs/portal_ui.md` for detail):
+   - Nucleus AppShell (top bar + icon rail) + identity model (password login ->
+     `login_account` -> Persona Selector -> active `app_user` persona;
+     region-prefixed text `user_id`).
+   - Administration, fully built: **Accounts**, **Personas** (paginated CRUD),
+     **Roles** (editable privilege matrix = CRUD verbs x extensible types),
+     **Groups** (a real expandable **tree** via `GroupTree.svelte`; grants shown
+     decoded; member mgmt), **Grants v1** (group-centric builder: role +
+     resource-typed scope, device dims region/product/customer/site + group
+     subtree, decomposed into one grant per combination; `ConfirmDialog` +
+     `ScopePicker` components).
+   - Data pipeline: single-system grants imported; the group hierarchy
+     (`build_group_hierarchy.py`) materializes the full tree from `groups.txt`.
+     Reload steps are in "Re-running the data pipeline / full reload" above.
+
+1. **Products page** (NEXT). `/products` is still a stub. Build a product-tree
+   browser/editor over the `product` ltree (id-based path; modality = the
+   level-2 label, `subltree(path,0,2)`, per `load.py`). Reuse the tree pattern
+   from `GroupTree.svelte` (a generic tree component may be worth extracting).
+   Show modality > product; the Grants product picker already restricts to the
+   first two levels below the empty root (`nlevel <= 3`).
+
+2. **Devices page** (AFTER Products). `/devices` currently shows the authorized
+   list (`authz_list_devices`). Build the detail/view + edit (adapt
+   `fleetshell-portal/.../devices`), and a **device browser/search** -- which is
+   also the prerequisite for **single-system grant creation** in the Grants tab
+   (deferred because device serials are anonymized in the current dump; needs a
+   real device identifier/search).
+
+3. **Slice C -- group-membership enforcement.** Replace the interim `is_admin`
+   check on Groups' add/remove member with a real group-scoped `authz_can`
+   (actor -> groups (local) -> grants (global, inherited) -> role has
+   `(group,edit)` and a group-scope whose subtree covers the target group). The
+   Grants tab can already CREATE those group-admin grants. Keep `is_admin` as the
+   section gate for now. (Persona/user-record scoping deferred; the subset guard
+   deferred -- SuperUser-only today.)
+
+4. **L0/L1 Valkey caches** per `docs/authz_caching.md`. Re-validate the perf
+   benchmark now that group inheritance is live (was measured on flat groups).
+
+5. **Real auth** (SAML/OAuth) - swap the password check in
+   `src/lib/server/identity.ts` `verifyLogin` (+ `session.ts`) for the IdP; the
+   person/persona split already anticipates it (callers read `locals.userId`).
+
+6. **Deploy** - Dockerfile for `fleetshell-portal-dev` (mirror
    `fleetshell-portal/Dockerfile`, `CMD node server.js`) + an infra script for a
    new ECS service/target group behind the existing ALB with a `/dev/*` rule.
 

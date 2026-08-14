@@ -171,22 +171,26 @@ Bell/news is still a placeholder (`newsCount` = 0, `TODO(news)`).
 
 ## 6. Section views (roadmap)
 
-Order matches the agreed next steps. The Device and Gateway view-edit pages are
-adapted from `fleetshell-portal/src/routes/(app)/{devices,gateways}` (they work
-well); the adaptation swaps the Valkey lookups for the Aurora master-data reads
-(`authz_list_devices` / `authz_can` + detail queries) and re-skins to the tokens.
+**NEXT: Products, then Devices.** Administration (§7) is fully built.
 
-1. **Devices** (in progress): keep the authorized list, then add a detail/view
-   card (serial, material, product, region, customer/site, gateway, connection
-   status) and an edit form gated by `authz_can(..., 'edit', device)`. Adapt the
-   layout from the legacy device page.
-2. **Gateways**: list + view-edit adapted from the legacy gateway page.
-3. **Products**: browse the product tree (ltree), view/maintain product nodes.
+1. **Products** (RESUME HERE): `/products` is a stub. Build a product-tree
+   browser/editor over the `product` ltree. The path is id-based; the **modality
+   = the level-2 label** (`subltree(path,0,2)`, per `load.py`), and the Grants
+   product picker already restricts to the first two levels below the empty root
+   (`nlevel <= 3`). Reuse the tree pattern from `GroupTree.svelte` (consider
+   extracting a generic tree component).
+2. **Devices** (AFTER Products): the list is built (`authz_list_devices`). Add a
+   detail/view card (serial, material, product, region, customer/site, gateway,
+   connection status) + edit gated by `authz_can(..., 'edit', device)`, adapted
+   from `fleetshell-portal/.../devices`. A **device browser/search** here also
+   unblocks **single-system grant creation** in the Grants tab (deferred; device
+   serials are anonymized in the dump).
+3. **Gateways**: list + view-edit adapted from the legacy gateway page.
 4. **Customers / Sites**: customer list with their sites; view-edit;
-   `access_requirement` (open/device/customer/site) surfaced.
-5. **Administration**: users, groups, roles, grants (see §7).
-6. **Support / Settings**: client download + enrollment; personal prefs
-   (including the theme, redundant with the top-bar toggle).
+   `access_requirement` (open/device/customer/site) surfaced. (Customer/site
+   master data needs proper production exports -- see `docs/data_import.md`.)
+5. **Administration**: DONE -- accounts, personas, roles, groups, grants (§7).
+6. **Support / Settings**: client download + enrollment; personal prefs.
 
 ## 7. Administration submenu
 
@@ -200,7 +204,7 @@ section is admin-gated (`administration/+layout.server.ts` + per-action checks).
 | Personas | **built** | Identities (the authz subject): search, paginate, edit, group memberships. | local `app_user` / `group_membership` (+ global `principal_group` for labels) |
 | Roles | **built** | Roles = named bundles of privileges. Editable privilege matrix (types x CRUD). | global `authz_role` / `authz_role_privilege` / `authz_privilege` |
 | Groups | **built** | Flat group list; view grants on a group + manage members. | global `principal_group` / `authz_grant` + local `group_membership` |
-| Grants | stub | View/create grants `(group, role, scope)`. **Hardest**: enforce `authz_can(..., 'create', grant)` and the grant-on-grant subset guard (`mdm_design.md` §5.1). | global `grant` / `scope` / `scope_constraint` |
+| Grants | **built (v1)** | Group-centric: pick a group in the tree, view/delete its grants, add a grant (role + resource-typed scope). Device scopes (region/product/customer/site) + group scopes (subtree). Single-system create + the subset guard deferred. | global `authz_grant` / `authz_scope` / `authz_scope_constraint` |
 
 Build order for the rest: Grants (read) -> Grants (create, with the subset
 guard).
@@ -283,6 +287,39 @@ a collapsible **Grants on this group** list where each grant is decoded to
 `Region | Product | Customer[/Site]` (single-system grants show the device
 serial); **members** (count + first 50 + name filter) with add (persona
 type-ahead) / remove; create, rename, guarded Delete.
+
+### Grants tab (built, v1)
+
+A grant is `(group, role, scope)`, and **`scope.resource_type` decides what it
+governs** -- the builder is "pick a resource type, then build the scope for it."
+
+Group-centric master-detail: left = the shared `GroupTree` (pick the **who**);
+right = that group's grants (each decoded + deletable) and an **Add grant** form:
+role picker (all `authz_role`), a resource-type radio (**Devices** / **Groups**),
+and a scope builder of chip multi-selects (`ScopePicker` over
+`/api/administration/{regions,products,customers,sites}` and the groups search):
+- **device** scope: Region / Product (ltree subtree) + Customer / Site (in);
+  empty dimension = ANY.
+- **group** scope: Group subtree over `principal_group.path` -- the delegated-
+  admin axis ("manage groups at/under CCC_DE"), reusing the group tree.
+
+`createGrant` **decomposes** the picks into the cartesian product of the chosen
+dimensions (empty = ANY) and creates one `authz_scope` + constraints +
+`authz_grant` per combination (capped at 500), so 2 regions x 2 products = 4
+grant lines -- matching the legacy one-line-per-combination granularity and
+letting each be revoked individually. It also stores `grant_resource_type` +
+`grant_verbs` for the future subset guard; `deleteGrant` drops the grant and its
+now-unused scope.
+
+Deferred (agreed): **single-system grant creation** (device serials are
+anonymized in this dump -> needs the real Devices browser); the **grant-on-grant
+subset guard** (only SuperUser admins exist today); and **group-membership
+enforcement** (slice C: replace the interim `is_admin` on Groups' add/remove
+member with a real group-scoped `authz_can`). Persona/user-record scoping is not
+designed yet.
+
+Shared components: `src/lib/components/GroupTree.svelte` (Groups + Grants) and
+`ScopePicker.svelte` (chip multi-select over a search API).
 
 ## 8. Hard rules carried into the UI
 

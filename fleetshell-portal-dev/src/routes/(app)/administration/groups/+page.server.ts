@@ -51,7 +51,10 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 				  COALESCE((SELECT string_agg(reg.name, ', ') FROM authz_scope_constraint c
 				            JOIN region reg ON reg.path = ANY(c.values::ltree[])
 				            WHERE c.scope_id = s.id AND c.dimension = 'region_path'), 'ANY') AS region,
-				  COALESCE((SELECT string_agg(p.name, ', ') FROM authz_scope_constraint c
+				  COALESCE((SELECT string_agg(
+				              COALESCE((SELECT tp.name FROM product tp WHERE tp.path = subltree(p.path, 0, LEAST(nlevel(p.path), 2))), p.name)
+				                || ' / ' || CASE WHEN nlevel(p.path) <= 2 THEN 'ANY' ELSE p.name END, ', ')
+				            FROM authz_scope_constraint c
 				            JOIN product p ON p.path = ANY(c.values::ltree[])
 				            WHERE c.scope_id = s.id AND c.dimension = 'product_path'), 'ANY') AS product,
 				  COALESCE((SELECT string_agg(cu.name, ', ') FROM authz_scope_constraint c

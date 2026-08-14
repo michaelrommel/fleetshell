@@ -887,6 +887,9 @@ fleetshell-portal-dev/       # NEW SvelteKit portal, served under /dev/ (base pa
     AppShell.svelte           #   brand top-bar + icon-rail sidebar (Nucleus look)
     Logo.svelte               #   inlined Siemens Healthineers wordmark (--logo-fg)
     PagePlaceholder.svelte    #   stub card for not-yet-built sections
+    GroupTree.svelte          #   reusable expandable group tree (Groups + Grants tabs)
+    ScopePicker.svelte        #   chip multi-select over a search API (Grants scope builder)
+    ConfirmDialog.svelte      #   in-page styled confirm modal (replaces window.confirm)
   src/lib/nav.ts              #   sidebar source of truth (PRIMARY_NAV / UTILITY_NAV)
   src/lib/server/identity.ts  #   person(login_account)/persona(app_user) helpers
   src/lib/server/password.ts  #   scrypt hash/verify (dev login; SAML/OAuth later)
@@ -898,8 +901,9 @@ fleetshell-portal-dev/       # NEW SvelteKit portal, served under /dev/ (base pa
     administration/           #   admin-gated tabbed sub-nav
       accounts/ personas/     #     built: login accounts + identities (paginated)
       roles/                  #     built: role list + editable privilege matrix (CRUD x types)
-      groups/                 #     built: flat group list, grants (read) + member mgmt
-      grants/                 #     stub
+      groups/                 #     built: group TREE (GroupTree) + grants (read) + member mgmt
+      grants/                 #     built v1: group-centric grant builder (device + group scopes)
+  src/routes/api/administration/  # search APIs: groups, personas, regions, products, customers, sites
   src/lib/server/db.ts        #   postgres.js pools: global + local Aurora
   src/lib/server/authz.ts     #   resolveGroupIds (local) + listDevices/can (global)
   src/lib/server/theme.ts     #   Nucleus/Gruvbox theme resolution (cookie/DB/admin)
@@ -925,11 +929,13 @@ infrastructure/
     migrate_authz_catalog.sql  # normalize privileges to CRUD x extensible types (+ device:connect)
     seed_demo.sql / verify_demo.sql   # correctness proof (all green)
   import/
-    load.py                    # anonymizing CSV importer (192k devices, ~1M grants)
+    load.py                    # anonymizing CSV importer (192k devices, ~1M grants; incl. single-system)
     anonymize.py               # IdMap/LabelMap/fakers (destroyed after run)
+    build_group_hierarchy.py   # materialize the full group tree (path/parent_id) from groups.txt
     seed_test_users.py         # curated broad->narrow test personas for the dev login
     seed_login_accounts.mjs    # dev login accounts + persona role_label/is_admin
     old_database/              # legacy CSV exports (gitignored; never commit)
+                               #   incl. groups.txt (owner-provided group hierarchy)
 
 docs/
   mdm_status.md                # START HERE: current state + where to start next
@@ -953,7 +959,7 @@ customer/site). Hot path: resolve user->groups locally, then evaluate
 groups->grants->scopes against globally-replicated master data. The list query
 is index-using SQL (GiST on ltree paths), no bitmaps.
 
-### Status: infra + schema + import + perf DONE; UI shell + identity model DONE.
+### Status: infra + schema + import + perf DONE; portal shell + full Administration DONE.
 
 The portal-dev application chrome is built (`docs/portal_ui.md`): brand top-bar
 (Healthineers logo + "FleetShell Portal"; theme toggle, bell/news placeholder,
@@ -961,22 +967,34 @@ name/role + persona switcher, logout) and an icon-rail sidebar (Devices,
 Gateways, Products, Customers/Sites, Administration; Support, Settings) matching
 the Nucleus look. Every page lives in the `(app)` route group behind the guard.
 
-The person/persona identity model is built: password login to a `login_account`
-(the human), a post-login Persona Selector picking one of its linked `app_user`
-personas (region-prefixed text `user_id`), a top-bar switcher, and an
-admin-gated Administration section with **Accounts** and **Personas** tabs
-(paginated master-detail): Personas manages identities + group memberships;
-Accounts manages login accounts, each with a non-unlinkable default persona
-(created fresh or linked from an existing identity) plus optional extra linked
-personas. Apply `migrate_identity_local.sql` + `migrate_identity_primary.sql`
-then run `seed_login_accounts.mjs | psql` (accounts `super/super123`,
-`nora/nora123`).
+Identity model: password login to a `login_account` (the human) -> a post-login
+Persona Selector picks one of its linked `app_user` personas (region-prefixed
+text `user_id`) -> top-bar switcher.
 
-See `docs/portal_ui.md` §6-§7 for the remaining roadmap: (1) device
-detail/view+edit and Gateways (adapt from `fleetshell-portal/`), (2) Products and
-Customers/Sites, (3) the rest of Administration (Roles -> Groups -> Grants,
-grant-create last), plus (4) L0/L1 Valkey caches, (5) real SAML/OAuth (swaps
-`verifyLogin`), (6) Dockerfile + ECS/ALB `/dev/*` deploy.
+**Administration is fully built** (all admin-gated by the interim persona
+`is_admin`): **Accounts** + **Personas** (paginated master-detail, non-unlinkable
+default persona); **Roles** (editable privilege matrix = fixed CRUD verbs x
+extensible resource types + `device:connect`); **Groups** (a real expandable
+tree via `GroupTree.svelte`; grants shown decoded as `Region | Product |
+Customer[/Site]`; member management); **Grants v1** (group-centric builder:
+role + resource-typed scope -- device dims region/product/customer/site OR group
+subtree -- decomposed into one grant per combination; `ScopePicker` +
+`ConfirmDialog` components). Data: single-system grants imported;
+`build_group_hierarchy.py` materializes the full group tree from `groups.txt`.
+
+Apply order after a reload: `migrate_identity_local.sql` +
+`migrate_identity_primary.sql` + `migrate_persona_rename.sql` (local) +
+`migrate_authz_catalog.sql` (global), `build_group_hierarchy.py --apply`, then
+`seed_login_accounts.mjs | psql` (accounts `super/super123`, `nora/nora123`).
+See `docs/mdm_status.md` "Re-running the data pipeline / full reload".
+
+**RESUME HERE (see `docs/mdm_status.md` WHERE TO START NEXT):** (1) the
+**Products** page (product-tree browser/editor over the `product` ltree; reuse
+the tree pattern), then (2) the **Devices** page (detail/view+edit + a device
+browser, which also unblocks single-system grant creation). After that: slice C
+(group-membership `authz_can` enforcement replacing `is_admin`), L0/L1 Valkey
+caches (+ re-benchmark now inheritance is live), real SAML/OAuth, and the
+Dockerfile + ECS/ALB `/dev/*` deploy.
 
 ### Hard rules (do not break — see `docs/mdm_design.md` §5.1)
 

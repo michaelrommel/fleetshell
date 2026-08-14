@@ -2,64 +2,10 @@
 	import { base } from '$app/paths';
 	import { page as pageState } from '$app/state';
 	import { enhance } from '$app/forms';
-	import { untrack } from 'svelte';
+	import GroupTree from '$lib/components/GroupTree.svelte';
 
 	let { data, form } = $props();
 
-	// ── Tree state ────────────────────────────────────────────────────────────
-	let filter = $state('');
-	let expanded = $state<Set<string>>(new Set());
-
-	const byId = $derived(new Map(data.nodes.map((n) => [n.group_id, n])));
-	const childrenByParent = $derived.by(() => {
-		const m = new Map<string, typeof data.nodes>();
-		for (const n of data.nodes) {
-			const k = n.parent_id ?? '__root__';
-			(m.get(k) ?? m.set(k, []).get(k)!).push(n);
-		}
-		return m;
-	});
-	const roots = $derived(childrenByParent.get('__root__') ?? []);
-
-	// When filtering, show matches + their ancestor chain; force those expanded.
-	const visibleIds = $derived.by(() => {
-		const f = filter.trim().toLowerCase();
-		if (!f) return null;
-		const s = new Set<string>();
-		for (const n of data.nodes) {
-			if (n.label.toLowerCase().includes(f)) {
-				let cur: string | null = n.group_id;
-				while (cur && !s.has(cur)) { s.add(cur); cur = byId.get(cur)?.parent_id ?? null; }
-			}
-		}
-		return s;
-	});
-
-	function childrenOf(id: string) { return childrenByParent.get(id) ?? []; }
-	function hasChildren(id: string) { return (childrenByParent.get(id)?.length ?? 0) > 0; }
-	function shown(id: string) { return !visibleIds || visibleIds.has(id); }
-	function isOpen(id: string) { return visibleIds ? visibleIds.has(id) : expanded.has(id); }
-	function toggle(id: string) {
-		const s = new Set(expanded);
-		s.has(id) ? s.delete(id) : s.add(id);
-		expanded = s;
-	}
-
-	// Expand roots + the selected node's ancestors on load / selection change.
-	$effect(() => {
-		const sel = data.sel;
-		const nodes = data.nodes;
-		untrack(() => {
-			const s = new Set(expanded);
-			for (const r of childrenByParent.get('__root__') ?? []) s.add(r.group_id);
-			let cur = sel ? (byId.get(sel)?.parent_id ?? null) : null;
-			while (cur) { s.add(cur); cur = byId.get(cur)?.parent_id ?? null; }
-			expanded = s;
-			void nodes;
-		});
-	});
-
-	// ── URL helpers ───────────────────────────────────────────────────────────
 	function withParams(changes: Record<string, string | null>): string {
 		const u = new URLSearchParams(pageState.url.searchParams);
 		for (const [k, v] of Object.entries(changes)) v === null ? u.delete(k) : u.set(k, v);
@@ -72,7 +18,6 @@
 		return label.startsWith('user:') ? `Single User Grants (${label})` : label;
 	}
 
-	// ── Member add (persona type-ahead) ───────────────────────────────────────
 	let memberQuery = $state('');
 	let memberResults = $state<{ user_id: string; firstname: string; lastname: string; role_label: string | null }[]>([]);
 	async function searchPersonas() {
@@ -83,24 +28,14 @@
 </script>
 
 <div class="grid">
-	<!-- Tree column -->
 	<section class="tree-col">
 		<div class="col-head">
 			<h2>Groups <span class="count">{data.nodes.length}</span></h2>
 			<a class="new-btn" href={newHref}>+ New group</a>
 		</div>
-		<input class="search" placeholder="Filter groups" bind:value={filter} />
-
-		<div class="card tree">
-			{#each roots as r (r.group_id)}
-				{@render treeNode(r, 0)}
-			{:else}
-				<p class="empty">No groups.</p>
-			{/each}
-		</div>
+		<GroupTree nodes={data.nodes} selectedId={data.sel} hrefFor={selHref} />
 	</section>
 
-	<!-- Detail column -->
 	<section>
 		{#if data.detail}
 			<div class="card detail">
@@ -159,7 +94,7 @@
 				{/if}
 
 				<h4>Add a member</h4>
-				<input placeholder="Search persona" bind:value={memberQuery} oninput={searchPersonas} />
+				<input class="wide" placeholder="Search persona" bind:value={memberQuery} oninput={searchPersonas} />
 				{#if memberResults.length}
 					<ul class="results">
 						{#each memberResults as p (p.user_id)}
@@ -200,25 +135,6 @@
 	</section>
 </div>
 
-{#snippet treeNode(n: { group_id: string; label: string; grant_count: number; member_count: number }, depth: number)}
-	{#if shown(n.group_id)}
-		<div class="tnode" class:sel={n.group_id === data.sel} style="padding-left:{depth * 16 + 4}px">
-			{#if hasChildren(n.group_id)}
-				<button class="twist" class:open={isOpen(n.group_id)} onclick={() => toggle(n.group_id)} aria-label="Expand"></button>
-			{:else}
-				<span class="twist-none"></span>
-			{/if}
-			<a class="tlabel" href={selHref(n.group_id)}>{n.label}</a>
-			<span class="tmeta">{#if n.grant_count && n.member_count}{n.grant_count} gra / {n.member_count} mem{:else if n.grant_count}{n.grant_count} gra{:else if n.member_count}{n.member_count} mem{/if}</span>
-		</div>
-		{#if isOpen(n.group_id)}
-			{#each childrenOf(n.group_id) as ch (ch.group_id)}
-				{@render treeNode(ch, depth + 1)}
-			{/each}
-		{/if}
-	{/if}
-{/snippet}
-
 <style>
 	.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.4rem; flex: 1; min-height: 0; }
 	section { min-width: 0; display: flex; flex-direction: column; min-height: 0; }
@@ -230,30 +146,11 @@
 	h4 { font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-subtle); margin: 1.1rem 0 0.4rem; }
 	.new-btn { background: var(--accent); color: var(--on-accent); text-decoration: none; border-radius: var(--radius); padding: 0.35rem 0.7rem; font-size: 0.82rem; font-weight: 600; }
 	.new-btn:hover { background: var(--accent-hover); }
-	.search { margin-bottom: 0.6rem; flex: none; }
-	.search, .mfilter input { width: 100%; }
 	.mfilter { margin-bottom: 0.5rem; }
+	.mfilter input, .wide { width: 100%; }
 
 	.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.5rem 0.6rem; margin-bottom: 0.8rem; }
 	.placeholder { padding: 2rem; text-align: center; color: var(--text-subtle); }
-	.empty { color: var(--text-subtle); padding: 0.8rem; margin: 0; text-align: center; }
-
-	/* Tree */
-	.tree { flex: 1; min-height: 0; overflow-y: auto; padding: 0.25rem; }
-	.tnode { display: flex; align-items: center; gap: 0.3rem; height: 26px; border-radius: var(--radius); }
-	.tnode:hover { background: var(--surface-2); }
-	.tnode.sel { background: var(--surface-active); box-shadow: inset 2px 0 0 var(--accent); }
-	.twist { position: relative; width: 16px; height: 16px; flex: none; border: none; background: none; padding: 0; cursor: pointer; }
-	.twist::before {
-		content: ''; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-		width: 0; height: 0; border-left: 6px solid var(--text-muted);
-		border-top: 5px solid transparent; border-bottom: 5px solid transparent; transition: transform 0.1s;
-	}
-	.twist.open::before { transform: translate(-50%, -50%) rotate(90deg); }
-	.twist-none { display: inline-block; width: 16px; flex: none; }
-	.tlabel { flex: 1; min-width: 0; color: var(--text); text-decoration: none; font-size: 0.86rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-	.tnode.sel .tlabel { font-weight: 600; }
-	.tmeta { color: var(--text-subtle); font-size: 0.68rem; padding-right: 0.4rem; flex: none; }
 
 	.detail { padding: 0.9rem; }
 	form { display: flex; flex-direction: column; gap: 0.6rem; }
