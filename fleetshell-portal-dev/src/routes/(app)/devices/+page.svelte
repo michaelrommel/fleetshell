@@ -59,7 +59,7 @@
 	const apps = $derived((data.detail?.apps ?? []) as App[]);
 </script>
 
-<SplitPane storageKey="devices" defaultLeft={52}>
+<SplitPane storageKey="devices" defaultLeft={52} overlay overlayActive={!!(data.sel || data.isNew)} closeHref={cancelHref}>
 	{#snippet left()}
 		<div class="col-head">
 			<h2>Devices <span class="count">{data.total}</span></h2>
@@ -196,38 +196,42 @@
 		<label>Software version<input name="software_version" value={x?.software_version ?? ''} disabled={!edit} /></label>
 		<label>IP address<input name="ip_address" value={x?.ip_address ?? ''} disabled={!edit} /></label>
 		<label>IP (real)<input name="ip_real" value={x?.ip_real ?? ''} disabled={!edit} /></label>
-		<label class="wide">Hospital<input name="hospital_name" value={x?.hospital_name ?? ''} disabled={!edit} /></label>
-		<label>City<input name="city" value={x?.city ?? ''} disabled={!edit} /></label>
-		<label class="wide">Contact<input name="contact" value={x?.contact ?? ''} disabled={!edit} /></label>
 		<label>Access requirement
 			<select name="access_requirement" value={x?.access_requirement ?? 'open'} disabled={!edit}>
 				<option value="open">open</option><option value="device">device</option>
 				<option value="customer">customer</option><option value="site">site</option>
 			</select>
 		</label>
+		<label>Contact<input name="contact" value={x?.contact ?? ''} disabled={!edit} /></label>
+		<label>Hospital<input name="hospital_name" value={x?.hospital_name ?? ''} disabled={!edit} /></label>
+		<label>City<input name="city" value={x?.city ?? ''} disabled={!edit} /></label>
 	</div>
 
 	<h4>Relations</h4>
-	<div class="rel">
-		<span class="rlabel">Product model</span>
-		<EntityPicker api="/api/administration/models" name="product_path" idField="path" labelField="display"
-			value={x?.product_path ?? null} label={x?.model_name ?? null} disabled={!edit} placeholder="search model..." />
-		{#if x?.model_partno}
+	<div class="rel-cols">
+		<div class="rel">
+			<span class="rlabel">Region</span>
+			<EntityPicker api="/api/administration/regions" name="region_path" idField="path" labelField="name"
+				value={x?.region_path ?? null} label={x?.region_name ?? null} disabled={!edit} placeholder="search region..." />
+			<span class="rlabel">Product model</span>
+			<EntityPicker api="/api/administration/models" name="product_path" idField="path" labelField="display"
+				value={x?.product_path ?? null} label={x?.model_name ?? null} disabled={!edit} placeholder="search model..." />
+			{#if x?.model_partno}
+				<span class="rlabel"></span>
+				<span class="partno-note">Part no <span class="mono">{x.model_partno}</span></span>
+			{/if}
+			<span class="rlabel">Gateway</span>
+			<EntityPicker api="/api/administration/gateways" name="gateway_id" idField="id" labelField="name"
+				value={x?.gateway_id ?? null} label={x?.gateway_name ?? null} disabled={!edit} placeholder="search gateway..." />
+		</div>
+		<div class="rel">
+			<span class="rlabel">Customer</span>
+			<span class="rval" class:unset={!x?.customer_name}>{x?.customer_name ?? 'not assigned'}</span>
+			<span class="rlabel">Site</span>
+			<span class="rval" class:unset={!x?.site_name}>{x?.site_name ?? 'not assigned'}</span>
 			<span class="rlabel"></span>
-			<span class="partno-note">Part no <span class="mono">{x.model_partno}</span></span>
-		{/if}
-		<span class="rlabel">Region</span>
-		<EntityPicker api="/api/administration/regions" name="region_path" idField="path" labelField="name"
-			value={x?.region_path ?? null} label={x?.region_name ?? null} disabled={!edit} placeholder="search region..." />
-		<span class="rlabel">Customer</span>
-		<EntityPicker api="/api/administration/customers" name="customer_id" idField="id" labelField="name"
-			value={x?.customer_id ?? null} label={x?.customer_name ?? null} disabled={!edit} placeholder="search customer..." />
-		<span class="rlabel">Site</span>
-		<EntityPicker api="/api/administration/sites" name="site_id" idField="id" labelField="name"
-			value={x?.site_id ?? null} label={x?.site_name ?? null} disabled={!edit} placeholder="search site..." />
-		<span class="rlabel">Gateway</span>
-		<EntityPicker api="/api/administration/gateways" name="gateway_id" idField="id" labelField="name"
-			value={x?.gateway_id ?? null} label={x?.gateway_name ?? null} disabled={!edit} placeholder="search gateway..." />
+			<span class="rel-note">Derived from site membership · manage in <a href={`${base}/customers`}>Customers / Sites</a></span>
+		</div>
 	</div>
 {/snippet}
 
@@ -287,8 +291,13 @@
 	input:focus-visible, select:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
 	input:disabled, select:disabled { color: var(--text-muted); opacity: 0.85; }
 
-	.rel { display: grid; grid-template-columns: 8rem 1fr; gap: 0.5rem 0.8rem; align-items: start; }
+	.rel-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem 1.4rem; align-items: start; }
+	.rel { display: grid; grid-template-columns: 7rem 1fr; gap: 0.5rem 0.8rem; align-items: start; align-content: start; }
 	.rlabel { align-self: center; font-size: 0.76rem; color: var(--text-muted); }
+	.rval { align-self: center; font-size: 0.84rem; color: var(--text); padding: 0.4rem 0; }
+	.rval.unset { color: var(--text-subtle); font-style: italic; }
+	.rel-note { grid-column: 1 / -1; font-size: 0.72rem; color: var(--text-subtle); }
+	.rel-note a { color: var(--accent); }
 	.partno-note { align-self: center; font-size: 0.76rem; color: var(--text-subtle); }
 
 	.apps-head { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-subtle); margin: 0.4rem 0 0.5rem; }

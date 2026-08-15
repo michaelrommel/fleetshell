@@ -154,8 +154,6 @@ function editFields(d: FormData) {
 			? String(d.get('access_requirement')) : 'open',
 		product_path: orNull(d.get('product_path')),
 		region_path: orNull(d.get('region_path')),
-		customer_id: orNull(d.get('customer_id')),
-		site_id: orNull(d.get('site_id')),
 		gateway_id: orNull(d.get('gateway_id')),
 	};
 }
@@ -179,7 +177,6 @@ export const actions: Actions = {
 				modality = (SELECT md.name FROM product md WHERE md.path = subltree(${f.product_path}::ltree, 0, 2)),
 				region_path = ${f.region_path}::ltree,
 				country_iso = (SELECT iso FROM region WHERE path = ${f.region_path}::ltree),
-				customer_id = ${f.customer_id}::uuid, site_id = ${f.site_id}::uuid,
 				gateway_id = ${f.gateway_id}::uuid, updated_at = now()
 			WHERE id = ${id}`;
 		throw redirect(303, `${base}/devices?sel=${encodeURIComponent(id)}`);
@@ -192,14 +189,14 @@ export const actions: Actions = {
 		const [row] = await globalDb<{ id: string }[]>`
 			INSERT INTO device (serial, functional_location, technical_ident, host_hw_id, order_number,
 				ip_address, ip_real, contact, hospital_name, city, software_version, access_requirement,
-				product_path, modality, region_path, country_iso, customer_id, site_id, gateway_id)
+				product_path, modality, region_path, country_iso, gateway_id)
 			VALUES (${f.serial}, ${f.functional_location}, ${f.technical_ident}, ${f.host_hw_id}, ${f.order_number},
 				${f.ip_address}, ${f.ip_real}, ${f.contact}, ${f.hospital_name}, ${f.city}, ${f.software_version}, ${f.access_requirement},
 				${f.product_path}::ltree,
 				(SELECT md.name FROM product md WHERE md.path = subltree(${f.product_path}::ltree, 0, 2)),
 				${f.region_path}::ltree,
 				(SELECT iso FROM region WHERE path = ${f.region_path}::ltree),
-				${f.customer_id}::uuid, ${f.site_id}::uuid, ${f.gateway_id}::uuid)
+				${f.gateway_id}::uuid)
 			RETURNING id::text AS id`;
 		throw redirect(303, `${base}/devices?sel=${encodeURIComponent(row.id)}`);
 	},

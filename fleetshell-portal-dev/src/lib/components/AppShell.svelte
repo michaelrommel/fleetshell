@@ -23,6 +23,7 @@
 	import { browser } from '$app/environment';
 	import type { Snippet } from 'svelte';
 	import { THEMES, type Theme } from '$lib/theme';
+	import { viewLayout, setViewOverlay } from '$lib/viewLayout.svelte';
 	import { PRIMARY_NAV, UTILITY_NAV, type NavIcon } from '$lib/nav';
 	import Logo from './Logo.svelte';
 
@@ -122,6 +123,22 @@
 		</a>
 
 		<div class="actions">
+			{#if viewLayout.active && !viewLayout.narrow}
+				<div class="viewtoggle" role="group" aria-label="Editor layout">
+					<button
+						class:active={!viewLayout.overlay}
+						onclick={() => setViewOverlay(false)}
+						title="Side-by-side view"
+						aria-label="Side-by-side view"
+					>&#9707;</button>
+					<button
+						class:active={viewLayout.overlay}
+						onclick={() => setViewOverlay(true)}
+						title="Full-width overlay editor"
+						aria-label="Full-width overlay editor"
+					>&#9634;</button>
+				</div>
+			{/if}
 			<button class="icon-btn" onclick={toggleTheme} title="Toggle theme" aria-label="Toggle theme">
 				<!-- half-filled contrast circle -->
 				<svg viewBox="0 0 24 24" class="glyph">
@@ -258,6 +275,34 @@
 		align-items: center;
 		gap: 6px;
 	}
+
+	.viewtoggle {
+		display: inline-flex;
+		gap: 1px;
+		padding: 2px;
+		margin-right: 2px;
+		background: var(--bg-app);
+		border: 1px solid var(--border);
+		border-radius: var(--radius);
+	}
+	.viewtoggle button {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 26px;
+		height: 26px;
+		padding: 0;
+		background: none;
+		border: none;
+		border-radius: calc(var(--radius) - 1px);
+		color: var(--text-muted);
+		font-size: 0.9rem;
+		line-height: 1;
+		cursor: pointer;
+	}
+	.viewtoggle button:hover { color: var(--text); background: var(--surface); }
+	.viewtoggle button.active { color: var(--text); background: var(--surface-active); }
+	.viewtoggle button:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--focus); }
 
 	.icon-btn {
 		display: inline-flex;

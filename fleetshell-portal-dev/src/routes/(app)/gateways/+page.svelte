@@ -16,6 +16,8 @@
 		return `${base}/gateways?${u}`;
 	}
 	const selHref = (id: string) => withParams({ sel: id, new: null });
+	const capRegion = (s: string | null | undefined) =>
+		s && s.length > 19 ? s.slice(0, 19) + '\u2026' : (s ?? '');
 	const newHref = $derived(withParams({ new: '1', sel: null }));
 	const cancelHref = $derived(withParams({ new: null, sel: null }));
 	function pageLink(dir: 'prev' | 'next'): string {
@@ -37,7 +39,7 @@
 	const deviceHref = (id: string) => `${base}/devices?${data.isAdmin ? 'mode=all&' : ''}sel=${encodeURIComponent(id)}`;
 </script>
 
-<SplitPane storageKey="gateways" defaultLeft={52}>
+<SplitPane storageKey="gateways" defaultLeft={52} overlay overlayActive={!!(data.sel || data.isNew)} closeHref={cancelHref}>
 	{#snippet left()}
 		<div class="col-head">
 			<h2>Gateways <span class="count">{data.total.toLocaleString()}</span></h2>
@@ -62,7 +64,7 @@
 						<tr class:sel={gw.id === data.sel} onclick={() => goto(selHref(gw.id), { keepFocus: true, noScroll: true })}>
 							<td class="mono">{gw.name ?? ''}</td>
 							<td><div>{gw.hospital}</div>{#if gw.city}<div class="sub">{gw.city}</div>{/if}</td>
-							<td>{gw.region}</td>
+							<td title={gw.region}>{capRegion(gw.region)}</td>
 							<td><div>{gw.gateway_model ?? ''}</div>{#if gw.connection_type}<div class="sub">{gw.connection_type}</div>{/if}</td>
 							<td class="mono">{gw.public_ip ?? ''}</td>
 							<td class="num">{gw.device_count}</td>
