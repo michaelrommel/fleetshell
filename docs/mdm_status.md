@@ -130,6 +130,17 @@ Notes:
 
 ## WHERE TO START NEXT (priority order)
 
+**Resume here (NEXT SESSION): rework the Devices and Gateways pages.** The Data
+Transfer Matrix, Countries/Region Tree, and Customers/Sites pages are all BUILT
+(see below).
+
+**Blocked on a data export:** real **multi-site customers** cannot be imported
+from the current dump -- `RDSERVICEDSYSTEM.CUSTOMERID` is empty for every device
+and there is no customer master file, so `load.py` synthesizes one customer per
+site (4269:4269). The owner is obtaining a fuller legacy export (customer master
++ customer<->site + site-membership). When it lands: wire it into `load.py` and
+drop the synthetic-customer fallback. See `docs/data_import.md` gap #2.
+
 **Resume here: the Data Transfer Matrix is now BUILT** (schema + import +
 Valkey spool + editor; see below). After that, the remaining primary section is
 Customers/Sites, then the
@@ -155,6 +166,28 @@ support-based dedup) + `load.py --stage classification` / `--stage families`
 JSON artifacts. Remaining: a few dormant families (`Somaris 7`, security
 appliances) are manual prod cleanup; automatic write-through to Valkey on edit
 is deferred (currently manual "Sync to Valkey" button).
+
+**Resume here: the Customers / Sites page is now BUILT** (see below). Remaining:
+the device **per-device app override** (`device_app`), then **Services >
+Infoproxy** + the Valkey spool, and the per-service DTM TO resolvers.
+
+### Customers / Sites (BUILT)
+
+`/customers`: customer browser (search name/country/city) + master-detail. A
+customer has name, country (ISO picker), city/postcode/street, requires-explicit-
+grant, and DTM variant (`customer.dtm_variant` -> the DTM runtime variant
+selector). Under it, its **sites**; a site adds the same address fields plus
+three membership methods and a **contacts** list (`customer_site_contact`:
+name/role/email/phone/note, `ContactsEditor.svelte`). Membership
+(`SiteMembershipEditor.svelte`): assigned **gateways** (rule; all devices behind
+them join), **hospital names** (rule; matched on `device.hospital_name`), and
+manual **customer systems** (`customer_site_member_static`). A device has ONE
+`site_id`; `resolve_site_membership()` (in `migrate_customer_site.sql`)
+materializes it with precedence manual > gateway > hospital (ties by site
+created_at, id), run on every membership/site change. Static membership is
+seeded from the imported `device.site_id` post-load (reload.sh) so the resolver
+reproduces current memberships (verified: 0 changed). New API:
+`/api/administration/devices` (device type-ahead). Reuses `ScopePicker`.
 
 ### Data Transfer Matrix (BUILT -- see `docs/data_transfer_matrix.md`)
 

@@ -119,6 +119,22 @@ export (3):
    in the production load. Interim risk: dropping the customer silently WIDENS a
    customer-restricted grant to ANY where the group has no wildcard sibling.
 
+   **Update (Customers/Sites page):** because `RDSERVICEDSYSTEM.CUSTOMERID` is
+   empty for 100% of device rows and there is no customer master export,
+   `load.py` `site_uuid()` falls back to a SYNTHETIC customer per site
+   (`"SC"+sid`), giving exactly one site per customer (4269 customers : 4269
+   sites). So the portal shows no multi-site customers even though the legacy DB
+   has them (e.g. `ABProjects` had several). The only real customer->site links
+   in this dump are the ~7 domain-grant customers in `RDGRANTVIEWV1`
+   (CUSTOMERID/CUSTOMERNAME/SITEID), where `ABProjects` (CUSTOMERID 12249133)
+   shows just 2 sites -- a tiny subset, not the master. A full production export
+   MUST include the customer master + customer<->site + site-membership tables;
+   then drop the synthetic-customer fallback so real multi-site customers appear.
+   (Site membership itself now materializes fine: `device.site_id` is seeded
+   from the import and `resolve_site_membership()` + a `customer_id` backfill
+   keep `device.customer_id` aligned to the site's customer -- see
+   `migrate_customer_site.sql` and `reload.sh`.)
+
 3. **Grants on member-less groups are invisible.** `RDGRANTVIEWV1` only
    materializes a row when a grant has a grantee (member). A group with grants
    but no members (e.g. `BU_AX_CS_SI_Sensis`, and its grants are inherited by

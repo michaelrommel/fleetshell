@@ -926,6 +926,7 @@ infrastructure/
     migrate_region_tree.sql    # region_id_seq for user-created sub-regions (Countries > Region Tree)
     migrate_dtm.sql            # Data Transfer Matrix: data_class(kind/mrs_id), dtm_variant/matrix/deny, customer.dtm_variant
     migrate_user_country.sql   # (LOCAL) app_user.country (ISO), imported from RDUSER.COUNTRYID
+    migrate_customer_site.sql  # customer/site address fields + contacts + resolve_site_membership()
     migrate_theme_*.sql        # per-user theme + org default
     migrate_identity_local.sql # person/persona split + region-prefixed text user_id
     migrate_identity_primary.sql # account_persona.is_primary (default persona)
@@ -1023,10 +1024,10 @@ See `docs/mdm_status.md` "Re-running the data pipeline / full reload".
   Create right; red delete via `ConfirmDialog`), `SplitPane` (draggable,
   persisted), dark scrollbars, in-field search x + keep-focus.
 
-**RESUME HERE (see `docs/mdm_status.md` WHERE TO START NEXT):** next major
-feature is the **Data Transfer Matrix** (new session). Then: (1) the
-**Customers/Sites** page (last primary section); (2) the device **per-device app
-override** (`device_app` table + `resolve_apps` + override editor -- the device
+**RESUME HERE (see `docs/mdm_status.md` WHERE TO START NEXT):** the **Data
+Transfer Matrix** and the **Customers/Sites** page are now BUILT. Then: (1) the
+device **per-device app override** (`device_app` table + `resolve_apps` +
+override editor -- the device
 Applications list is currently read-only/inherited); (3) **Services > Infoproxy**
 + the **Valkey spool** of `gateway.ipsec`/`psk` to `fleetipsec:*` so a test
 device can connect; (4) single-system grant creation (now unblocked by the

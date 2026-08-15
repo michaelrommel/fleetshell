@@ -98,8 +98,8 @@
 </div>
 
 <div class="legend">
-	<span><i class="sw permit"></i> permitted (default)</span>
-	<span><i class="sw deny"></i> denied</span>
+	<span><span class="sw permit"></span> permitted (default)</span>
+	<span><span class="sw deny"></span> denied</span>
 	<span class="hint">Click a cell to toggle · click a class header or a row's ✓/✗ to bulk-set the visible rows.</span>
 </div>
 
@@ -176,10 +176,10 @@
 	.act-save:disabled, .act-export:disabled { opacity: 0.45; cursor: not-allowed; }
 
 	.legend { display: flex; gap: 1rem; align-items: center; font-size: 0.75rem; color: var(--text-subtle); margin-bottom: 0.5rem; flex-wrap: wrap; }
-	.legend .sw { position: relative; display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: -2px; margin-right: 3px; border: 1px solid var(--border); }
+	.legend .sw { position: relative; display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: middle; margin-right: 3px; border: 1px solid var(--border); }
 	.sw.permit { background: var(--dtm-permit); }
 	.sw.deny { background: var(--dtm-deny); }
-	.sw.deny::after { content: '✕'; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: rgba(255, 255, 255, 0.6); font-size: 8px; font-weight: 700; line-height: 1; }
+	.sw.deny::after { content: '✕'; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: rgba(255, 255, 255, 0.6); font-size: 8px; font-weight: 700; line-height: 1; }
 
 	.grid-wrap { flex: 1; min-height: 0; overflow: auto; border: 1px solid var(--border); border-radius: var(--radius); }
 	table.grid { border-collapse: separate; border-spacing: 0; font-size: 0.78rem; }
