@@ -12,6 +12,7 @@ export type NavIcon =
 	| 'gateways'
 	| 'products'
 	| 'customers'
+	| 'countries'
 	| 'services'
 	| 'administration'
 	| 'support'
@@ -33,6 +34,7 @@ export const PRIMARY_NAV: NavItem[] = [
 	{ href: '/devices',        icon: 'devices',        label: 'Devices' },
 	{ href: '/gateways',       icon: 'gateways',       label: 'Gateways' },
 	{ href: '/customers',      icon: 'customers',      label: 'Customers\nSites' },
+	{ href: '/countries',      icon: 'countries',      label: 'Countries' },
 	{ href: '/products',       icon: 'products',       label: 'Products' },
 	{ href: '/services',       icon: 'services',       label: 'Services' },
 	{ href: '/administration', icon: 'administration', label: 'Admin', requiresAdmin: true },

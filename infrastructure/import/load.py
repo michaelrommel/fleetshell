@@ -90,6 +90,7 @@ DEFAULT_PRIVS = [("device","view"),("device","connect")]
 # in-memory lookups filled during reference stage
 region_path: dict[str,str] = {}      # RDREGION.ID -> id-based ltree
 region_iso:  dict[str,str] = {}      # RDREGION.ID -> ISO (country ancestor)
+admin_region_ids: set[str] = set()   # RDREGION.ID of REGIONTYPE=1 (administrative regions, dropped)
 product_path: dict[str,str] = {}     # RDPRODUCT.ID -> id-based ltree
 product_modality: dict[str,str] = {} # RDPRODUCT.ID -> top-level category name
 product_model_path: dict[str,str] = {} # RDPRODUCTMODEL.ID -> model node ltree
@@ -124,7 +125,17 @@ def stage_reference(g: psycopg.Connection, emit: bool = True):
     # (RDCOUNTRY2DMZ/RDDMZ is a VPN routing table, not geography, so we do NOT
     #  synthesize a continent layer from it. A business-region level can be
     #  added later from an explicit ISO -> SH-region mapping if wanted.)
-    regions = list(read("RDREGION"))
+    #
+    # REGIONTYPE=1 nodes are NOT geography: they are the legacy "administrative
+    # regions" (_A_BU_AX, _old_RSC_*, 'Administrative Region 1', ...) that only
+    # existed to give group/delegation grants a region-shaped scope in the old
+    # authz model. Our model scopes those natively by resource_type='group', so
+    # these placeholders are dead weight: 0 devices live in them and they only
+    # pollute the Region Tree (they sit at level 2, masquerading as countries).
+    # We drop them here and skip any grant scoped to them in stage_grants.
+    regions = [r for r in read("RDREGION") if (r.get("REGIONTYPE") or "0") != "1"]
+    admin_region_ids.update(
+        r["ID"] for r in read("RDREGION") if (r.get("REGIONTYPE") or "0") == "1")
     parent_of = {r["ID"]: (None if r["ID"] == "1" else (r["PARENTID"] or None)) for r in regions}
     walk = {k: v for k, v in parent_of.items() if v}
 
@@ -137,7 +148,7 @@ def stage_reference(g: psycopg.Connection, emit: bool = True):
         rows.append((int(rid), p, r["NAME"] or rid, iso_by_country.get(cid) or None,
                      p.count(".") + 1, int(parent_of[rid]) if parent_of.get(rid) else None))
     copy_rows(g, "region (id,path,name,iso,level,parent_id)", rows, on_conflict="id") if emit else None
-    if emit: print(f"  region: {len(rows)}")
+    if emit: print(f"  region: {len(rows)} (skipped {len(admin_region_ids)} administrative)")
 
     # --- products (id-based path + top-level modality) ---
     prods = list(read("RDPRODUCT"))
@@ -398,11 +409,19 @@ def stage_grants(g: psycopg.Connection, l: psycopg.Connection, limit: int | None
 
     grant_rows, seen_grants = [], set()
     member_rows, seen_members = [], set()
-    n = kept = 0
+    n = kept = skipped_admin = 0
     for r in read("RDGRANTVIEWV1"):
         n += 1
         if limit and n > limit: break
         if r["DOMAINNAME"]:                         # GRANTTYPE 3275 domain grants -> skip
+            continue
+        # Grants scoped to an administrative region (REGIONTYPE=1) authorize
+        # nothing in our model: 0 devices live there, so the scope matches the
+        # empty set today. Drop the WHOLE grant row -- never just null the region
+        # dimension, which would widen it from "matches nothing" to a product/
+        # customer/site wildcard. Effective authorization is unchanged.
+        if r["REGIONID"] in admin_region_ids:
+            skipped_admin += 1
             continue
         gid = r["GROUPID"]
         grp = group_uuid(gid, r["GROUPNAME"] or ("user:"+r["GRANTEEID"]))
@@ -441,7 +460,8 @@ def stage_grants(g: psycopg.Connection, l: psycopg.Connection, limit: int | None
     # memberships -> LOCAL plane
     copy_rows(l, "group_membership (group_id,user_id)", member_rows, on_conflict="group_id,user_id")
     singles = sum(1 for k in scope_cache if isinstance(k, tuple) and len(k) == 2 and k[0] == "single")
-    print(f"  grants: scanned {n}, kept {kept}, groups {len(seen_groups)}, "
+    print(f"  grants: scanned {n}, kept {kept}, skipped {skipped_admin} administrative-region, "
+          f"groups {len(seen_groups)}, "
           f"scopes {len(scope_cache)} (single-system {singles}), roles {len(role_cache)}, members {len(member_rows)}")
 
 

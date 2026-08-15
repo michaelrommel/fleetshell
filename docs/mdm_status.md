@@ -131,7 +131,9 @@ Notes:
 ## WHERE TO START NEXT (priority order)
 
 **Resume here: the next major feature is the Data Transfer Matrix** (new
-session). After that, the remaining primary section is Customers/Sites, then the
+session) -- it is the second tab of the new **Countries** section, whose first
+tab (**Region Tree**) is now BUILT (see below). After that, the remaining
+primary section is Customers/Sites, then the
 device **per-device application override** (`device_app`), then **Services >
 Infoproxy** + the **Valkey spool**. Products (incl. **Data Classification**),
 Devices, Gateways, and the whole Administration section are built.
@@ -154,6 +156,36 @@ support-based dedup) + `load.py --stage classification` / `--stage families`
 JSON artifacts. Remaining: a few dormant families (`Somaris 7`, security
 appliances) are manual prod cleanup; automatic write-through to Valkey on edit
 is deferred (currently manual "Sync to Valkey" button).
+
+### Countries / Region Tree (BUILT)
+
+New top-level nav **Countries** (continent icon) with two tabs: **Region Tree**
+(built) and **Data Transfer Matrix** (placeholder -- next up). Region Tree mirrors
+the Product Tree: `RegionTree.svelte` (left, filter + expand/collapse over the
+`region` ltree, World/level-1 excluded so countries are roots) + a detail pane
+editing a node's `name` + `iso`, adding sub-regions (US states, Canada's
+Atlantic/Central/East/West/Pacific), and deleting with child + device guards.
+This is where the Country Manager roles (`CountryUserAdmin` /
+`CountryKeyUserAdmin` / `SRS Manager`, which already hold `region:create/edit/
+delete`) will maintain their country; writes are interim `is_admin`-gated
+(replace with scoped `authz_can('region', ...)`). New id-based sub-regions draw
+from `region_id_seq` (starts at 1e9, above all source RDREGION ids). Files:
+`lib/components/RegionTree.svelte`, `countries/{+layout,+page,region-tree/,
+data-transfer-matrix/}`, `infrastructure/sql/migrate_region_tree.sql`, and the
+`i-countries` icon + nav entry in `AppShell.svelte`/`lib/nav.ts`.
+
+**Import cleanup (admin regions dropped):** `load.py` now excludes legacy
+"administrative regions" (`RDREGION.REGIONTYPE=1`: 140 nodes -- `_A_*`,
+`_old_RSC_*`, `Administrative Region 1`) from the region import, and skips any
+grant scoped to one (177 dead device constraints -- 0 devices live in them, so
+effective authz is unchanged; the whole grant row is dropped, never widened to a
+product/customer wildcard). These placeholders only existed to give the old
+group/delegation grants a region-shaped scope; our model scopes groups natively
+via `resource_type='group'` subtree scopes, and group membership IS the
+authorization (no per-member execute/delegate re-check; the only surviving
+"delegate" is the grant-on-grant subset guard). `reload.sh` also now applies
+`migrate_region_tree.sql`. NOTE: `--stage all` already runs `stage_families` +
+`stage_classification` (Data Classification is registered).
 
 ### Session recap (latest work, all in `fleetshell-portal-dev` unless noted)
 
@@ -192,7 +224,8 @@ is deferred (currently manual "Sync to Valkey" button).
 - New migrations (apply order = the reload flow above, step 0):
   `migrate_product_model.sql`, `migrate_device_identity.sql`,
   `migrate_gateway_enrich.sql`, `migrate_gateway_ipsec.sql`,
-  `migrate_gateway_hostname.sql`.
+  `migrate_gateway_hostname.sql`, `migrate_region_tree.sql` (region id sequence;
+  apply after `migrate_region_access.sql`).
 - **Note**: `product_model_app` is currently **empty** in the DB (no model has
   apps defined yet -- legacy per-device configs were not migrated). Define apps
   on a model via the AppEditor and its devices inherit them live.

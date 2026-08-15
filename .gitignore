@@ -26,6 +26,8 @@ fleetshell-gateway/docs/
 infrastructure/import/staging/
 infrastructure/import/copy/
 infrastructure/import/*.map.json
+infrastructure/import/admin_region_group_map.json
+infrastructure/import/admin_region_group_map.md
 infrastructure/import/.venv/
 infrastructure/import/__pycache__/
 infrastructure/import/old_database/
