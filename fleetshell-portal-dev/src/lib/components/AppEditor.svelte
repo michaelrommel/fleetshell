@@ -8,6 +8,7 @@
 -->
 <script lang="ts">
 	import { enhance } from '$app/forms';
+	import { toastEnhance } from '$lib/toast.svelte';
 
 	type Row = {
 		name: string; ports: string; application: string; guac: boolean; e2ecrypt: boolean;
@@ -54,7 +55,7 @@
 	<span class="note">Devices with this model inherit these live, unless the device overrides them.</span>
 </div>
 
-<form method="POST" action="?/saveApps" use:enhance>
+<form method="POST" action="?/saveApps" use:enhance={toastEnhance('Applications saved')}>
 	<input type="hidden" name="product_id" value={productId} />
 	<input type="hidden" name="apps" value={appsJson} />
 

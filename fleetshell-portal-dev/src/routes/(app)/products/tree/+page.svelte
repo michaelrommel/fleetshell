@@ -6,6 +6,7 @@
 	import AppEditor from '$lib/components/AppEditor.svelte';
 	import SplitPane from '$lib/components/SplitPane.svelte';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
+	import { toastEnhance } from '$lib/toast.svelte';
 
 	let { data, form } = $props();
 	let confirmDelete = $state(false);
@@ -38,7 +39,7 @@
 		{#if data.isNew === 'modality'}
 			<div class="card detail">
 				<h3>New modality</h3>
-				<form method="POST" action="?/createNode" use:enhance>
+				<form method="POST" action="?/createNode" use:enhance={toastEnhance('Modality created')}>
 					<input type="hidden" name="parent_id" value="" />
 					<label>Modality name<input name="name" required /></label>
 					<div class="actions-bar">
@@ -58,7 +59,7 @@
 
 				<!-- Name: models edit it inside the model form; others via rename. -->
 				{#if detail.kind !== 'model'}
-					<form method="POST" action="?/rename" use:enhance class="inline">
+					<form method="POST" action="?/rename" use:enhance={toastEnhance('Name saved')} class="inline">
 						<input type="hidden" name="id" value={detail.id} />
 						<label class="grow">Name<input name="name" value={detail.name} required disabled={!canEdit} /></label>
 						{#if canEdit}<button type="submit">Save</button>{/if}
@@ -66,7 +67,7 @@
 				{/if}
 
 				{#if detail.kind === 'product'}
-					<form method="POST" action="?/setFamily" use:enhance class="inline">
+					<form method="POST" action="?/setFamily" use:enhance={toastEnhance('Family saved')} class="inline">
 						<input type="hidden" name="id" value={detail.id} />
 						<label class="grow">Family <span class="muted">(e.g. Somatom57, Numaris4)</span>
 							<input name="family" value={detail.family ?? ''} disabled={!canEdit} /></label>
@@ -76,7 +77,7 @@
 
 				{#if detail.kind === 'model' && data.model}
 					{@const model = data.model}
-					<form id="modelEdit" method="POST" action="?/saveModel" use:enhance class="model">
+					<form id="modelEdit" method="POST" action="?/saveModel" use:enhance={toastEnhance('Model saved')} class="model">
 						<input type="hidden" name="id" value={detail.id} />
 						<label>Name<input name="name" value={detail.name} required disabled={!canEdit} /></label>
 						<div class="row">
@@ -102,7 +103,7 @@
 				{#if canEdit && childKind(detail.kind)}
 					<details class="addchild">
 						<summary>Add {childKind(detail.kind)}</summary>
-						<form method="POST" action="?/createNode" use:enhance class="inline">
+						<form method="POST" action="?/createNode" use:enhance={toastEnhance(`${childKind(detail.kind)} added`)} class="inline">
 							<input type="hidden" name="parent_id" value={detail.id} />
 							<label class="grow">{childKind(detail.kind)} name<input name="name" required /></label>
 							<button type="submit">Add</button>
@@ -125,7 +126,7 @@
 
 {#if data.detail}
 	<ConfirmDialog bind:open={confirmDelete} title={`Delete ${data.detail.kind}?`} message={`Delete "${data.detail.name || 'this node'}"? This cannot be undone.`}>
-		<form method="POST" action="?/deleteNode" use:enhance={() => async ({ update }) => { confirmDelete = false; await update(); }}>
+		<form method="POST" action="?/deleteNode" use:enhance={toastEnhance('Deleted', () => (confirmDelete = false))}>
 			<input type="hidden" name="id" value={data.detail.id} />
 			<button type="submit" class="act-delete">Delete</button>
 		</form>

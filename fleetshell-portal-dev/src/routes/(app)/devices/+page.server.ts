@@ -102,7 +102,7 @@ async function loadDetail(sel: string | null) {
 	const [d] = await globalDb<Record<string, unknown>[]>`
 		SELECT d.id::text AS id, d.serial, d.functional_location, d.technical_ident, d.host_hw_id,
 		       d.order_number, d.ip_address, d.ip_real, d.contact, d.city, d.hospital_name, d.software_version,
-		       d.access_requirement, d.country_iso,
+		       d.access_requirement, d.country_iso, d.tunnel_gateway,
 		       d.product_path::text AS product_path, d.region_path::text AS region_path,
 		       d.customer_id::text AS customer_id, d.site_id::text AS site_id, d.gateway_id::text AS gateway_id,
 		       m.name AS model_name, pm.partno::text AS model_partno,
@@ -155,6 +155,7 @@ function editFields(d: FormData) {
 		product_path: orNull(d.get('product_path')),
 		region_path: orNull(d.get('region_path')),
 		gateway_id: orNull(d.get('gateway_id')),
+		tunnel_gateway: orNull(d.get('tunnel_gateway')),
 	};
 }
 
@@ -177,9 +178,11 @@ export const actions: Actions = {
 				modality = (SELECT md.name FROM product md WHERE md.path = subltree(${f.product_path}::ltree, 0, 2)),
 				region_path = ${f.region_path}::ltree,
 				country_iso = (SELECT iso FROM region WHERE path = ${f.region_path}::ltree),
-				gateway_id = ${f.gateway_id}::uuid, updated_at = now()
+				gateway_id = ${f.gateway_id}::uuid, tunnel_gateway = ${f.tunnel_gateway}, updated_at = now()
 			WHERE id = ${id}`;
-		throw redirect(303, `${base}/devices?sel=${encodeURIComponent(id)}`);
+		const tab = String(d.get('tab') ?? '').trim();
+		const tabQ = tab ? `&tab=${encodeURIComponent(tab)}` : '';
+		throw redirect(303, `${base}/devices?sel=${encodeURIComponent(id)}${tabQ}`);
 	},
 
 	createDevice: async ({ request, locals }) => {
@@ -189,14 +192,14 @@ export const actions: Actions = {
 		const [row] = await globalDb<{ id: string }[]>`
 			INSERT INTO device (serial, functional_location, technical_ident, host_hw_id, order_number,
 				ip_address, ip_real, contact, hospital_name, city, software_version, access_requirement,
-				product_path, modality, region_path, country_iso, gateway_id)
+				product_path, modality, region_path, country_iso, gateway_id, tunnel_gateway)
 			VALUES (${f.serial}, ${f.functional_location}, ${f.technical_ident}, ${f.host_hw_id}, ${f.order_number},
 				${f.ip_address}, ${f.ip_real}, ${f.contact}, ${f.hospital_name}, ${f.city}, ${f.software_version}, ${f.access_requirement},
 				${f.product_path}::ltree,
 				(SELECT md.name FROM product md WHERE md.path = subltree(${f.product_path}::ltree, 0, 2)),
 				${f.region_path}::ltree,
 				(SELECT iso FROM region WHERE path = ${f.region_path}::ltree),
-				${f.gateway_id}::uuid)
+				${f.gateway_id}::uuid, ${f.tunnel_gateway})
 			RETURNING id::text AS id`;
 		throw redirect(303, `${base}/devices?sel=${encodeURIComponent(row.id)}`);
 	},

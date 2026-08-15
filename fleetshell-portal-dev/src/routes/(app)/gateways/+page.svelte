@@ -6,6 +6,7 @@
 	import SplitPane from '$lib/components/SplitPane.svelte';
 	import IpsecEditor from '$lib/components/IpsecEditor.svelte';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
+	import { toastEnhance } from '$lib/toast.svelte';
 
 	let { data, form } = $props();
 	let confirmDelete = $state(false);
@@ -89,7 +90,7 @@
 		{#if data.isNew}
 			<div class="card detail">
 				<h3>New gateway</h3>
-				<form method="POST" action="?/createGateway" use:enhance>
+				<form method="POST" action="?/createGateway" use:enhance={toastEnhance('Gateway created')}>
 					{@render editFields(null, true)}
 					<h4>Tunnel / IPsec</h4>
 					<IpsecEditor disabled={false} isCreate={true} />
@@ -106,7 +107,7 @@
 					{#if g.gateway_model}<span class="model">{g.gateway_model}</span>{/if}
 				</div>
 
-				<form method="POST" action="?/updateGateway" use:enhance>
+				<form method="POST" action="?/updateGateway" use:enhance={toastEnhance('Gateway saved')}>
 					<input type="hidden" name="id" value={g.id} />
 					{@render editFields(g, canEdit)}
 					<h4>Tunnel / IPsec</h4>
@@ -147,7 +148,7 @@
 
 {#if g}
 	<ConfirmDialog bind:open={confirmDelete} title="Delete gateway?" message={`Delete "${g.name || g.hostname || 'gateway'}"? This cannot be undone.`}>
-		<form method="POST" action="?/deleteGateway" use:enhance={() => async ({ update }) => { confirmDelete = false; await update(); }}>
+		<form method="POST" action="?/deleteGateway" use:enhance={toastEnhance('Gateway deleted', () => (confirmDelete = false))}>
 			<input type="hidden" name="id" value={g.id} />
 			<button type="submit" class="act-delete">Delete</button>
 		</form>

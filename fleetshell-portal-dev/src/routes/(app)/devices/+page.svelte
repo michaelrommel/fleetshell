@@ -6,6 +6,8 @@
 	import SplitPane from '$lib/components/SplitPane.svelte';
 	import EntityPicker from '$lib/components/EntityPicker.svelte';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
+	import { CLIENT_API_BASE } from '$lib/client-api';
+	import { toastEnhance } from '$lib/toast.svelte';
 
 	let { data, form } = $props();
 	let confirmDelete = $state(false);
@@ -43,6 +45,14 @@
 	const selHref = (id: string) => withParams({ sel: id, new: null });
 	const newHref = $derived(withParams({ new: '1', sel: null }));
 	const cancelHref = $derived(withParams({ new: null, sel: null }));
+
+	// Detail-panel tabs (Connect is the daily driver, so it is the default).
+	const TABS = ['connect', 'files', 'manage'] as const;
+	const tab = $derived.by(() => {
+		const t = pageState.url.searchParams.get('tab');
+		return (TABS as readonly string[]).includes(t ?? '') ? (t as string) : 'connect';
+	});
+	const tabHref = (t: string) => withParams({ tab: t });
 	function setMode(m: string) { return withParams({ mode: m, after: null, before: null, page: null, sel: null }); }
 	let searchInput: HTMLInputElement;
 	function doSearch() {
@@ -55,8 +65,317 @@
 
 	const canEdit = $derived(data.isAdmin);
 	const d = $derived(data.detail as Record<string, string | null> | null);
-	type App = { name: string; application: string; ports: string; guac: boolean; e2ecrypt: boolean; sni: string; path: string; drive: boolean; record: boolean };
+	type App = { name: string; application: string; ports: string; guac: boolean; e2ecrypt: boolean; sni: string; path: string; drive: boolean; record: boolean; width?: number; height?: number; dpi?: number };
 	const apps = $derived((data.detail?.apps ?? []) as App[]);
+
+	// ---- Connect workflow -----------------------------------------------------
+	// Selectable copy of the inherited apps; target + gateway are resolved
+	// server-side by /api/tunnel/sign (never dictated by the browser).
+	type PortRow = App & { selected: boolean };
+	let portRows = $state<PortRow[]>([]);
+	let username = $state('');
+	let password = $state('');
+	let lastDeviceId = '';
+	$effect(() => {
+		const id = d?.id ?? '';
+		if (id === lastDeviceId) return;
+		lastDeviceId = id;
+		portRows = apps.map((a) => ({ ...a, selected: false }));
+		username = '';
+		password = '';
+		resetConnect();
+	});
+
+	const guacApplicable = (r: PortRow) => ['rdp', 'vnc', 'ssh'].includes(r.application);
+	const selectedRows = () => portRows.filter((r) => r.selected);
+	const selectedCount = $derived(portRows.filter((r) => r.selected).length);
+	const needsCreds = $derived(portRows.some((r) => r.selected && (r.guac || (r.application === 'ssh' && !r.e2ecrypt))));
+	// No Tunnel Gateway on the device -> connections cannot be signed; block them.
+	const hasTunnelGw = $derived(!!(d?.tunnel_gateway && String(d.tunnel_gateway).trim()));
+
+	function appSummary(a: PortRow): string {
+		const bits = [a.application.toUpperCase(), a.ports || '?'];
+		if (a.guac) bits.push('guac');
+		if (a.e2ecrypt) bits.push('e2e');
+		if (a.record) bits.push('rec');
+		if (a.drive) bits.push('drive');
+		return bits.join(' \u00b7 ');
+	}
+
+	type ConnectState = 'idle' | 'signing' | 'connecting' | 'launching' | 'done' | 'error';
+	let connectState = $state<ConnectState>('idle');
+	let connectMsg = $state('');
+	let connectUrls = $state<string[]>([]);
+	let connectedToken = $state<string | null>(null);
+	let connectedBindIp = $state('');
+	let connectedRows = $state<PortRow[]>([]);
+	let connectedTarget = $state('');
+	let connectedGateway = $state('');
+	type PortRemap = { requested: number; actual: number; reason?: string };
+	let connectRemaps = $state<PortRemap[]>([]);
+	const busy = $derived(connectState === 'signing' || connectState === 'connecting');
+
+	type ProbeState = 'idle' | 'checking' | 'unreachable';
+	let probeState = $state<ProbeState>('idle');
+	let probeMsg = $state('');
+
+	const actualPort = (requested: number) => connectRemaps.find((r) => r.requested === requested)?.actual ?? requested;
+	const requestedPort = (actual: number) => connectRemaps.find((r) => r.actual === actual)?.requested ?? actual;
+	const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+	function firstPort(spec: string): number {
+		const n = parseInt((spec.split(',')[0] ?? '').trim().split('-')[0]);
+		return isNaN(n) ? 0 : n;
+	}
+	function portFromUrl(url: string): number {
+		try {
+			const u = new URL(url);
+			if (u.port) return parseInt(u.port);
+			return u.protocol === 'https:' ? 443 : 80;
+		} catch {
+			return 0;
+		}
+	}
+	function rowForPort(port: number, rows: PortRow[]): PortRow | undefined {
+		return rows.find((r) =>
+			r.ports.split(',').some((t) => {
+				t = t.trim();
+				if (t.includes('-')) {
+					const [lo, hi] = t.split('-').map((n) => parseInt(n));
+					return port >= lo && port <= hi;
+				}
+				return parseInt(t) === port;
+			}),
+		);
+	}
+
+	interface ResultButton {
+		label: string;
+		kind: 'url' | 'guac' | 'launch';
+		url: string;
+		app: string;
+		port: number;
+		targetPort: number;
+		record?: boolean;
+	}
+
+	const resultButtons = $derived.by<ResultButton[]>(() => {
+		if (connectState !== 'done') return [];
+		const buttons: ResultButton[] = [];
+		for (const url of connectUrls) {
+			if (url.startsWith('wss://') || url.startsWith('ws://')) {
+				if (url.includes('/ssh-ws')) {
+					const row = connectedRows.find((r) => r.application === 'ssh' && !r.guac);
+					if (!row) continue;
+					const tp = firstPort(row.ports);
+					buttons.push({ label: 'Open SSH Session', kind: 'guac', url, app: 'ssh', port: tp, targetPort: tp });
+				} else {
+					const row = connectedRows.find((r) => r.guac && guacApplicable(r));
+					if (!row) continue;
+					const tp = firstPort(row.ports);
+					buttons.push({ label: `Open ${row.application.toUpperCase()} Session`, kind: 'guac', url, app: row.application, port: tp, targetPort: tp, record: row.record });
+				}
+			} else {
+				const port = portFromUrl(url);
+				const reqPort = requestedPort(port);
+				const row = rowForPort(reqPort, connectedRows);
+				if (!row) continue;
+				const label = port !== reqPort ? `${row.application.toUpperCase()} :${port} (was :${reqPort})` : `${row.application.toUpperCase()} :${port}`;
+				buttons.push({ label, kind: 'url', url, app: row.application, port, targetPort: reqPort });
+			}
+		}
+		const hasSshWs = connectUrls.some((u) => u.includes('/ssh-ws'));
+		for (const row of connectedRows) {
+			if (row.guac || !guacApplicable(row)) continue;
+			if (row.application === 'ssh' && hasSshWs) continue;
+			const reqPort = firstPort(row.ports);
+			if (!reqPort) continue;
+			const port = actualPort(reqPort);
+			const label = port !== reqPort ? `Open ${row.application.toUpperCase()} :${port} (was :${reqPort})` : `Open ${row.application.toUpperCase()} :${port}`;
+			buttons.push({ label, kind: 'launch', url: '', app: row.application, port, targetPort: reqPort });
+		}
+		return buttons;
+	});
+
+	function tunnelBody(token: string): string {
+		const rows = selectedRows();
+		const guacRow = rows.find((r) => r.guac && guacApplicable(r));
+		const sshRow = rows.find((r) => r.application === 'ssh' && !r.guac);
+		const dimRow = guacRow ?? sshRow;
+		return JSON.stringify({
+			target: connectedTarget,
+			token,
+			gateway: connectedGateway,
+			username: username || undefined,
+			password: password || undefined,
+			width: dimRow?.width ?? undefined,
+			height: dimRow?.height ?? undefined,
+			dpi: dimRow?.dpi ?? undefined,
+			enable_drive: (guacRow?.drive && guacRow?.application === 'rdp') || undefined,
+			enable_record: guacRow?.record || undefined,
+			port_rows: rows.map((r) => ({
+				ports: r.ports,
+				application: r.application,
+				guac: r.guac || undefined,
+				e2ecrypt: !r.guac && r.e2ecrypt ? true : undefined,
+				sni: r.sni || undefined,
+				path: r.path && r.path !== '/' ? r.path : undefined,
+			})),
+		});
+	}
+
+	async function executeItem(btn: ResultButton): Promise<void> {
+		if (btn.kind === 'guac') {
+			const proto = btn.url.includes('/ssh-ws') ? '&proto=ssh' : '';
+			const rec = !btn.url.includes('/ssh-ws') && btn.record ? '&record=1' : '';
+			window.open(`${base}/session?ws=${encodeURIComponent(btn.url)}${proto}${rec}`, '_blank');
+		} else if (btn.kind === 'launch') {
+			try {
+				await fetch(`${CLIENT_API_BASE}/api/launch`, {
+					method: 'POST', headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ bind_ip: connectedBindIp, port: btn.port, application: btn.app }),
+				});
+			} catch (e) { console.error('launch failed', e); }
+		} else {
+			window.open(btn.url, '_blank', 'noopener,noreferrer');
+		}
+	}
+
+	let probeBtnLabel = $state<string | null>(null);
+	async function openItem(btn: ResultButton): Promise<void> {
+		if (!connectedToken) { await executeItem(btn); return; }
+		probeState = 'checking'; probeMsg = ''; probeBtnLabel = btn.label;
+		try {
+			const res = await fetch(`${CLIENT_API_BASE}/api/probe`, {
+				method: 'POST', headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ target: connectedTarget, port: btn.targetPort, gateway: connectedGateway, token: connectedToken }),
+				signal: AbortSignal.timeout(7_000),
+			});
+			if (!res.ok) { await executeItem(btn); probeState = 'idle'; probeBtnLabel = null; return; }
+			const data = await res.json();
+			if (data.reachable) { await executeItem(btn); probeState = 'idle'; probeBtnLabel = null; }
+			else { probeMsg = data.message ?? 'Target device did not respond.'; probeState = 'unreachable'; }
+		} catch {
+			await executeItem(btn); probeState = 'idle'; probeBtnLabel = null;
+		}
+	}
+
+	async function onConnect(e: Event): Promise<void> {
+		e.preventDefault();
+		if (!hasTunnelGw) {
+			connectState = 'error';
+			connectMsg = 'This device has no Tunnel Gateway configured.';
+			return;
+		}
+		if (selectedRows().length === 0) {
+			connectState = 'error';
+			connectMsg = 'Select at least one application to connect.';
+			return;
+		}
+		await doConnect();
+	}
+
+	async function doConnect(): Promise<void> {
+		connectState = 'signing';
+		connectMsg = '';
+		connectUrls = [];
+		const rows = selectedRows();
+		const allPorts = rows.map((r) => r.ports).filter(Boolean).join(',');
+		const record = rows.find((r) => r.guac && guacApplicable(r))?.record ?? false;
+
+		let token: string;
+		try {
+			const res = await fetch(`${base}/api/tunnel/sign`, {
+				method: 'POST', headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ deviceId: d?.id, ports: allPorts, record }),
+			});
+			if (!res.ok) {
+				if (res.status === 401) { window.location.href = `${base}/login`; return; }
+				throw new Error(`Sign failed (${res.status}): ${await res.text()}`);
+			}
+			const signed = await res.json();
+			token = signed.token;
+			connectedTarget = signed.target;
+			connectedGateway = signed.gateway;
+		} catch (err) {
+			connectState = 'error'; connectMsg = String(err); return;
+		}
+
+		connectState = 'connecting';
+		try {
+			const res = await fetch(`${CLIENT_API_BASE}/api/tunnel`, {
+				method: 'POST', headers: { 'Content-Type': 'application/json' },
+				body: tunnelBody(token),
+			});
+			if (!res.ok) throw new Error(`Client returned ${res.status}: ${await res.text()}`);
+			const body = await res.json();
+			connectUrls = Array.isArray(body.urls) ? body.urls : [];
+			connectedBindIp = body.bind_ip ?? '';
+			connectedRows = rows.map((r) => ({ ...r }));
+			connectedToken = token;
+			connectRemaps = Array.isArray(body.remaps) ? body.remaps : [];
+			probeState = 'idle';
+			const portList = (body.ports ?? []).join(', ');
+			connectMsg = connectedBindIp
+				? `Tunnel open via ${connectedGateway} \u00b7 slot ${connectedBindIp} \u00b7 port(s): ${portList}`
+				: `Tunnel open via ${connectedGateway} \u00b7 port(s): ${portList}`;
+			connectState = 'done';
+		} catch (err) {
+			if (err instanceof TypeError) { await launchViaDeepLink(token); }
+			else { connectState = 'error'; connectMsg = String(err); }
+		}
+	}
+
+	function resetConnect(): void {
+		connectState = 'idle'; connectMsg = ''; connectUrls = [];
+		connectedToken = null; connectedBindIp = ''; connectedRows = [];
+		connectedTarget = ''; connectedGateway = ''; connectRemaps = [];
+		probeState = 'idle'; probeMsg = ''; probeBtnLabel = null;
+	}
+
+	async function launchViaDeepLink(token: string): Promise<void> {
+		const rows = selectedRows();
+		const envelope = {
+			type: 'tunnel',
+			payload: {
+				target: connectedTarget, token, gateway: connectedGateway,
+				username: username || undefined,
+				password: password || undefined,
+				port_rows: rows.map((r) => ({
+					ports: r.ports, application: r.application,
+					guac: r.guac || undefined, e2ecrypt: r.e2ecrypt || undefined, sni: r.sni || undefined,
+				})),
+			},
+		};
+		const encoded = btoa(JSON.stringify(envelope)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+		window.location.href = `fleetshell://${encoded}`;
+		const deadline = Date.now() + 5_000;
+		while (Date.now() < deadline) {
+			await sleep(750);
+			try {
+				const res = await fetch(`${CLIENT_API_BASE}/api/tunnel`, {
+					method: 'POST', headers: { 'Content-Type': 'application/json' },
+					body: tunnelBody(token), signal: AbortSignal.timeout(2_000),
+				});
+				if (res.ok) {
+					const body = await res.json();
+					connectUrls = Array.isArray(body.urls) ? body.urls : [];
+					connectedRows = rows.map((r) => ({ ...r }));
+					connectedBindIp = body.bind_ip ?? '';
+					connectRemaps = Array.isArray(body.remaps) ? body.remaps : [];
+					connectMsg = `Gateway tunnel open on port(s): ${(body.ports ?? []).join(', ')}`;
+					connectState = 'done';
+					connectedToken = token;
+					probeState = 'idle';
+					return;
+				}
+				connectState = 'error';
+				connectMsg = `Client returned ${res.status}: ${await res.text()}`;
+				return;
+			} catch { /* keep polling */ }
+		}
+		connectState = 'launching';
+	}
 </script>
 
 <SplitPane storageKey="devices" defaultLeft={52} overlay overlayActive={!!(data.sel || data.isNew)} closeHref={cancelHref}>
@@ -86,7 +405,7 @@
 		<div class="card list">
 			<table>
 				<thead>
-					<tr><th>serial</th><th>func. loc.</th><th>model</th><th>IP</th><th>customer / hospital</th></tr>
+					<tr><th>serial / part no</th><th>func. loc.</th><th>model / product</th><th>IP</th><th>hospital / city</th></tr>
 				</thead>
 				<tbody>
 					{#each data.devices as dev (dev.id)}
@@ -120,7 +439,7 @@
 		{#if data.isNew}
 			<div class="card detail">
 				<h3>New device</h3>
-				<form method="POST" action="?/createDevice" use:enhance>
+				<form method="POST" action="?/createDevice" use:enhance={toastEnhance('Device created')}>
 					{@render fields(null, true)}
 					<div class="actions-bar">
 						<a class="act-cancel" href={cancelHref}>Cancel</a>
@@ -136,40 +455,94 @@
 				</div>
 				<p class="path">{d.modality_name ?? '?'} / {d.product_name ?? '?'} / {d.model_name ?? '?'}</p>
 
-				<h4 class="apps-head">Applications <span class="muted">· inherited from {d.model_name ?? 'model'}</span></h4>
-				{#if apps.length}
-					<div class="app-list">
-						{#each apps as a}
-							<div class="app-row">
-								<span class="app-name">{a.name || '(unnamed)'}</span>
-								<span class="app-proto">{a.application}</span>
-								{#if a.ports}<span class="mono app-ports">{a.ports}</span>{/if}
-								{#if a.guac}<span class="badge">guac</span>{/if}
-								{#if a.e2ecrypt}<span class="badge">e2e</span>{/if}
-								{#if a.record}<span class="badge rec">rec</span>{/if}
-								{#if a.drive}<span class="badge">drive</span>{/if}
-								{#if a.sni}<span class="app-extra">SNI {a.sni}</span>{/if}
-								{#if a.path && a.path !== '/'}<span class="app-extra">{a.path}</span>{/if}
-							</div>
-						{/each}
-					</div>
-					<p class="muted apps-note">Defined on the product model. Per-device override is not enabled yet.</p>
-				{:else}
-					<p class="muted">No applications defined on this device's model.</p>
-				{/if}
+				<div class="tabs" role="tablist">
+					<a role="tab" aria-selected={tab === 'connect'} class:active={tab === 'connect'} href={tabHref('connect')}>Connect</a>
+					<a role="tab" aria-selected={tab === 'files'} class:active={tab === 'files'} href={tabHref('files')}>Files</a>
+					<a role="tab" aria-selected={tab === 'manage'} class:active={tab === 'manage'} href={tabHref('manage')}>Manage</a>
+				</div>
 
-				<form method="POST" action="?/updateDevice" use:enhance>
-					<input type="hidden" name="id" value={d.id} />
-					{#key d.id}
-						{@render fields(d, canEdit)}
-					{/key}
-					{#if canEdit}
-						<div class="actions-bar">
-							<button type="button" class="act-delete" onclick={() => (confirmDelete = true)}>Delete device</button>
-							<button type="submit" class="act-primary">Save device</button>
-						</div>
+				{#if tab === 'connect'}
+					{#if apps.length === 0}
+						<p class="muted">No applications defined on this device's model.</p>
+					{:else}
+						{#if !hasTunnelGw}
+							<p class="warn-box">⚠ No <strong>Tunnel Gateway</strong> is set on this device. Connections are blocked until one is configured in the <a href={tabHref('manage')}>Manage</a> tab.</p>
+						{/if}
+						<form class="connect-form" onsubmit={onConnect}>
+							<div class="capps">
+								{#each portRows as row (row.name + row.application + row.ports)}
+									<label class="capp" class:on={row.selected}>
+										<input type="checkbox" bind:checked={row.selected} disabled={busy} />
+										<span class="capp-name">{row.name || row.application.toUpperCase()}</span>
+										<span class="capp-sum">{appSummary(row)}</span>
+									</label>
+								{/each}
+							</div>
+
+							{#if needsCreds}
+								<div class="cgrid">
+									<label>Username <span class="opt">(optional)</span>
+										<input type="text" bind:value={username} placeholder="administrator" autocomplete="off" spellcheck="false" disabled={busy} />
+									</label>
+									<label>Password <span class="opt">(optional)</span>
+										<input type="password" bind:value={password} placeholder="••••••••" autocomplete="current-password" disabled={busy} />
+									</label>
+								</div>
+							{/if}
+
+							<div class="crow">
+								<button type="submit" class="act-primary" disabled={busy || selectedCount === 0 || !hasTunnelGw}>
+									{#if connectState === 'signing'}Signing token…
+									{:else if connectState === 'connecting'}Connecting…
+									{:else}Connect{selectedCount > 0 ? ` (${selectedCount})` : ''}{/if}
+								</button>
+								{#if connectState === 'done' || connectState === 'error' || connectState === 'launching'}
+									<button type="button" class="act-cancel" onclick={resetConnect}>Dismiss</button>
+								{/if}
+							</div>
+						</form>
+
+						{#if connectState === 'error'}
+							<p class="error">{connectMsg}</p>
+						{:else if connectState === 'launching'}
+							<p class="muted">Opening the FleetShell client… if nothing happens, ensure it is installed and running.</p>
+						{:else if connectState === 'done'}
+							<div class="cbanner">
+								<p class="cbanner-msg">{connectMsg}</p>
+								{#if resultButtons.length}
+									<div class="cbtns">
+										{#each resultButtons as btn (btn.label)}
+											<button type="button" class="cbtn" class:guac={btn.kind === 'guac'} class:launch={btn.kind === 'launch'}
+												disabled={probeState === 'checking' && probeBtnLabel === btn.label}
+											onclick={() => openItem(btn)}>
+											{#if probeState === 'checking' && probeBtnLabel === btn.label}Checking…{:else}{btn.label}{/if}
+										</button>
+									{/each}
+								</div>
+							{/if}
+								{#if probeState === 'unreachable'}
+									<p class="probe-warn">⚠ Device not reachable · {probeMsg}</p>
+								{/if}
+							</div>
+						{/if}
 					{/if}
-				</form>
+				{:else if tab === 'files'}
+					<p class="muted files-stub">File browser (S3 <span class="mono">/clean/&lt;modality&gt;/&lt;product&gt;/&lt;partno&gt;/&lt;serial&gt;/</span>) is not wired yet.</p>
+				{:else}
+					<form method="POST" action="?/updateDevice" use:enhance={toastEnhance('Device saved')}>
+						<input type="hidden" name="id" value={d.id} />
+						<input type="hidden" name="tab" value="manage" />
+						{#key d.id}
+							{@render fields(d, canEdit)}
+						{/key}
+						{#if canEdit}
+							<div class="actions-bar">
+								<button type="button" class="act-delete" onclick={() => (confirmDelete = true)}>Delete device</button>
+								<button type="submit" class="act-primary">Save device</button>
+							</div>
+						{/if}
+					</form>
+				{/if}
 			</div>
 		{:else}
 			<div class="card placeholder">Select a device, or search.</div>
@@ -179,7 +552,7 @@
 
 {#if d}
 	<ConfirmDialog bind:open={confirmDelete} title="Delete device?" message={`Delete "${d.serial || d.id}"? This cannot be undone.`}>
-		<form method="POST" action="?/deleteDevice" use:enhance={() => async ({ update }) => { confirmDelete = false; await update(); }}>
+		<form method="POST" action="?/deleteDevice" use:enhance={toastEnhance('Device deleted', () => (confirmDelete = false))}>
 			<input type="hidden" name="id" value={d.id} />
 			<button type="submit" class="act-delete">Delete</button>
 		</form>
@@ -220,7 +593,7 @@
 				<span class="rlabel"></span>
 				<span class="partno-note">Part no <span class="mono">{x.model_partno}</span></span>
 			{/if}
-			<span class="rlabel">Gateway</span>
+			<span class="rlabel">IPSec Gateway</span>
 			<EntityPicker api="/api/administration/gateways" name="gateway_id" idField="id" labelField="name"
 				value={x?.gateway_id ?? null} label={x?.gateway_name ?? null} disabled={!edit} placeholder="search gateway..." />
 		</div>
@@ -229,8 +602,9 @@
 			<span class="rval" class:unset={!x?.customer_name}>{x?.customer_name ?? 'not assigned'}</span>
 			<span class="rlabel">Site</span>
 			<span class="rval" class:unset={!x?.site_name}>{x?.site_name ?? 'not assigned'}</span>
-			<span class="rlabel"></span>
 			<span class="rel-note">Derived from site membership · manage in <a href={`${base}/customers`}>Customers / Sites</a></span>
+			<span class="rlabel">Tunnel Gateway</span>
+			<input class="rinput" name="tunnel_gateway" value={x?.tunnel_gateway ?? ''} disabled={!edit} placeholder="atlanta-01" autocomplete="off" spellcheck="false" />
 		</div>
 	</div>
 {/snippet}
@@ -282,10 +656,18 @@
 	h3 { font-size: 0.98rem; margin: 0; }
 	.model { color: var(--text-muted); font-size: 0.85rem; }
 	.path { font-size: 0.76rem; color: var(--text-subtle); margin: 0.2rem 0 0.9rem; }
+
+	.tabs { display: flex; gap: 0.15rem; border-bottom: 1px solid var(--border); margin: 0 0 1rem; }
+	.tabs a {
+		padding: 0.4rem 0.85rem; font-size: 0.82rem; font-weight: 600; text-decoration: none;
+		color: var(--text-muted); border-bottom: 2px solid transparent; margin-bottom: -1px;
+	}
+	.tabs a:hover { color: var(--text); }
+	.tabs a.active { color: var(--text); border-bottom-color: var(--accent); }
+	.files-stub { padding: 1.5rem 0; }
 	h4 { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-subtle); margin: 1.2rem 0 0.5rem; }
 
 	.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0.6rem 0.9rem; }
-	.grid2 .wide { grid-column: 1 / -1; }
 	label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.76rem; color: var(--text-muted); }
 	input, select { background: var(--bg-app); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.4rem 0.55rem; font: inherit; font-size: 0.84rem; }
 	input:focus-visible, select:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
@@ -295,22 +677,39 @@
 	.rel { display: grid; grid-template-columns: 7rem 1fr; gap: 0.5rem 0.8rem; align-items: start; align-content: start; }
 	.rlabel { align-self: center; font-size: 0.76rem; color: var(--text-muted); }
 	.rval { align-self: center; font-size: 0.84rem; color: var(--text); padding: 0.4rem 0; }
+	.rinput { align-self: center; width: 100%; }
 	.rval.unset { color: var(--text-subtle); font-style: italic; }
 	.rel-note { grid-column: 1 / -1; font-size: 0.72rem; color: var(--text-subtle); }
 	.rel-note a { color: var(--accent); }
 	.partno-note { align-self: center; font-size: 0.76rem; color: var(--text-subtle); }
 
-	.apps-head { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-subtle); margin: 0.4rem 0 0.5rem; }
-	.apps-head .muted { text-transform: none; letter-spacing: 0; }
-	.app-list { display: flex; flex-direction: column; gap: 0.3rem; }
-	.app-row { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; font-size: 0.83rem; padding: 0.35rem 0.5rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); }
-	.app-name { font-weight: 600; color: var(--text); }
-	.app-proto { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.03em; color: var(--accent); }
-	.app-ports { color: var(--text-muted); }
-	.badge { font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-subtle); border: 1px solid var(--border); border-radius: 999px; padding: 0.02rem 0.4rem; }
-	.badge.rec { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 45%, transparent); }
-	.app-extra { font-size: 0.74rem; color: var(--text-subtle); }
-	.apps-note { margin: 0.5rem 0 0; }
+	/* Connect tab */
+	.connect-form { display: flex; flex-direction: column; gap: 0.9rem; }
+	.capps { display: flex; flex-direction: column; gap: 0.35rem; }
+	.capp { display: grid; grid-template-columns: auto auto 1fr; align-items: center; gap: 0.55rem;
+		padding: 0.4rem 0.6rem; border: 1px solid var(--border); border-radius: var(--radius);
+		background: var(--surface-2); cursor: pointer; font-size: 0.83rem; }
+	.capp.on { border-color: var(--accent); background: var(--surface-active); }
+	.capp input { margin: 0; }
+	.capp-name { font-weight: 600; color: var(--text); }
+	.capp-sum { color: var(--text-subtle); font-size: 0.76rem; justify-self: end; }
+	.cgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.6rem 0.9rem; }
+	.opt { color: var(--text-subtle); font-weight: 400; }
+	.crow { display: flex; align-items: center; gap: 0.6rem; }
+	.cbanner { margin-top: 0.9rem; padding: 0.7rem 0.8rem; border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+		border-radius: var(--radius); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+	.cbanner-msg { margin: 0 0 0.5rem; font-size: 0.82rem; color: var(--text); }
+	.cbtns { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+	.cbtn { background: var(--accent); color: var(--on-accent); border: none; border-radius: var(--radius);
+		padding: 0.4rem 0.7rem; font: inherit; font-size: 0.8rem; font-weight: 600; cursor: pointer; }
+	.cbtn:hover { background: var(--accent-hover); }
+	.cbtn.launch { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
+	.cbtn:disabled { opacity: 0.6; cursor: default; }
+	.probe-warn { margin: 0.5rem 0 0; font-size: 0.8rem; color: var(--danger); }
+	.warn-box { margin: 0 0 0.9rem; padding: 0.6rem 0.7rem; font-size: 0.82rem; color: var(--text);
+		border: 1px solid color-mix(in srgb, var(--danger) 45%, transparent);
+		background: color-mix(in srgb, var(--danger) 8%, transparent); border-radius: var(--radius); }
+	.warn-box a { color: var(--accent); }
 
 	.error { color: var(--danger); font-size: 0.85rem; margin: 0 0 0.8rem; }
 </style>

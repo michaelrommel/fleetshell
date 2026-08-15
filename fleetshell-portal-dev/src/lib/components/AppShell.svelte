@@ -24,6 +24,7 @@
 	import type { Snippet } from 'svelte';
 	import { THEMES, type Theme } from '$lib/theme';
 	import { viewLayout, setViewOverlay } from '$lib/viewLayout.svelte';
+	import Toast from '$lib/components/Toast.svelte';
 	import { PRIMARY_NAV, UTILITY_NAV, type NavIcon } from '$lib/nav';
 	import Logo from './Logo.svelte';
 
@@ -202,6 +203,8 @@
 		</main>
 	</div>
 </div>
+
+<Toast />
 
 {#snippet railItem(href: string, icon: NavIcon, label: string, requiresAdmin: boolean)}
 	{#if requiresAdmin && !isAdmin}
