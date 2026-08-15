@@ -162,3 +162,8 @@ def orderno_generator():
 def contact_generator():
     # CONTACT is PII (name + phone). Replace wholesale with a fake person + phone.
     return lambda: f"{fake.first_name()} {fake.last_name()} {fake.phone_number()}"
+
+
+def email_generator():
+    # NOTIFICATIONADDRESS is a PII email. Replace with a fake address.
+    return lambda: fake.email()

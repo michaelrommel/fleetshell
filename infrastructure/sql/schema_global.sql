@@ -332,6 +332,23 @@ CREATE TABLE IF NOT EXISTS device (
     ip_real            text,              -- REALIPADDRESS (secondary)
     contact            text,              -- CONTACT (PII; anonymized)
     city               text,              -- CITY (anonymized; shared map with gateway city)
+    -- Tunnel Gateway NAME encoded in the connection JWT (gw claim); not sourced
+    -- from the legacy export -- authored per device. Empty = connections blocked.
+    tunnel_gateway     text,
+    -- operational/config state codes (RDSERVICEDSYSTEM CONFIGURATIONSTATE /
+    -- OPERATIONALSTATE); raw legacy enum codes, label map lives in the UI.
+    config_state        smallint,         -- CONFIGURATIONSTATE (55 = Complete, ...)
+    operational_state   smallint,         -- OPERATIONALSTATE (82 = Active-Outbound Connected, ...)
+    -- notification settings, unpacked from the 4-char NOTIFYONACCESS code
+    -- (positions: m/0 access, m/0 disconnect, w/0 info-active, a/0 pseudonymized).
+    notify_on_access         boolean,
+    notify_on_disconnect     boolean,
+    notification_info_active boolean,
+    notify_pseudonymized     boolean,     -- send GID instead of username
+    notification_address     text,        -- NOTIFICATIONADDRESS (PII email; anonymized)
+    -- operator free-text (PII-laden; replaced with a placeholder while seeding)
+    display_before_connect   text,        -- SHOWONCONNECT
+    additional_info          text,        -- ANNOTATIONS
     attrs              jsonb NOT NULL DEFAULT '{}'::jsonb,   -- extensible dimensions
     updated_at         timestamptz NOT NULL DEFAULT now()
 );

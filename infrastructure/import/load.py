@@ -23,7 +23,16 @@ import psycopg
 from anonymize import IdMap, LabelMap, fake_person, fake_email, fake_serial, \
     hospital_generator, company_generator, site_generator, city_generator, \
     functional_location_generator, ip_generator, technical_ident_generator, \
-    hostid_generator, orderno_generator, contact_generator, public_ip_generator
+    hostid_generator, orderno_generator, contact_generator, public_ip_generator, \
+    email_generator
+
+# --- anonymization switch ----------------------------------------------------
+# The loader is written so the SAME procedure runs for the real take-over: set
+# ANONYMIZE=0 (env) and every field passes through raw instead of being faked.
+# Default ON (dev seeding). Free-text operator fields are replaced with a fixed
+# placeholder when anonymizing (they cannot be structurally faked).
+ANONYMIZE = os.environ.get("ANONYMIZE", "1").strip().lower() not in ("0", "false", "no", "off")
+ANON_TEXT_PLACEHOLDER = "<content was anonymized during seeding>"
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SRC = os.path.join(HERE, "old_database")
@@ -54,10 +63,84 @@ host_lbl    = LabelMap(os.path.join(HERE, "host.map.json"),      hostid_generato
 ord_lbl     = LabelMap(os.path.join(HERE, "ord.map.json"),       orderno_generator())
 contact_lbl = LabelMap(os.path.join(HERE, "contact.map.json"),   contact_generator())
 city_lbl    = LabelMap(os.path.join(HERE, "city.map.json"),      city_generator())
+notify_lbl  = LabelMap(os.path.join(HERE, "notify.map.json"),    email_generator())
 pubip_gen   = public_ip_generator()   # synthesized per gateway (no real value to map)
 
 ALL_MAPS = [user_map, group_map, device_map, gateway_map, product_map, model_map, customer_map, site_map,
-            hospital_lbl, customer_lbl, site_lbl, fl_lbl, ip_lbl, tid_lbl, host_lbl, ord_lbl, contact_lbl, city_lbl]
+            hospital_lbl, customer_lbl, site_lbl, fl_lbl, ip_lbl, tid_lbl, host_lbl, ord_lbl, contact_lbl,
+            city_lbl, notify_lbl]
+
+# --- anonymization helpers (all honor the ANONYMIZE switch) ------------------
+def anon_map(m, raw):
+    """Empty -> NULL; anonymize via LabelMap `m`, or pass raw when disabled."""
+    v = (raw or "").strip()
+    if not v:
+        return None
+    return m.get(v) if ANONYMIZE else v
+
+def anon_hospital(raw, fallback_key):
+    """Hospital name: faked via the shared map (keyed by fallback when empty),
+    or the raw value when anonymization is off."""
+    v = (raw or "").strip()
+    if ANONYMIZE:
+        return hospital_lbl.get(v or fallback_key)
+    return v or None
+
+def anon_serial(raw):
+    """SERIAL: a fresh fake per row while seeding, or the raw serial otherwise."""
+    v = (raw or "").strip()
+    if ANONYMIZE:
+        return fake_serial()
+    return v or None
+
+def anon_text(raw):
+    """Operator free text: fixed placeholder while seeding (cannot be structurally
+    faked), or the raw text otherwise. Empty -> NULL."""
+    v = (raw or "").strip()
+    if not v:
+        return None
+    return ANON_TEXT_PLACEHOLDER if ANONYMIZE else v
+
+def anon_person(raw_first, raw_last, seq):
+    """Person name: a random fake while seeding, or the raw first/last otherwise."""
+    if ANONYMIZE:
+        return fake_person()
+    return ((raw_first or "").strip() or None, (raw_last or "").strip() or None)
+
+def anon_email(raw_email, seq):
+    """Email: a deterministic fake while seeding, or the raw address otherwise."""
+    if ANONYMIZE:
+        return fake_email(seq)
+    return (raw_email or "").strip() or None
+
+def anon_org_name(gen_map, map_key, real_id):
+    """Customer/site DISPLAY name. While seeding it is a stable fake keyed by the
+    org id. The legacy device export carries only the numeric id here (no name),
+    so raw mode emits the id verbatim rather than fabricating a name.
+    TODO(real take-over): join the real customer/site name source (RDOU) here."""
+    if ANONYMIZE:
+        return gen_map.get(map_key)
+    return (real_id or "").strip() or map_key
+
+def notify_flags(raw):
+    """Unpack the 4-char NOTIFYONACCESS code into 4 booleans.
+    Positions: 1 m/0 access, 2 m/0 disconnect, 3 w/0 info-active, 4 a/0 pseudo.
+    Blank -> all False (feature off); non-decodable -> all NULL (unknown)."""
+    v = (raw or "").strip()
+    if v == "":
+        return (False, False, False, False)
+    if len(v) == 4 and v[0] in "m0" and v[1] in "m0" and v[2] in "w0" and v[3] in "a0":
+        return (v[0] == "m", v[1] == "m", v[2] == "w", v[3] == "a")
+    return (None, None, None, None)
+
+def state_code(raw):
+    """Raw legacy enum code -> smallint, or NULL for blank / out-of-range noise
+    (misaligned CSV rows carry junk like 460243681)."""
+    v = (raw or "").strip()
+    if not v or not v.lstrip("-").isdigit():
+        return None
+    n = int(v)
+    return n if 0 <= n <= 32767 else None
 
 # --- role name -> (resource_type, verb) list ---------------------------------
 CRUD_DEVICE = [("device","view"),("device","connect"),("device","edit"),("device","delete")]
@@ -210,8 +293,7 @@ def stage_reference(g: psycopg.Connection, emit: bool = True):
     # 'none' everywhere -> skipped. Enum/code + type fields kept raw for now;
     # drop unwanted columns once the data is visible in the UI.
     def an(m, raw):
-        v = (raw or "").strip()
-        return m.get(v) if v else None
+        return anon_map(m, raw)
     def raw(v):
         v = (v or "").strip()
         return v or None
@@ -233,7 +315,7 @@ def stage_reference(g: psycopg.Connection, emit: bool = True):
         # WEBDNSPWPW in the source), would feed the IPsec dyndns config.
         grows.append((
             gid, r.get("REGIONNAME") or "",
-            hospital_lbl.get(r.get("IDENTIFIER2") or r["ID"]),   # hospital = anon customer/hospital (shared map)
+            hospital_lbl.get(r.get("IDENTIFIER2") or r["ID"]) if ANONYMIZE else (raw(r.get("IDENTIFIER2")) or raw(r["ID"])),   # hospital (shared anon map)
             raw(r.get("NAME")),                 # name (router id / cisco serial) RAW
             an(city_lbl, r.get("IDENTIFIER1")), # city (anon)
             gwmodel(r.get("DISPLAYROUTERTYPE")),          # gateway_model ('undefined' -> NULL)
@@ -258,23 +340,23 @@ def stage_reference(g: psycopg.Connection, emit: bool = True):
 # =============================================================================
 def stage_devices(g: psycopg.Connection, limit: int | None):
     cust_rows, site_rows, seen_cust, seen_site = [], [], set(), set()
-    def ensure_customer(key, iso, requires=False):
+    def ensure_customer(key, iso, requires=False, real_id=None):
         u = customer_map.get(key)
         if key not in seen_cust:
             seen_cust.add(key)
-            cust_rows.append((u, iso or "", customer_lbl.get(key), requires))
+            cust_rows.append((u, iso or "", anon_org_name(customer_lbl, key, real_id), requires))
         return u
     def cust_uuid(cid, iso):
         if cid in ("0","1",""): return None
-        return ensure_customer("C"+cid, iso)
+        return ensure_customer("C"+cid, iso, real_id=cid)
     def site_uuid(sid, cust_u, iso, requires):
         if sid in ("0","1",""): return None
         if cust_u is None:
-            cust_u = ensure_customer("SC"+sid, iso)   # orphan site -> synthetic customer
+            cust_u = ensure_customer("SC"+sid, iso, real_id=sid)   # orphan site -> synthetic customer
         u = site_map.get(sid)
         if sid not in seen_site:
             seen_site.add(sid)
-            site_rows.append((u, cust_u, iso or "", site_lbl.get("S"+sid), requires, "dynamic"))
+            site_rows.append((u, cust_u, iso or "", anon_org_name(site_lbl, "S"+sid, sid), requires, "dynamic"))
         return u
 
     drows = []
@@ -292,10 +374,7 @@ def stage_devices(g: psycopg.Connection, limit: int | None):
         cust_u = cust_uuid(r.get("CUSTOMERID",""), iso)
         site_u = site_uuid(r.get("CUSTOMERSITEID",""), cust_u, iso, access == "site")
 
-        # Anonymize a source field via a stable LabelMap; empty -> NULL.
-        def an(m, raw):
-            v = (raw or "").strip()
-            return m.get(v) if v else None
+        na, nd, ninfo, npseudo = notify_flags(r.get("NOTIFYONACCESS"))
 
         drows.append((
             did,
@@ -306,19 +385,25 @@ def stage_devices(g: psycopg.Connection, limit: int | None):
             cust_u,
             site_u,
             gateway_map.get(r["RSROUTERID"]) if r.get("RSROUTERID") in gateway_src_ids else None,
-            hospital_lbl.get(r.get("HOSPITAL") or r["ID"]),
+            anon_hospital(r.get("HOSPITAL"), r["ID"]),
             None,                                   # software_version unknown in export
             access,
             psycopg.types.json.Json({}),
-            fake_serial(),                          # serial (SERIAL)
-            an(fl_lbl,   r.get("IDENTIFIER3")),     # functional_location
-            an(tid_lbl,  r.get("SYSTEMID2")),       # technical_ident
-            an(host_lbl, r.get("HOSTID")),          # host_hw_id
-            an(ord_lbl,  r.get("ORDERNO")),         # order_number
-            an(ip_lbl,   r.get("IPADDRESS1")),      # ip_address
-            an(ip_lbl,   r.get("REALIPADDRESS")),   # ip_real (same map -> same fake per real ip)
-            an(contact_lbl, r.get("CONTACT")),      # contact (PII)
-            an(city_lbl, r.get("CITY")),            # city (anon; shared map with gateway city)
+            anon_serial(r.get("SERIAL")),           # serial (SERIAL)
+            anon_map(fl_lbl,   r.get("IDENTIFIER3")),   # functional_location
+            anon_map(tid_lbl,  r.get("SYSTEMID2")),     # technical_ident
+            anon_map(host_lbl, r.get("HOSTID")),        # host_hw_id
+            anon_map(ord_lbl,  r.get("ORDERNO")),       # order_number
+            anon_map(ip_lbl,   r.get("IPADDRESS1")),    # ip_address
+            anon_map(ip_lbl,   r.get("REALIPADDRESS")), # ip_real (same map -> same fake per real ip)
+            anon_map(contact_lbl, r.get("CONTACT")),    # contact (PII)
+            anon_map(city_lbl, r.get("CITY")),          # city (anon; shared map with gateway city)
+            state_code(r.get("CONFIGURATIONSTATE")),    # config_state (raw enum code)
+            state_code(r.get("OPERATIONALSTATE")),      # operational_state (raw enum code)
+            na, nd, ninfo, npseudo,                     # notify_* (unpacked NOTIFYONACCESS)
+            anon_map(notify_lbl, r.get("NOTIFICATIONADDRESS")),  # notification_address (PII email)
+            anon_text(r.get("SHOWONCONNECT")),          # display_before_connect (free text)
+            anon_text(r.get("ANNOTATIONS")),            # additional_info (free text)
         ))
         if len(drows) >= 10000:
             _flush_devices(g, drows, cust_rows, site_rows); drows.clear()
@@ -335,7 +420,10 @@ def _flush_devices(g, drows, cust_rows, site_rows):
         copy_rows(g, "device (id,region_path,country_iso,modality,product_path,customer_id,"
                      "site_id,gateway_id,hospital_name,software_version,access_requirement,attrs,"
                      "serial,functional_location,technical_ident,host_hw_id,order_number,"
-                     "ip_address,ip_real,contact,city)", drows, on_conflict="id")
+                     "ip_address,ip_real,contact,city,"
+                     "config_state,operational_state,notify_on_access,notify_on_disconnect,"
+                     "notification_info_active,notify_pseudonymized,notification_address,"
+                     "display_before_connect,additional_info)", drows, on_conflict="id")
 
 
 # =============================================================================
@@ -352,11 +440,11 @@ def stage_users(l: psycopg.Connection, limit: int | None):
         n += 1
         if limit and n > limit: break
         uid = user_map.get(r["ID"])
-        fn, ln = fake_person()
+        fn, ln = anon_person(r.get("FIRSTNAME"), r.get("LASTNAME"), n)
         cid = (r.get("COUNTRYID") or "").strip()
         country = iso_by_country.get(cid) or None if cid not in ("0", "") else None
         if country: have += 1
-        rows.append((uid, "eu-west-2", fn, ln, fake_email(n), None, country))
+        rows.append((uid, "eu-west-2", fn, ln, anon_email(r.get("EMAIL"), n), None, country))
     copy_rows(l, "app_user (user_id,home_region,firstname,lastname,email,theme,country)", rows, on_conflict="user_id")
     print(f"  users: {len(rows)} ({have} with country)")
 
