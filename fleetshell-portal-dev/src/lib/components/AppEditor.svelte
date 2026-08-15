@@ -26,6 +26,8 @@
 	}
 	function blank(): Row { return seed({}); }
 
+	// One-time seed from props; the host remounts via {#key model_id} to reseed.
+	// svelte-ignore state_referenced_locally
 	let rows = $state<Row[]>(apps.map(seed));
 
 	function guacApplicable(r: Row) { return r.application === 'rdp' || r.application === 'vnc' || r.application === 'ssh'; }

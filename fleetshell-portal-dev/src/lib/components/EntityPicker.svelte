@@ -17,7 +17,11 @@
 		value?: string | null; label?: string | null; disabled?: boolean; placeholder?: string;
 	} = $props();
 
+	// Seeded ONCE from props; the host remounts via {#key} when the underlying
+	// record changes (see header), so a snapshot here is intentional.
+	// svelte-ignore state_referenced_locally
 	let curValue = $state(value);
+	// svelte-ignore state_referenced_locally
 	let curLabel = $state(label);
 	let editing = $state(false);
 	let query = $state('');

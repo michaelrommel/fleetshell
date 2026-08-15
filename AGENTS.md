@@ -924,6 +924,8 @@ infrastructure/
     authz_fastpath.sql         # INDEX-USING authz_list_devices / authz_can (production)
     migrate_region_access.sql  # region hierarchy + graded access_requirement
     migrate_region_tree.sql    # region_id_seq for user-created sub-regions (Countries > Region Tree)
+    migrate_dtm.sql            # Data Transfer Matrix: data_class(kind/mrs_id), dtm_variant/matrix/deny, customer.dtm_variant
+    migrate_user_country.sql   # (LOCAL) app_user.country (ISO), imported from RDUSER.COUNTRYID
     migrate_theme_*.sql        # per-user theme + org default
     migrate_identity_local.sql # person/persona split + region-prefixed text user_id
     migrate_identity_primary.sql # account_persona.is_primary (default persona)

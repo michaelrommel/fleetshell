@@ -20,8 +20,13 @@
 	const ESP_ENC   = ['aes128', 'aes192', 'aes256', 'aes128gcm', 'aes192gcm', 'aes256gcm', 'none'];
 	const ESP_AUTH  = ['sha256', 'sha384', 'sha512', 'none'];
 
+	// All fields are seeded ONCE from props; the host remounts via {#key g.id}
+	// when the selected gateway changes, so these snapshots are intentional.
+	// svelte-ignore state_referenced_locally
 	const s = ipsec ?? {};
+	// svelte-ignore state_referenced_locally
 	let ip = $state(publicIp ?? '');
+	// svelte-ignore state_referenced_locally
 	let pskVal = $state(psk ?? '');
 	let showPsk = $state(false);
 	let ike_version = $state(Number(s.ike_version) === 1 ? 1 : 2);

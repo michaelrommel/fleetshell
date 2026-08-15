@@ -130,10 +130,9 @@ Notes:
 
 ## WHERE TO START NEXT (priority order)
 
-**Resume here: the next major feature is the Data Transfer Matrix** (new
-session) -- it is the second tab of the new **Countries** section, whose first
-tab (**Region Tree**) is now BUILT (see below). After that, the remaining
-primary section is Customers/Sites, then the
+**Resume here: the Data Transfer Matrix is now BUILT** (schema + import +
+Valkey spool + editor; see below). After that, the remaining primary section is
+Customers/Sites, then the
 device **per-device application override** (`device_app`), then **Services >
 Infoproxy** + the **Valkey spool**. Products (incl. **Data Classification**),
 Devices, Gateways, and the whole Administration section are built.
@@ -156,6 +155,25 @@ support-based dedup) + `load.py --stage classification` / `--stage families`
 JSON artifacts. Remaining: a few dormant families (`Somaris 7`, security
 appliances) are manual prod cleanup; automatic write-through to Valkey on edit
 is deferred (currently manual "Sync to Valkey" button).
+
+### Data Transfer Matrix (BUILT -- see `docs/data_transfer_matrix.md`)
+
+`Countries -> Data Transfer Matrix`: per FROM-country x variant rules (destination
+country x data class -> permit/deny), anchored in the origin country (Country
+Manager concern; interim `is_admin`-gated). Denial-list model (only denials
+stored, default permit). Schema `migrate_dtm.sql` (data_class extended with
+`kind`/`mrs_id` + 12 DTM classes; `dtm_variant`/`dtm_matrix`/`dtm_deny`;
+`customer.dtm_variant`) + `migrate_user_country.sql` (LOCAL `app_user.country`,
+imported from `RDUSER.COUNTRYID`). Import: `dtm_dedup.py` (10 SRS workbooks ->
+committed `dtm.json`, name->code via MRS id) + `load.py stage_dtm`. Editor:
+grid (destination rows x class columns grouped by kind), exceptions-first view,
+row/column bulk-set, Save + Export to Valkey. Valkey key is HASH-TAGGED
+`dtm:{<FROM>}:<TO>:<VARIANT>` (SET of denied codes) so a whole origin country
+co-locates in one MemoryDB slot -> atomic per-country swap (MULTI/EXEC) in
+`src/lib/server/dtm.ts` + standalone `scripts/spool-dtm.mjs`. aerosuite reads
+`SISMEMBER dtm:{<from>}:<to>:<variant> <class>` (change in progress by owner).
+TODO: per-service TO resolvers (aeroftp vs remote); customer DTM-variant editor
+in the Customers page; authz_can('region','edit') scoped gate.
 
 ### Countries / Region Tree (BUILT)
 

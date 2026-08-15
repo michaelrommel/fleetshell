@@ -342,16 +342,23 @@ def _flush_devices(g, drows, cust_rows, site_rows):
 # STAGE: users (LOCAL plane)
 # =============================================================================
 def stage_users(l: psycopg.Connection, limit: int | None):
+    # RDUSER.COUNTRYID -> ISO (RDCOUNTRY.CODE3166): the persona's country, needed
+    # by the Data Transfer Matrix. 7733/7735 personas resolve. Built here so a
+    # standalone `--stage users` run does not depend on stage_reference.
+    iso_by_country = {r["ID"]: (r["CODE3166"] or "").strip() for r in read("RDCOUNTRY")}
     rows = []
-    n = 0
+    n = have = 0
     for r in read("RDUSER"):
         n += 1
         if limit and n > limit: break
         uid = user_map.get(r["ID"])
         fn, ln = fake_person()
-        rows.append((uid, "eu-west-2", fn, ln, fake_email(n), None))
-    copy_rows(l, "app_user (user_id,home_region,firstname,lastname,email,theme)", rows, on_conflict="user_id")
-    print(f"  users: {len(rows)}")
+        cid = (r.get("COUNTRYID") or "").strip()
+        country = iso_by_country.get(cid) or None if cid not in ("0", "") else None
+        if country: have += 1
+        rows.append((uid, "eu-west-2", fn, ln, fake_email(n), None, country))
+    copy_rows(l, "app_user (user_id,home_region,firstname,lastname,email,theme,country)", rows, on_conflict="user_id")
+    print(f"  users: {len(rows)} ({have} with country)")
 
 
 # =============================================================================
@@ -644,10 +651,47 @@ def stage_classification(g: psycopg.Connection, path: str | None = None):
     g.commit()
 
 
+# =============================================================================
+# STAGE: data transfer matrix (re-apply the committed, ISO-keyed artifact)
+# =============================================================================
+def stage_dtm(g: psycopg.Connection, path: str | None = None):
+    """Re-apply dtm.json by FROM-ISO / variant / TO-ISO / class code (never DB
+    UUIDs), so a full reload and Country-Manager UI edits both survive. Denial-
+    list model: only denied tuples are stored; absence => permitted. See
+    docs/data_transfer_matrix.md and dtm_dedup.py."""
+    path = path or os.path.join(HERE, "dtm.json")
+    if not os.path.exists(path):
+        print(f"  dtm: {path} absent -- skipped"); return
+    with open(path, encoding="utf-8") as f:
+        doc = json.load(f)
+    variants = doc.get("variants", {})
+    matrices = doc.get("matrices", {})
+    with g.cursor() as c:
+        for code, label in variants.items():
+            c.execute("INSERT INTO dtm_variant(code,label) VALUES(%s,%s) "
+                      "ON CONFLICT (code) DO UPDATE SET label=EXCLUDED.label", (code, label))
+        n_matrix = n_deny = 0
+        for from_iso, byvar in sorted(matrices.items()):
+            for variant, block in sorted(byvar.items()):
+                # Rebuild this FROM x variant from scratch (dtm_deny cascades).
+                c.execute("DELETE FROM dtm_matrix WHERE from_iso=%s AND variant=%s", (from_iso, variant))
+                c.execute("INSERT INTO dtm_matrix(from_iso,variant,default_decision) VALUES(%s,%s,%s)",
+                          (from_iso, variant, block.get("default", "permit")))
+                n_matrix += 1
+                for to_iso, codes in block.get("deny", {}).items():
+                    for code in dict.fromkeys(codes):
+                        c.execute("INSERT INTO dtm_deny(from_iso,to_iso,variant,class_code) "
+                                  "VALUES(%s,%s,%s,%s) ON CONFLICT DO NOTHING",
+                                  (from_iso, to_iso, variant, code))
+                        n_deny += 1
+        print(f"  dtm: {len(matrices)} FROM-countries, {n_matrix} matrices, {n_deny} denied cells")
+    g.commit()
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--stage", default="all",
-                    choices=["all","reference","devices","users","grants","families","classification"])
+                    choices=["all","reference","devices","users","grants","families","classification","dtm"])
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--keep", action="store_true", help="keep the id maps (do not destroy)")
     a = ap.parse_args()
@@ -671,6 +715,8 @@ def main():
         print("families:"); stage_families(g)
     if a.stage in ("all","reference","classification"):
         print("classification:"); stage_classification(g)
+    if a.stage in ("all","dtm"):
+        print("dtm:"); stage_dtm(g)
 
     for m in ALL_MAPS: m.save()
     with g.cursor() as c:
