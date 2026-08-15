@@ -26,7 +26,7 @@
 	}
 	function blank(): Row { return seed({}); }
 
-	let rows = $state<Row[]>(apps.length ? apps.map(seed) : [blank()]);
+	let rows = $state<Row[]>(apps.map(seed));
 
 	function guacApplicable(r: Row) { return r.application === 'rdp' || r.application === 'vnc' || r.application === 'ssh'; }
 	function sniEffective(r: Row) {
@@ -42,7 +42,7 @@
 		if (!guacApplicable(r)) r.record = false;
 	}
 	function addRow() { rows = [...rows, blank()]; }
-	function removeRow(i: number) { if (rows.length > 1) rows = rows.filter((_, idx) => idx !== i); }
+	function removeRow(i: number) { rows = rows.filter((_, idx) => idx !== i); }
 
 	const appsJson = $derived(JSON.stringify(rows));
 </script>
@@ -83,7 +83,7 @@
 				<label class="pr-check" title={row.guac ? 'E2E not applicable - guacd handles the upstream' : guacApplicable(row) ? 'Required - native protocol relayed byte-for-byte' : 'Pass TLS bytes end-to-end'}>
 					<input type="checkbox" class="check-input" bind:checked={row.e2ecrypt} disabled={!canEdit || row.guac || (guacApplicable(row) && row.application !== 'ssh')} />
 				</label>
-				<button type="button" class="pr-remove" onclick={() => removeRow(i)} disabled={!canEdit || rows.length === 1} title="Remove row" aria-label="Remove row">✕</button>
+				<button type="button" class="pr-remove" onclick={() => removeRow(i)} disabled={!canEdit} title="Remove row" aria-label="Remove row">✕</button>
 			</div>
 			{#if showPathParam(row)}
 				<div class="port-row-path">

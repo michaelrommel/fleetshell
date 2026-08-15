@@ -55,6 +55,8 @@
 
 	const canEdit = $derived(data.isAdmin);
 	const d = $derived(data.detail as Record<string, string | null> | null);
+	type App = { name: string; application: string; ports: string; guac: boolean; e2ecrypt: boolean; sni: string; path: string; drive: boolean; record: boolean };
+	const apps = $derived((data.detail?.apps ?? []) as App[]);
 </script>
 
 <SplitPane storageKey="devices" defaultLeft={52}>
@@ -133,6 +135,28 @@
 					<span class="model">{d.model_name ?? ''}</span>
 				</div>
 				<p class="path">{d.modality_name ?? '?'} / {d.product_name ?? '?'} / {d.model_name ?? '?'}</p>
+
+				<h4 class="apps-head">Applications <span class="muted">· inherited from {d.model_name ?? 'model'}</span></h4>
+				{#if apps.length}
+					<div class="app-list">
+						{#each apps as a}
+							<div class="app-row">
+								<span class="app-name">{a.name || '(unnamed)'}</span>
+								<span class="app-proto">{a.application}</span>
+								{#if a.ports}<span class="mono app-ports">{a.ports}</span>{/if}
+								{#if a.guac}<span class="badge">guac</span>{/if}
+								{#if a.e2ecrypt}<span class="badge">e2e</span>{/if}
+								{#if a.record}<span class="badge rec">rec</span>{/if}
+								{#if a.drive}<span class="badge">drive</span>{/if}
+								{#if a.sni}<span class="app-extra">SNI {a.sni}</span>{/if}
+								{#if a.path && a.path !== '/'}<span class="app-extra">{a.path}</span>{/if}
+							</div>
+						{/each}
+					</div>
+					<p class="muted apps-note">Defined on the product model. Per-device override is not enabled yet.</p>
+				{:else}
+					<p class="muted">No applications defined on this device's model.</p>
+				{/if}
 
 				<form method="POST" action="?/updateDevice" use:enhance>
 					<input type="hidden" name="id" value={d.id} />
@@ -266,6 +290,18 @@
 	.rel { display: grid; grid-template-columns: 8rem 1fr; gap: 0.5rem 0.8rem; align-items: start; }
 	.rlabel { align-self: center; font-size: 0.76rem; color: var(--text-muted); }
 	.partno-note { align-self: center; font-size: 0.76rem; color: var(--text-subtle); }
+
+	.apps-head { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-subtle); margin: 0.4rem 0 0.5rem; }
+	.apps-head .muted { text-transform: none; letter-spacing: 0; }
+	.app-list { display: flex; flex-direction: column; gap: 0.3rem; }
+	.app-row { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; font-size: 0.83rem; padding: 0.35rem 0.5rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); }
+	.app-name { font-weight: 600; color: var(--text); }
+	.app-proto { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.03em; color: var(--accent); }
+	.app-ports { color: var(--text-muted); }
+	.badge { font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-subtle); border: 1px solid var(--border); border-radius: 999px; padding: 0.02rem 0.4rem; }
+	.badge.rec { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 45%, transparent); }
+	.app-extra { font-size: 0.74rem; color: var(--text-subtle); }
+	.apps-note { margin: 0.5rem 0 0; }
 
 	.error { color: var(--danger); font-size: 0.85rem; margin: 0 0 0.8rem; }
 </style>

@@ -118,7 +118,17 @@ async function loadDetail(sel: string | null) {
 		LEFT JOIN customer_site si ON si.id = d.site_id
 		LEFT JOIN gateway gw       ON gw.id = d.gateway_id
 		WHERE d.id = ${sel}`;
-	return d ?? null;
+	if (!d) return null;
+	// Effective apps for this device = the model's product_model_app (inherited).
+	// Per-device override (device_app) is a later slice; read-only for now.
+	const apps = await globalDb<Record<string, unknown>[]>`
+		SELECT pma.name, pma.application, pma.ports, pma.guac, pma.e2ecrypt, pma.sni, pma.path,
+		       pma.width, pma.height, pma.dpi, pma.drive, pma.record
+		FROM product_model_app pma
+		JOIN product m ON m.id = pma.product_id
+		WHERE m.path = ${d.product_path as string}::ltree
+		ORDER BY pma.sort_order, pma.name`;
+	return { ...d, apps };
 }
 
 // Empty string -> null (for nullable uuid/ltree columns).
