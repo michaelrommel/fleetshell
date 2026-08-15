@@ -877,7 +877,8 @@ A parallel effort replacing the Valkey key/value store as the system of record
 for device/gateway/customer relations and authorization. **New agents working on
 MDM: read `docs/mdm_status.md` first** (start-here handoff), then
 `docs/mdm_design.md`, `docs/authz_caching.md`, `docs/data_import.md`,
-`docs/portal_ui.md` (portal-dev UI: AppShell shell + section roadmap).
+`docs/portal_ui.md` (portal-dev UI: AppShell shell + section roadmap), and
+`docs/data_classification.md` (data-classification feature + import pipeline).
 
 ### New components (not in §1's original layout)
 
@@ -927,9 +928,15 @@ infrastructure/
     migrate_identity_primary.sql # account_persona.is_primary (default persona)
     migrate_persona_rename.sql # account_identity -> account_persona (naming consistency)
     migrate_authz_catalog.sql  # normalize privileges to CRUD x extensible types (+ device:connect)
+    migrate_data_classification.sql # data_class catalog + classification_set/rule/rule_class/assignment
     seed_demo.sql / verify_demo.sql   # correctness proof (all green)
   import/
     load.py                    # anonymizing CSV importer (192k devices, ~1M grants; incl. single-system)
+                               #   + --stage families / --stage classification (name-keyed, reload-survivable)
+    classification_dedup.py    # Data_Classification*.xlsx -> classification.json (lossless support dedup + CIM)
+    classification_export.py   # DB -> classification.json round-trip (capture UI edits, then commit)
+    classification.json        # committed, name-keyed data-classification artifact (source of truth)
+    product_families.json      # committed family -> product-names mapping (populates product.family)
     anonymize.py               # IdMap/LabelMap/fakers (destroyed after run)
     build_group_hierarchy.py   # materialize the full group tree (path/parent_id) from groups.txt
     seed_test_users.py         # curated broad->narrow test personas for the dev login
@@ -939,6 +946,7 @@ infrastructure/
 
 docs/
   mdm_status.md                # START HERE: current state + where to start next
+  data_classification.md       # data-classification feature (Rule Sets/Assignments) + import pipeline
   mdm_design.md                # architecture: two planes, authz model, §5.1 hard rules
   authz_caching.md             # perf: L0/L1 caches, §11 validated benchmark
   data_import.md               # import + anonymization plan
@@ -959,7 +967,7 @@ customer/site). Hot path: resolve user->groups locally, then evaluate
 groups->grants->scopes against globally-replicated master data. The list query
 is index-using SQL (GiST on ltree paths), no bitmaps.
 
-### Status: infra + schema + import + perf DONE; portal shell + Administration + Products + Devices + Gateways DONE.
+### Status: infra + schema + import + perf DONE; portal shell + Administration + Products (incl. Data Classification) + Devices + Gateways DONE. Next: Data Transfer Matrix.
 
 The portal-dev application chrome is built (`docs/portal_ui.md`): brand top-bar
 (Healthineers logo + "FleetShell Portal"; theme toggle, bell/news placeholder,
@@ -1012,7 +1020,8 @@ See `docs/mdm_status.md` "Re-running the data pipeline / full reload".
   Create right; red delete via `ConfirmDialog`), `SplitPane` (draggable,
   persisted), dark scrollbars, in-field search x + keep-focus.
 
-**RESUME HERE (see `docs/mdm_status.md` WHERE TO START NEXT):** (1) the
+**RESUME HERE (see `docs/mdm_status.md` WHERE TO START NEXT):** next major
+feature is the **Data Transfer Matrix** (new session). Then: (1) the
 **Customers/Sites** page (last primary section); (2) the device **per-device app
 override** (`device_app` table + `resolve_apps` + override editor -- the device
 Applications list is currently read-only/inherited); (3) **Services > Infoproxy**

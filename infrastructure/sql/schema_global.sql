@@ -246,6 +246,65 @@ CREATE TABLE IF NOT EXISTS product_model_app (
 );
 CREATE INDEX IF NOT EXISTS ix_product_model_app_product ON product_model_app(product_id);
 
+-- Data classification (see docs/data_classification.md + migrate_data_classification.sql).
+-- Fixed data-class catalog; modality-owned reusable Rule Sets; rules (filename
+-- regex + classes); assignments mapping a set to a product / family / modality.
+-- Resolves into the Valkey hash data_classes:<MODALITY>:<PRODUCT> for aeroftp.
+CREATE TABLE IF NOT EXISTS data_class (
+    code       text PRIMARY KEY,          -- 'PHI','UPD','RD','PII','ACD','DSH','TSD','STD'
+    label      text NOT NULL,
+    sort_order int  NOT NULL DEFAULT 0
+);
+INSERT INTO data_class (code, label, sort_order) VALUES
+    ('PHI', 'Protected Health Information',      1),
+    ('UPD', 'Utilization & Performance Data',    2),
+    ('RD',  'Result Data',                       3),
+    ('PII', 'Personal Identifiable Information', 4),
+    ('ACD', 'Asset & Configuration Data',        5),
+    ('DSH', 'Device Service History',            6),
+    ('TSD', 'Technical Status Data',             7),
+    ('STD', 'Smart Technical Data',              8)
+ON CONFLICT (code) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS classification_set (
+    id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    modality_id uuid NOT NULL REFERENCES product(id) ON DELETE CASCADE,  -- kind='modality'
+    name        text NOT NULL,
+    description text,
+    UNIQUE (modality_id, name)
+);
+CREATE INDEX IF NOT EXISTS ix_classification_set_modality ON classification_set(modality_id);
+
+CREATE TABLE IF NOT EXISTS classification_rule (
+    id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    set_id     uuid NOT NULL REFERENCES classification_set(id) ON DELETE CASCADE,
+    regex      text NOT NULL,                 -- stored WITHOUT the surrounding /.../
+    sort_order int  NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS ix_classification_rule_set ON classification_rule(set_id);
+
+CREATE TABLE IF NOT EXISTS classification_rule_class (
+    rule_id uuid NOT NULL REFERENCES classification_rule(id) ON DELETE CASCADE,
+    code    text NOT NULL REFERENCES data_class(code),
+    PRIMARY KEY (rule_id, code)
+);
+
+CREATE TABLE IF NOT EXISTS classification_assignment (
+    id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    set_id     uuid NOT NULL REFERENCES classification_set(id) ON DELETE CASCADE,
+    product_id uuid REFERENCES product(id) ON DELETE CASCADE,   -- kind='product'; NULL = not product-targeted
+    family     text,                                            -- product.family value; NULL = not family-targeted
+    CHECK ( (product_id IS NOT NULL)::int + (family IS NOT NULL)::int <= 1 )
+);
+CREATE INDEX IF NOT EXISTS ix_classification_assignment_set     ON classification_assignment(set_id);
+CREATE INDEX IF NOT EXISTS ix_classification_assignment_product ON classification_assignment(product_id);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_classification_assign_product
+    ON classification_assignment(set_id, product_id) WHERE product_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS ux_classification_assign_family
+    ON classification_assignment(set_id, family) WHERE family IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS ux_classification_assign_modality
+    ON classification_assignment(set_id) WHERE product_id IS NULL AND family IS NULL;
+
 -- Devices: scope dimensions promoted to indexed columns; long tail in jsonb.
 CREATE TABLE IF NOT EXISTS device (
     id                 uuid PRIMARY KEY DEFAULT gen_random_uuid(),

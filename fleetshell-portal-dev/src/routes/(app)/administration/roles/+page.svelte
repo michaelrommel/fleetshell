@@ -151,8 +151,7 @@
 	.rename label { flex: 1; }
 	.rename button[type='submit'] { align-self: flex-end; }
 	label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.8rem; color: var(--text-muted); }
-	input { background: var(--bg-app); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.4rem 0.55rem; font: inherit; font-size: 0.85rem; }
-	input[type='checkbox'] { width: auto; }
+	input:not([type='checkbox']) { background: var(--bg-app); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.4rem 0.55rem; font: inherit; font-size: 0.85rem; }
 	input:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
 	button[type='submit'] { align-self: flex-start; background: var(--accent); color: var(--on-accent); border: none; border-radius: var(--radius); padding: 0.45rem 0.8rem; font: inherit; font-weight: 600; font-size: 0.85rem; cursor: pointer; }
 	button[type='submit']:hover { background: var(--accent-hover); }

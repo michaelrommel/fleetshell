@@ -1,0 +1,8566 @@
+{
+ "version": 1,
+ "modalities": {
+  "AX": {
+   "family_based": false,
+   "sets": [
+    {
+     "name": "zip",
+     "description": "",
+     "rules": [
+      {
+       "regex": ".*_LogFiles.zip",
+       "codes": [
+        "PHI",
+        "UPD",
+        "PII",
+        "ACD",
+        "DSH",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_MonLogFiles.zip",
+       "codes": [
+        "PHI",
+        "UPD",
+        "PII",
+        "ACD",
+        "DSH",
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "ARTIS-Second-Workplace",
+       "ARTIS_genio_floor",
+       "ARTIS_icono_biplane",
+       "ARTIS_icono_ceiling",
+       "ARTIS_icono_explore_floor",
+       "ARTIS_icono_floor",
+       "AXIOM Artis U",
+       "Artis_BA",
+       "Artis_BC",
+       "Artis_FA",
+       "Artis_FC",
+       "Artis_MP",
+       "Artis_One",
+       "Artis_Q.zen_biplane",
+       "Artis_Q.zen_ceiling",
+       "Artis_Q.zen_floor",
+       "Artis_Q_biplane",
+       "Artis_Q_ceiling",
+       "Artis_Q_floor",
+       "Artis_Q_zeego",
+       "Artis_Q_zeego_CN",
+       "Artis_TA",
+       "Artis_TC",
+       "Artis_dBA",
+       "Artis_dBC",
+       "Artis_dBCM",
+       "Artis_dFA",
+       "Artis_dFC",
+       "Artis_dFCM",
+       "Artis_dMP",
+       "Artis_dTA",
+       "Artis_dTC",
+       "Artis_pheno",
+       "Artis_zee_III_biplane",
+       "Artis_zee_III_biplane_MN",
+       "Artis_zee_III_ceiling",
+       "Artis_zee_III_floor",
+       "Artis_zee_III_floor_MN",
+       "Artis_zee_III_multi-purpose",
+       "Artis_zee_biplane",
+       "Artis_zee_biplane_MN",
+       "Artis_zee_ceiling",
+       "Artis_zee_floor",
+       "Artis_zee_floor_MN",
+       "Artis_zee_multi-purpose",
+       "Artis_zeego_III",
+       "Artis_zeego_multi-axis"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "boot",
+     "description": "",
+     "rules": [
+      {
+       "regex": ".*boot.ini.*",
+       "codes": [
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "ARTIS-Second-Workplace",
+       "ARTIS_genio_floor",
+       "ARTIS_icono_biplane",
+       "ARTIS_icono_ceiling",
+       "ARTIS_icono_explore_floor",
+       "ARTIS_icono_floor",
+       "Artis_BA",
+       "Artis_BC",
+       "Artis_FA",
+       "Artis_FC",
+       "Artis_MP",
+       "Artis_One",
+       "Artis_Q.zen_biplane",
+       "Artis_Q.zen_ceiling",
+       "Artis_Q.zen_floor",
+       "Artis_Q_biplane",
+       "Artis_Q_ceiling",
+       "Artis_Q_floor",
+       "Artis_Q_zeego",
+       "Artis_Q_zeego_CN",
+       "Artis_TA",
+       "Artis_TC",
+       "Artis_dBA",
+       "Artis_dBC",
+       "Artis_dBCM",
+       "Artis_dFA",
+       "Artis_dFC",
+       "Artis_dFCM",
+       "Artis_dMP",
+       "Artis_dTA",
+       "Artis_dTC",
+       "Artis_pheno",
+       "Artis_zee_III_biplane",
+       "Artis_zee_III_biplane_MN",
+       "Artis_zee_III_ceiling",
+       "Artis_zee_III_floor",
+       "Artis_zee_III_floor_MN",
+       "Artis_zee_III_multi-purpose",
+       "Artis_zee_biplane",
+       "Artis_zee_biplane_MN",
+       "Artis_zee_ceiling",
+       "Artis_zee_floor",
+       "Artis_zee_floor_MN",
+       "Artis_zee_multi-purpose",
+       "Artis_zeego_III",
+       "Artis_zeego_multi-axis"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "AXTubeUsage",
+     "description": "",
+     "rules": [
+      {
+       "regex": ".*_SDC_AXTubeUsage.*",
+       "codes": [
+        "UPD",
+        "ACD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "AXIOM Artis U",
+       "Artis_One",
+       "Artis_Q.zen_biplane",
+       "Artis_Q.zen_ceiling",
+       "Artis_Q.zen_floor",
+       "Artis_Q_biplane",
+       "Artis_Q_ceiling",
+       "Artis_Q_floor",
+       "Artis_Q_zeego",
+       "Artis_Q_zeego_CN",
+       "Artis_dBA",
+       "Artis_dBC",
+       "Artis_dBCM",
+       "Artis_dFA",
+       "Artis_dFC",
+       "Artis_dFCM",
+       "Artis_dMP",
+       "Artis_dTA",
+       "Artis_dTC",
+       "Artis_zee_III_biplane",
+       "Artis_zee_III_biplane_MN",
+       "Artis_zee_III_ceiling",
+       "Artis_zee_III_floor",
+       "Artis_zee_III_floor_MN",
+       "Artis_zee_III_multi-purpose",
+       "Artis_zee_biplane",
+       "Artis_zee_biplane_MN",
+       "Artis_zee_ceiling",
+       "Artis_zee_floor",
+       "Artis_zee_floor_MN",
+       "Artis_zee_multi-purpose",
+       "Artis_zeego_III",
+       "Artis_zeego_multi-axis"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "zip-2",
+     "description": "",
+     "rules": [
+      {
+       "regex": ".*_MiddayLogFiles.zip",
+       "codes": [
+        "PII",
+        "ACD",
+        "DSH",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_ShortLogFiles.zip",
+       "codes": [
+        "PHI",
+        "PII",
+        "ACD",
+        "DSH",
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "ARTIS-Second-Workplace",
+       "ARTIS_genio_floor",
+       "ARTIS_icono_biplane",
+       "ARTIS_icono_ceiling",
+       "ARTIS_icono_explore_floor",
+       "ARTIS_icono_floor",
+       "Artis_MP",
+       "Artis_One",
+       "Artis_Q.zen_biplane",
+       "Artis_Q.zen_ceiling",
+       "Artis_Q.zen_floor",
+       "Artis_Q_biplane",
+       "Artis_Q_ceiling",
+       "Artis_Q_floor",
+       "Artis_Q_zeego",
+       "Artis_Q_zeego_CN",
+       "Artis_pheno",
+       "Artis_zee_III_biplane",
+       "Artis_zee_III_biplane_MN",
+       "Artis_zee_III_ceiling",
+       "Artis_zee_III_floor",
+       "Artis_zee_III_floor_MN",
+       "Artis_zee_III_multi-purpose",
+       "Artis_zee_biplane",
+       "Artis_zee_biplane_MN",
+       "Artis_zee_ceiling",
+       "Artis_zee_floor",
+       "Artis_zee_floor_MN",
+       "Artis_zee_multi-purpose",
+       "Artis_zeego_III",
+       "Artis_zeego_multi-axis"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "Questionnaire",
+     "description": "",
+     "rules": [
+      {
+       "regex": ".*SDC_Questionnaire.*",
+       "codes": [
+        "PHI",
+        "PII"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "ARTIS-Second-Workplace",
+       "ARTIS_genio_floor",
+       "ARTIS_icono_biplane",
+       "ARTIS_icono_ceiling",
+       "ARTIS_icono_explore_floor",
+       "ARTIS_icono_floor",
+       "AXIOM Artis U",
+       "Artis_One",
+       "Artis_Q.zen_biplane",
+       "Artis_Q.zen_ceiling",
+       "Artis_Q.zen_floor",
+       "Artis_Q_biplane",
+       "Artis_Q_ceiling",
+       "Artis_Q_floor",
+       "Artis_Q_zeego",
+       "Artis_Q_zeego_CN",
+       "Artis_pheno",
+       "Artis_zee_III_biplane",
+       "Artis_zee_III_biplane_MN",
+       "Artis_zee_III_ceiling",
+       "Artis_zee_III_floor",
+       "Artis_zee_III_floor_MN",
+       "Artis_zee_III_multi-purpose",
+       "Artis_zee_biplane",
+       "Artis_zee_biplane_MN",
+       "Artis_zee_ceiling",
+       "Artis_zee_floor",
+       "Artis_zee_floor_MN",
+       "Artis_zee_multi-purpose",
+       "Artis_zeego_III",
+       "Artis_zeego_multi-axis"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "TubeData",
+     "description": "",
+     "rules": [
+      {
+       "regex": ".*_TubeData.zip",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "AXIOM Artis U",
+       "Artis_BA",
+       "Artis_BC",
+       "Artis_FA",
+       "Artis_FC",
+       "Artis_MP",
+       "Artis_TA",
+       "Artis_TC",
+       "Artis_dBA",
+       "Artis_dBC",
+       "Artis_dBCM",
+       "Artis_dFA",
+       "Artis_dFC",
+       "Artis_dFCM",
+       "Artis_dMP",
+       "Artis_dTA",
+       "Artis_dTC",
+       "Artis_zee_III_biplane",
+       "Artis_zee_III_biplane_MN",
+       "Artis_zee_III_ceiling",
+       "Artis_zee_III_floor",
+       "Artis_zee_III_floor_MN",
+       "Artis_zee_III_multi-purpose",
+       "Artis_zee_biplane",
+       "Artis_zee_biplane_MN",
+       "Artis_zee_ceiling",
+       "Artis_zee_floor",
+       "Artis_zee_floor_MN",
+       "Artis_zee_multi-purpose",
+       "Artis_zeego_III",
+       "Artis_zeego_multi-axis"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "EnvironmentLog",
+     "description": "",
+     "rules": [
+      {
+       "regex": ".*_EnvironmentLog.xml",
+       "codes": [
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "AXIOM Artis U",
+       "Artis_Q.zen_biplane",
+       "Artis_Q.zen_ceiling",
+       "Artis_Q.zen_floor",
+       "Artis_Q_biplane",
+       "Artis_Q_ceiling",
+       "Artis_Q_floor",
+       "Artis_Q_zeego",
+       "Artis_Q_zeego_CN",
+       "Artis_zee_III_biplane",
+       "Artis_zee_III_biplane_MN",
+       "Artis_zee_III_ceiling",
+       "Artis_zee_III_floor",
+       "Artis_zee_III_floor_MN",
+       "Artis_zee_III_multi-purpose",
+       "Artis_zee_biplane",
+       "Artis_zee_biplane_MN",
+       "Artis_zee_ceiling",
+       "Artis_zee_floor",
+       "Artis_zee_floor_MN",
+       "Artis_zee_multi-purpose",
+       "Artis_zeego_III",
+       "Artis_zeego_multi-axis"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "ASSET",
+     "description": "",
+     "rules": [
+      {
+       "regex": ".*_SDC_ASSET_INFO_.*",
+       "codes": [
+        "PII",
+        "ACD",
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "Artis_One",
+       "Artis_Q.zen_biplane",
+       "Artis_Q.zen_ceiling",
+       "Artis_Q.zen_floor",
+       "Artis_Q_biplane",
+       "Artis_Q_ceiling",
+       "Artis_Q_floor",
+       "Artis_Q_zeego",
+       "Artis_Q_zeego_CN",
+       "Artis_dBA",
+       "Artis_dBC",
+       "Artis_dBCM",
+       "Artis_dFA",
+       "Artis_dFC",
+       "Artis_dFCM",
+       "Artis_dMP",
+       "Artis_dTA",
+       "Artis_dTC"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "zip-3",
+     "description": "",
+     "rules": [
+      {
+       "regex": ".*_MiddayLogFiles.zip",
+       "codes": [
+        "UPD",
+        "PII",
+        "ACD",
+        "DSH",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_ShortLogFiles.zip",
+       "codes": [
+        "PHI",
+        "UPD",
+        "PII",
+        "ACD",
+        "DSH",
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "AXIOM Artis U",
+       "Artis_BA",
+       "Artis_BC",
+       "Artis_FA",
+       "Artis_FC",
+       "Artis_TA",
+       "Artis_TC",
+       "Artis_dBA",
+       "Artis_dBC",
+       "Artis_dBCM",
+       "Artis_dFA",
+       "Artis_dFC",
+       "Artis_dFCM",
+       "Artis_dMP",
+       "Artis_dTA",
+       "Artis_dTC"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "ASSET-2",
+     "description": "",
+     "rules": [
+      {
+       "regex": ".*_SDC_ASSET_INFO_.*",
+       "codes": [
+        "PII",
+        "ACD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "AXIOM Artis U",
+       "Artis_zee_III_biplane",
+       "Artis_zee_III_biplane_MN",
+       "Artis_zee_III_ceiling",
+       "Artis_zee_III_floor",
+       "Artis_zee_III_floor_MN",
+       "Artis_zee_III_multi-purpose",
+       "Artis_zee_biplane",
+       "Artis_zee_biplane_MN",
+       "Artis_zee_ceiling",
+       "Artis_zee_floor",
+       "Artis_zee_floor_MN",
+       "Artis_zee_multi-purpose",
+       "Artis_zeego_III",
+       "Artis_zeego_multi-axis"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "FLCImage",
+     "description": "",
+     "rules": [
+      {
+       "regex": ".*FLCImage_DCM_.*",
+       "codes": [
+        "UPD",
+        "RD",
+        "ACD"
+       ]
+      },
+      {
+       "regex": ".*FLCImage_FLC_.*",
+       "codes": [
+        "UPD",
+        "RD",
+        "ACD"
+       ]
+      },
+      {
+       "regex": ".*_EventLogs_.*",
+       "codes": [
+        "PHI",
+        "UPD",
+        "ACD",
+        "TSD",
+        "STD"
+       ]
+      },
+      {
+       "regex": ".*_FLCConfigdata_.*",
+       "codes": [
+        "PHI",
+        "UPD",
+        "ACD",
+        "TSD",
+        "STD"
+       ]
+      },
+      {
+       "regex": ".*_FLCEventlog_.*",
+       "codes": [
+        "PHI",
+        "UPD",
+        "ACD",
+        "TSD",
+        "STD"
+       ]
+      },
+      {
+       "regex": ".*_FLCImagingData_.*",
+       "codes": [
+        "UPD",
+        "ACD"
+       ]
+      },
+      {
+       "regex": ".*_FLCTransferFiles_.*",
+       "codes": [
+        "UPD",
+        "ACD",
+        "TSD",
+        "STD"
+       ]
+      },
+      {
+       "regex": ".*_OtherLogs_.*",
+       "codes": [
+        "PHI",
+        "UPD",
+        "ACD",
+        "TSD",
+        "STD"
+       ]
+      },
+      {
+       "regex": ".*_System.txt_.*",
+       "codes": [
+        "UPD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "CIARTIC_Move",
+       "Cios_Alpha",
+       "Cios_Flow",
+       "Cios_Select",
+       "Cios_Select_FD",
+       "Cios_Select_II",
+       "Cios_Spin"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "SDC",
+     "description": "",
+     "rules": [
+      {
+       "regex": ".*SDC_ASSET_INFO.*",
+       "codes": [
+        "PII",
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SDC_AXTubeUsage.*",
+       "codes": [
+        "UPD",
+        "ACD"
+       ]
+      },
+      {
+       "regex": ".*SDC_AXUsageData.*",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SDC_SDCUtilization.*",
+       "codes": [
+        "UPD"
+       ]
+      },
+      {
+       "regex": ".*_AxisLogFiles.zip",
+       "codes": [
+        "PII",
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_CcomLogFiles.zip",
+       "codes": [
+        "PII",
+        "ACD",
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "ARTIS-Second-Workplace",
+       "ARTIS_genio_floor",
+       "ARTIS_icono_biplane",
+       "ARTIS_icono_ceiling",
+       "ARTIS_icono_explore_floor",
+       "ARTIS_icono_floor",
+       "Artis_pheno"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "shared",
+     "description": "",
+     "rules": [
+      {
+       "regex": ".*",
+       "codes": [
+        "PHI",
+        "UPD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "Acom_Net",
+       "Artis_zeego",
+       "Artis_zeego.zen",
+       "Env-Mon",
+       "Innovation_System",
+       "Multistar_TOP",
+       "OEM_AT"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "IaeLogFiles",
+     "description": "",
+     "rules": [
+      {
+       "regex": ".*_IaeLogFiles.zip",
+       "codes": [
+        "PHI",
+        "UPD",
+        "PII",
+        "ACD",
+        "DSH",
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "ARTIS_genio_floor",
+       "ARTIS_icono_biplane",
+       "ARTIS_icono_ceiling",
+       "ARTIS_icono_explore_floor",
+       "ARTIS_icono_floor",
+       "Artis_pheno"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "FlightRecorderLogs",
+     "description": "",
+     "rules": [
+      {
+       "regex": ".*_FlightRecorderLogs_.*",
+       "codes": [
+        "PHI",
+        "UPD",
+        "ACD",
+        "TSD",
+        "STD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "CIARTIC_Move",
+       "Cios_Alpha",
+       "Cios_Select",
+       "Cios_Spin"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "FlightRecorderLogs-2",
+     "description": "",
+     "rules": [
+      {
+       "regex": ".*_FlightRecorderLogs_.*",
+       "codes": [
+        "UPD",
+        "ACD",
+        "TSD",
+        "STD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "Cios_Flow",
+       "Cios_Select_FD",
+       "Cios_Select_II"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "LogFiles",
+     "description": "",
+     "rules": [
+      {
+       "regex": ".*_DMC_LogFiles.zip",
+       "codes": [
+        "PHI",
+        "UPD",
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_RTC_LogFiles.zip",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "Sensis_ACQ",
+       "Sensis_Vibe_ACQ"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "DMC",
+     "description": "",
+     "rules": [
+      {
+       "regex": ".*_DMC_Logs.zip",
+       "codes": [
+        "PHI",
+        "UPD",
+        "ACD",
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "Axiom_Sensis_ACQ",
+       "Axiom_Sensis_Postprocessing_Workstation"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "SIS",
+     "description": "",
+     "rules": [
+      {
+       "regex": ".*_SIS_Logs.zip",
+       "codes": [
+        "PHI",
+        "UPD",
+        "PII",
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "Axiom_Sensis_SIS_Server",
+       "Sensis_SIS_Server"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "MonLogFiles",
+     "description": "",
+     "rules": [
+      {
+       "regex": ".*CoDiag.*",
+       "codes": [
+        "PHI",
+        "UPD"
+       ]
+      },
+      {
+       "regex": ".*_LogFiles.*",
+       "codes": [
+        "PHI",
+        "UPD",
+        "PII",
+        "ACD",
+        "DSH",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_MonLogFiles.*",
+       "codes": [
+        "PHI",
+        "PII",
+        "ACD",
+        "DSH",
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "Syngo_X_Workplace"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "shared-2",
+     "description": "",
+     "rules": [
+      {
+       "regex": ".*",
+       "codes": [
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "Security Appliance for AT"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "IaeLogFiles-2",
+     "description": "",
+     "rules": [
+      {
+       "regex": ".*_IaeLogFiles.zip",
+       "codes": [
+        "PHI",
+        "PII",
+        "ACD",
+        "DSH",
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "ARTIS-Second-Workplace"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "RTC",
+     "description": "",
+     "rules": [
+      {
+       "regex": ".*_RTC_Logs.zip",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "Axiom_Sensis_ACQ"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "LogFiles-2",
+     "description": "",
+     "rules": [
+      {
+       "regex": ".*_iSIB_LogFiles.zip",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "Sensis_Vibe_ACQ"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "Helpdesk/CIM Files",
+     "description": "",
+     "rules": [
+      {
+       "regex": ".*installed_policies\\.txt",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*MNP\\.XML(\\.BAK)?",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SystemManagementBaseCheck\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*BlockingAction\\.xml",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*RequiredActions\\.xml",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*RegistrationInfo\\.xml",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*LastRegistrationInfo\\.xml",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*RegistrationBackendInfo\\.xml",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*oainstall\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*opcactivate\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*System\\.txt",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*trace",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*svc_actual_state\\.xml",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*svc_admin(\\.log|\\.prot)([1-9])?",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*svc_service(\\.log|\\.prot)([1-9])?",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*svc_tunnel(\\.log|\\.prot)([1-9])?",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*bbcutil_ping\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*export\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*MNP_.*\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*ovconfget\\.log",
+       "codes": [
+        "ACD"
+       ]
+      },
+      {
+       "regex": ".*sysmgmt_.*\\.log(\\.tmp)?",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*WebService\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*\\.EDM",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*GetBEData\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*history\\.csv",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*MedClient\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*radexecd\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*radiafd\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*radkill\\.l00",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*radntfyc\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*radrexfu\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*radsched\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*radshist\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*radstate\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*radstgms\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*radtray\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*rc\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*registerclient\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SIEMENS_RIM_REPORTING(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SIEMENS_RIM_TIMER_ONBOOT(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*sysbasecheck\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SYSTEM_MASTER_SDGUI(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SYSTEM_RIM_BOOTTIMER_RESET(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SYSTEM_SDGUI_.*(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*TransferControl\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*unregisterclient\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*update_cata\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*upgrdmaint\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*upgrdmaint_setup\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*packageinfo\\.xml",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*(agent|sd)_(actual|desired)_state(\\.xml|\\.xsd)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*BackendServer\\.xml",
+       "codes": [
+        "ACD"
+       ]
+      },
+      {
+       "regex": ".*SDIConfig\\.xml",
+       "codes": [
+        "ACD"
+       ]
+      },
+      {
+       "regex": ".*SDInstaller.*\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*application_1\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*trace_1\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*error_1\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*sd_agent\\.txt",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*sddll\\.txt",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SDServer\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SWDOCX\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*hosts",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*lmhosts",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*pfw-(domain|private|public)\\.log(\\.old)?",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*pfirewall\\.log(\\.old)?",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*Microsoft-Windows-AppLocker.*\\.evtx",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*Microsoft-Windows-CodeIntegrity%4Operational.evtx",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*connections_incoming\\.txt",
+       "codes": [
+        "PII",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*TeamViewer.*_Logfile(_OLD)?\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*tvconnector(\\.conf|\\.log|\\.prot)([1-9])?",
+       "codes": [
+        "PII",
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*tvexchange\\.txt(\\.old)?",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*tvgateway(\\.conf|\\.log|\\.prot)([1-9])?",
+       "codes": [
+        "PII",
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*NVCOMWrapper.*\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*LSS_(Install|Uninstall).*\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*LSSRegister\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*access\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*error\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*install\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*nvdlrA00\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*nvdmrA00.*\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*rms.*\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*main\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*navigate\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*results\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*setup\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*startup\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*connect_lss(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*lss_connect\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SetClientData\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SYSTEM_RIM_REG_DAILY\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SYSTEM_AUDIT_ASSETDAILY\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*AX_AX.*-.*-.*(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*HS_SY.*-.*-.*(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*MR_MR.*-.*-.*(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*CT_CT.*-.*-.*(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*XP_XP.*-.*-.*(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*MI_MI.*-.*-.*(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*CS_CS.*-.*-.*(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*srs.*\\.xml.*",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*srs-config\\.log.*",
+       "codes": [
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": true,
+      "products": [],
+      "families": []
+     }
+    }
+   ]
+  },
+  "CP": {
+   "family_based": false,
+   "sets": [
+    {
+     "name": "MonLogFiles",
+     "description": "",
+     "rules": [
+      {
+       "regex": "*_LogFiles*",
+       "codes": [
+        "PHI",
+        "UPD",
+        "PII",
+        "ACD",
+        "DSH",
+        "TSD"
+       ]
+      },
+      {
+       "regex": "*_MonLogFiles*",
+       "codes": [
+        "PHI",
+        "UPD",
+        "PII",
+        "ACD",
+        "DSH",
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "Leonardo_AX",
+       "Leonardo_AX_MMW",
+       "Leonardo_CT",
+       "Leonardo_HS",
+       "Leonardo_MR",
+       "Leonardo_NM",
+       "Leonardo_OCS",
+       "Leonardo_X",
+       "Syngo_Workplace"
+      ],
+      "families": []
+     }
+    }
+   ]
+  },
+  "CT": {
+   "family_based": true,
+   "sets": [
+    {
+     "name": "TubeEventLog",
+     "description": "",
+     "rules": [
+      {
+       "regex": ".*TubeEventLog.*\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_BasCal_.*",
+       "codes": [
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [],
+      "families": [
+       "Somaris 5",
+       "Somaris 7",
+       "Somaris X"
+      ]
+     }
+    },
+    {
+     "name": "txt",
+     "description": "",
+     "rules": [
+      {
+       "regex": ".*EvtCustomerLog.*\\.txt\\.gz",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*EvtSecurity.*\\.txt\\.gz",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*EvtSystem.*\\.txt\\.gz",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*\\.1esc",
+       "codes": [
+        "PHI",
+        "PII",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*\\.2esc",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*\\.ar\\.zip",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*\\.dmp\\.zip",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*\\.ecg",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*\\.esc",
+       "codes": [
+        "PHI",
+        "PII",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*\\.img\\.zip",
+       "codes": [
+        "RD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*\\.th[ab]3",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_Can_Hist_.*\\.zip",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_Evtlog\\.txt",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_TubeEventLog.*\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_TubeHistory.*\\.txt",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_logs\\.zip",
+       "codes": [
+        "UPD",
+        "PII",
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_zipArchive_.*\\.zip",
+       "codes": [
+        "PII",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*perf\\.zip",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*tubehistory.*\\.txt",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": "BasCal_.*",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": "DefectHistory_.*\\.txt",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": "DefectiveChannelsCustomer_.*\\.htm",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": "tube_history_.*\\.log",
+       "codes": [
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [],
+      "families": [
+       "Somaris 5",
+       "Somaris 7"
+      ]
+     }
+    },
+    {
+     "name": "zip",
+     "description": "",
+     "rules": [
+      {
+       "regex": ".*ECalStability*.*",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*IDTWeb.*\\.zip",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SDC_Asset.*\\.zip",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SDC_DeveloperMessages.*\\.zip",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SDC_MessageStatistics.*\\.xml",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SDC_MessagesExt.*\\.zip",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SDC_PlatformMessages.*\\.zip",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SDC_WindowsMessages.*\\.zip",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SiDaNet_Logfiles.*\\.zip",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*UserClinicalDecisionTreeDataPartition.*\\.xml",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*UtilizationMessages.*\\.xml",
+       "codes": [
+        "UPD",
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*\\.DefChan_.*\\.CHK",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*\\.DefChan_.*\\.TUN",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*\\.DefChan_.*\\.zip",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*\\.misc2",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*\\.th[ab]4",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*\\.tha2",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*\\.xecg",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*\\.xresp\\.zip",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_Anonymous.*\\.raw",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_CSMCleaner.*\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_CollectedIQFiles_.*\\.zip",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_ConfigNET.*\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_DMSData_.*\\.zip",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_DataScan.*\\.dat",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_Drive.Content\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_ECalStability.*\\.dat",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_Exceptions\\.zip",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_GenCmdClient.*\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_IDTInternalDataBase",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_IpixOnData_.*\\.dat",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_LCMService.*\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_MaintenanceStatus_.*\\.xml",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_MessagesExported_.*",
+       "codes": [
+        "PHI",
+        "UPD",
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_NetMSC.*\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_NetMSC.*\\.previous\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_PQE_DarkScan_.*\\.dat",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_PQE_ShortTermDrift_FirstReadings_.*\\.dat",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_PQE_ShortTermDrift_LastReadings_.*\\.dat",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_PartitionUsage.*\\.zip",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_ProtocolEvents.*\\.txt",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_SBHC_.*\\.zip",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_SDC_CTMtExport_.*",
+       "codes": [
+        "PII"
+       ]
+      },
+      {
+       "regex": ".*_SaveLog_.*",
+       "codes": [
+        "PHI",
+        "RD",
+        "PII",
+        "ACD",
+        "DSH",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_SceneGraphicStartupLog.*\\.txt",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_ServReplrsLog.*\\.XACB_LOG",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_SetupNavigator_.*\\.zip",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_SignalLin.*\\.raw",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_SignalXray.*\\.dat",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_TGpcAudio.*\\.xml",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_Table_Volatile_TGpcAudio.*\\.txt",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_UniInst_*.zip",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_Upgrade_StartGlobalPreCheck_.*\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_UtilizationEvents.*\\.txt",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_Video.*\\.avi",
+       "codes": [
+        "PHI",
+        "UPD"
+       ]
+      },
+      {
+       "regex": ".*_XpackInstallation.*\\.zip",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_icstable.*\\.zip",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_logs\\.zip",
+       "codes": [
+        "PHI",
+        "UPD"
+       ]
+      },
+      {
+       "regex": ".*_pm_.*_Evtlog\\.txt",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_serviceReport_.*\\.pdf",
+       "codes": [
+        "DSH",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_syngo.*\\.txt",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_umas_.*\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": "CT_\\d{8,9}_\\d{5,7}_V[A-Z]\\d{2}[A-Z]_\\d{8,9}_\\d{5,7}_\\d{4}-\\d{2}-\\d{2}_\\d{2}-\\d{2}-\\d{2}.*\\.zip",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": "CT_\\d{8,9}_\\d{5,7}_\\d{4}_\\d{2}_\\d{2}_\\d{2}_\\d{2}_\\d{2}\\.zip",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": "FWInstallHook\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": "XPackInstaller.*\\.log",
+       "codes": [
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [],
+      "families": [
+       "Somaris X"
+      ]
+     }
+    },
+    {
+     "name": "zip-2",
+     "description": "",
+     "rules": [
+      {
+       "regex": ".*EvtApplication.*\\.txt\\.gz",
+       "codes": [
+        "UPD",
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*EvtApplication.*\\.zip",
+       "codes": [
+        "UPD",
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*\\.hut",
+       "codes": [
+        "UPD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*\\.img",
+       "codes": [
+        "RD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_CapGM_.*",
+       "codes": [
+        "PHI",
+        "UPD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_CtlsRGenericMain_.*",
+       "codes": [
+        "PHI",
+        "UPD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_Dump_.*\\.zip",
+       "codes": [
+        "PHI",
+        "PII",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_Quality_Constancy_MTF_.*\\.xml",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_SDC_.*",
+       "codes": [
+        "UPD",
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_SaveLog_.*\\.zip",
+       "codes": [
+        "PHI",
+        "PII",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_icstable.*\\.zip",
+       "codes": [
+        "UPD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_merge.*\\.log",
+       "codes": [
+        "PHI",
+        "UPD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_proxy_upd.*",
+       "codes": [
+        "UPD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_report.htm",
+       "codes": [
+        "UPD",
+        "PII",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_transfer\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_tube_history_.*\\.dat",
+       "codes": [
+        "UPD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_umas_.*\\.log\\.zip",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*tube_history_.*\\.zip",
+       "codes": [
+        "UPD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": "CT.*_AnalyzeExtract\\.txt\\.zip",
+       "codes": [
+        "PHI",
+        "UPD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": "CT.*_BOOTNXT\\.zip",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": "CT.*_TraceOutput\\.zip",
+       "codes": [
+        "PHI",
+        "UPD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": "CT.*_boot\\.ini\\.zip",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": "CT.*_dmilog\\.txt\\.zip",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": "CT.*_merge_.*\\.L.*",
+       "codes": [
+        "PHI",
+        "UPD",
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [],
+      "families": [
+       "Somaris 7"
+      ]
+     }
+    },
+    {
+     "name": "zip-3",
+     "description": "",
+     "rules": [
+      {
+       "regex": ".*EvtApplication.*\\.txt\\.gz",
+       "codes": [
+        "UPD",
+        "PII",
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*\\.hut",
+       "codes": [
+        "PHI",
+        "PII",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_Dump_.*\\.zip",
+       "codes": [
+        "PII",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_SDC_.*",
+       "codes": [
+        "PHI",
+        "UPD"
+       ]
+      },
+      {
+       "regex": ".*_SaveLog_.*\\.zip",
+       "codes": [
+        "PII",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_SiDaNet_Logfiles.*\\.zip",
+       "codes": [
+        "PHI",
+        "UPD"
+       ]
+      },
+      {
+       "regex": ".*_UtilizationMessages.*\\.zip",
+       "codes": [
+        "PHI",
+        "UPD"
+       ]
+      },
+      {
+       "regex": ".*_bascal_.*",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_tube_history.*\\.zip",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*tube_history_.*\\.log",
+       "codes": [
+        "UPD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*tube_history_.*\\.log\\.zip",
+       "codes": [
+        "UPD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": "CT.*_report\\.htm",
+       "codes": [
+        "PHI",
+        "UPD"
+       ]
+      },
+      {
+       "regex": "cct_.*(\\.ini|\\.log)",
+       "codes": [
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [],
+      "families": [
+       "Somaris 5"
+      ]
+     }
+    },
+    {
+     "name": "shared",
+     "description": "",
+     "rules": [
+      {
+       "regex": ".*",
+       "codes": [
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [],
+      "families": [
+       "Security_Appliance_CT"
+      ]
+     }
+    },
+    {
+     "name": "Helpdesk/CIM Files",
+     "description": "",
+     "rules": [
+      {
+       "regex": ".*installed_policies\\.txt",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*MNP\\.XML(\\.BAK)?",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SystemManagementBaseCheck\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*BlockingAction\\.xml",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*RequiredActions\\.xml",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*RegistrationInfo\\.xml",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*LastRegistrationInfo\\.xml",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*RegistrationBackendInfo\\.xml",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*oainstall\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*opcactivate\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*System\\.txt",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*trace",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*svc_actual_state\\.xml",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*svc_admin(\\.log|\\.prot)([1-9])?",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*svc_service(\\.log|\\.prot)([1-9])?",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*svc_tunnel(\\.log|\\.prot)([1-9])?",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*bbcutil_ping\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*export\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*MNP_.*\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*ovconfget\\.log",
+       "codes": [
+        "ACD"
+       ]
+      },
+      {
+       "regex": ".*sysmgmt_.*\\.log(\\.tmp)?",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*WebService\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*\\.EDM",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*GetBEData\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*history\\.csv",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*MedClient\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*radexecd\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*radiafd\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*radkill\\.l00",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*radntfyc\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*radrexfu\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*radsched\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*radshist\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*radstate\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*radstgms\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*radtray\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*rc\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*registerclient\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SIEMENS_RIM_REPORTING(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SIEMENS_RIM_TIMER_ONBOOT(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*sysbasecheck\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SYSTEM_MASTER_SDGUI(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SYSTEM_RIM_BOOTTIMER_RESET(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SYSTEM_SDGUI_.*(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*TransferControl\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*unregisterclient\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*update_cata\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*upgrdmaint\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*upgrdmaint_setup\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*packageinfo\\.xml",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*(agent|sd)_(actual|desired)_state(\\.xml|\\.xsd)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*BackendServer\\.xml",
+       "codes": [
+        "ACD"
+       ]
+      },
+      {
+       "regex": ".*SDIConfig\\.xml",
+       "codes": [
+        "ACD"
+       ]
+      },
+      {
+       "regex": ".*SDInstaller.*\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*application_1\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*trace_1\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*error_1\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*sd_agent\\.txt",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*sddll\\.txt",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SDServer\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SWDOCX\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*hosts",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*lmhosts",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*pfw-(domain|private|public)\\.log(\\.old)?",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*pfirewall\\.log(\\.old)?",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*Microsoft-Windows-AppLocker.*\\.evtx",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*Microsoft-Windows-CodeIntegrity%4Operational.evtx",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*connections_incoming\\.txt",
+       "codes": [
+        "PII",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*TeamViewer.*_Logfile(_OLD)?\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*tvconnector(\\.conf|\\.log|\\.prot)([1-9])?",
+       "codes": [
+        "PII",
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*tvexchange\\.txt(\\.old)?",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*tvgateway(\\.conf|\\.log|\\.prot)([1-9])?",
+       "codes": [
+        "PII",
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*NVCOMWrapper.*\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*LSS_(Install|Uninstall).*\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*LSSRegister\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*access\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*error\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*install\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*nvdlrA00\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*nvdmrA00.*\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*rms.*\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*main\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*navigate\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*results\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*setup\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*startup\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*connect_lss(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*lss_connect\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SetClientData\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SYSTEM_RIM_REG_DAILY\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SYSTEM_AUDIT_ASSETDAILY\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*AX_AX.*-.*-.*(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*HS_SY.*-.*-.*(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*MR_MR.*-.*-.*(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*CT_CT.*-.*-.*(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*XP_XP.*-.*-.*(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*MI_MI.*-.*-.*(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*CS_CS.*-.*-.*(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*srs.*\\.xml.*",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*srs-config\\.log.*",
+       "codes": [
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": true,
+      "products": [],
+      "families": []
+     }
+    }
+   ]
+  },
+  "MR": {
+   "family_based": true,
+   "sets": [
+    {
+     "name": "zip",
+     "description": "",
+     "rules": [
+      {
+       "regex": ".*",
+       "codes": [
+        "PHI",
+        "UPD",
+        "PII",
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*ApplMinidumps.*\\zip",
+       "codes": [
+        "PHI",
+        "PII",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*ConfigSettings.*\\.xml",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*CustomerEDB.*\\zip",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*CustomerSEQ.*\\zip",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*Eventlog4ReactiveService.*\\.gz",
+       "codes": [
+        "PHI",
+        "PII",
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*Export.*\\.xml",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*MR.*_.*",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*MR_.*SDC_Asset_.*\\.zip",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SAVELOG.*\\.zip",
+       "codes": [
+        "PHI",
+        "UPD",
+        "PII",
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SaveLog.*\\.zip",
+       "codes": [
+        "PHI",
+        "UPD",
+        "PII",
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*XML.*tmp",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*\\.exp",
+       "codes": [
+        "PHI",
+        "UPD",
+        "PII",
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*\\.info",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_info.*\\txt",
+       "codes": [
+        "PHI",
+        "PII",
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*utilV010.*\\.zip",
+       "codes": [
+        "UPD"
+       ]
+      },
+      {
+       "regex": "MR.*iqshim.*\\d\\d\\d\\d\\d\\d(_sanitized)?\\.xml",
+       "codes": [
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [],
+      "families": [
+       "Numaris 4/X"
+      ]
+     }
+    },
+    {
+     "name": "shared",
+     "description": "",
+     "rules": [
+      {
+       "regex": ".*",
+       "codes": [
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [],
+      "families": [
+       "Security_Appliance_MR"
+      ]
+     }
+    },
+    {
+     "name": "Helpdesk/CIM Files",
+     "description": "",
+     "rules": [
+      {
+       "regex": ".*installed_policies\\.txt",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*MNP\\.XML(\\.BAK)?",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SystemManagementBaseCheck\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*BlockingAction\\.xml",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*RequiredActions\\.xml",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*RegistrationInfo\\.xml",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*LastRegistrationInfo\\.xml",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*RegistrationBackendInfo\\.xml",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*oainstall\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*opcactivate\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*System\\.txt",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*trace",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*svc_actual_state\\.xml",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*svc_admin(\\.log|\\.prot)([1-9])?",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*svc_service(\\.log|\\.prot)([1-9])?",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*svc_tunnel(\\.log|\\.prot)([1-9])?",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*bbcutil_ping\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*export\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*MNP_.*\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*ovconfget\\.log",
+       "codes": [
+        "ACD"
+       ]
+      },
+      {
+       "regex": ".*sysmgmt_.*\\.log(\\.tmp)?",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*WebService\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*\\.EDM",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*GetBEData\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*history\\.csv",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*MedClient\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*radexecd\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*radiafd\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*radkill\\.l00",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*radntfyc\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*radrexfu\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*radsched\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*radshist\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*radstate\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*radstgms\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*radtray\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*rc\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*registerclient\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SIEMENS_RIM_REPORTING(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SIEMENS_RIM_TIMER_ONBOOT(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*sysbasecheck\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SYSTEM_MASTER_SDGUI(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SYSTEM_RIM_BOOTTIMER_RESET(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SYSTEM_SDGUI_.*(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*TransferControl\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*unregisterclient\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*update_cata\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*upgrdmaint\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*upgrdmaint_setup\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*packageinfo\\.xml",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*(agent|sd)_(actual|desired)_state(\\.xml|\\.xsd)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*BackendServer\\.xml",
+       "codes": [
+        "ACD"
+       ]
+      },
+      {
+       "regex": ".*SDIConfig\\.xml",
+       "codes": [
+        "ACD"
+       ]
+      },
+      {
+       "regex": ".*SDInstaller.*\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*application_1\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*trace_1\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*error_1\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*sd_agent\\.txt",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*sddll\\.txt",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SDServer\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SWDOCX\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*hosts",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*lmhosts",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*pfw-(domain|private|public)\\.log(\\.old)?",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*pfirewall\\.log(\\.old)?",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*Microsoft-Windows-AppLocker.*\\.evtx",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*Microsoft-Windows-CodeIntegrity%4Operational.evtx",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*connections_incoming\\.txt",
+       "codes": [
+        "PII",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*TeamViewer.*_Logfile(_OLD)?\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*tvconnector(\\.conf|\\.log|\\.prot)([1-9])?",
+       "codes": [
+        "PII",
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*tvexchange\\.txt(\\.old)?",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*tvgateway(\\.conf|\\.log|\\.prot)([1-9])?",
+       "codes": [
+        "PII",
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*NVCOMWrapper.*\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*LSS_(Install|Uninstall).*\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*LSSRegister\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*access\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*error\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*install\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*nvdlrA00\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*nvdmrA00.*\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*rms.*\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*main\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*navigate\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*results\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*setup\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*startup\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*connect_lss(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*lss_connect\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SetClientData\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SYSTEM_RIM_REG_DAILY\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SYSTEM_AUDIT_ASSETDAILY\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*AX_AX.*-.*-.*(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*HS_SY.*-.*-.*(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*MR_MR.*-.*-.*(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*CT_CT.*-.*-.*(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*XP_XP.*-.*-.*(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*MI_MI.*-.*-.*(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*CS_CS.*-.*-.*(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*srs.*\\.xml.*",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*srs-config\\.log.*",
+       "codes": [
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": true,
+      "products": [],
+      "families": []
+     }
+    }
+   ]
+  },
+  "NM": {
+   "family_based": false,
+   "sets": [
+    {
+     "name": "txt",
+     "description": "",
+     "rules": [
+      {
+       "regex": ".*EvtCustomerLog.*.txt.gz",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*EvtSystem.*.txt.gz",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*TrendDB.mdb",
+       "codes": [
+        "UPD",
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "E.CAM DUET",
+       "E.CAM Dual Head",
+       "E.CAM Dual Head V1.1",
+       "E.CAM Dual e.Soft",
+       "E.CAM Signature DUET",
+       "E.CAM Signature Dual Head",
+       "E.CAM Signature Single Head",
+       "E.CAM Single Head",
+       "E.Soft Workstation",
+       "E.Soft Workstation P",
+       "E.Soft Workstation V",
+       "E.cam DCR Dual Head, B (e.soft)",
+       "E.cam DCR Single Head",
+       "E.cam Dual Head",
+       "E.cam Stand. Single (ICON S & e.soft)",
+       "Signature E.cam Single Camera, B",
+       "Signature Foresight ECAM Single",
+       "Symbia E",
+       "Symbia Evo",
+       "Symbia Evo Excel",
+       "Symbia Intevo",
+       "Symbia S",
+       "Symbia T Series Processing Wrkplc",
+       "Symbia T16",
+       "Symbia T_T2_T6",
+       "Symbia.net",
+       "Syngo Workplace"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "AppLog",
+     "description": "",
+     "rules": [
+      {
+       "regex": ".*AppLog.*.gz",
+       "codes": [
+        "PHI",
+        "UPD",
+        "PII"
+       ]
+      },
+      {
+       "regex": ".*Evtlog.*.txt",
+       "codes": [
+        "PHI",
+        "UPD",
+        "PII"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "E.CAM DUET",
+       "E.CAM Dual Head",
+       "E.CAM Dual Head V1.1",
+       "E.CAM Dual e.Soft",
+       "E.CAM Signature DUET",
+       "E.CAM Signature Dual Head",
+       "E.CAM Signature Single Head",
+       "E.CAM Single Head",
+       "E.Soft Workstation",
+       "E.Soft Workstation P",
+       "E.Soft Workstation V",
+       "E.cam DCR Dual Head, B (e.soft)",
+       "E.cam DCR Single Head",
+       "E.cam Dual Head",
+       "E.cam Stand. Single (ICON S & e.soft)",
+       "Signature E.cam Single Camera, B",
+       "Signature Foresight ECAM Single",
+       "Symbia E",
+       "Symbia Evo",
+       "Symbia Evo Excel",
+       "Symbia Intevo",
+       "Symbia S",
+       "Symbia.net",
+       "Syngo Workplace",
+       "e.soft C Cardiac P Workstation"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "EvtApplication",
+     "description": "",
+     "rules": [
+      {
+       "regex": ".*EvtApplication.*.txt.gz",
+       "codes": [
+        "PHI",
+        "UPD",
+        "PII"
+       ]
+      },
+      {
+       "regex": ".*WrkStLog.*.gz",
+       "codes": [
+        "PHI",
+        "PII"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "E.CAM DUET",
+       "E.CAM Dual Head",
+       "E.CAM Dual Head V1.1",
+       "E.CAM Dual e.Soft",
+       "E.CAM Signature DUET",
+       "E.CAM Signature Dual Head",
+       "E.CAM Signature Single Head",
+       "E.CAM Single Head",
+       "E.Soft Workstation",
+       "E.Soft Workstation P",
+       "E.Soft Workstation V",
+       "E.cam DCR Dual Head, B (e.soft)",
+       "E.cam DCR Single Head",
+       "E.cam Dual Head",
+       "E.cam Stand. Single (ICON S & e.soft)",
+       "Signature E.cam Single Camera, B",
+       "Signature Foresight ECAM Single",
+       "Symbia E",
+       "Symbia Evo",
+       "Symbia Evo Excel",
+       "Symbia Intevo",
+       "Symbia S",
+       "Symbia.net",
+       "Syngo Workplace"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "zip",
+     "description": "",
+     "rules": [
+      {
+       "regex": ".*.flood",
+       "codes": [
+        "TSD",
+        "STD"
+       ]
+      },
+      {
+       "regex": ".*.gdf",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*CurvCorrFld.*.gz",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*Perf.zip",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SnacLog.*.zip",
+       "codes": [
+        "UPD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*Trend.*.xml.gz",
+       "codes": [
+        "UPD",
+        "TSD",
+        "STD"
+       ]
+      },
+      {
+       "regex": "MI.*CT.*SPECT.*.zip",
+       "codes": [
+        "UPD",
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "E.CAM DUET",
+       "E.CAM Dual Head",
+       "E.CAM Dual Head V1.1",
+       "E.CAM Dual e.Soft",
+       "E.CAM Signature DUET",
+       "E.CAM Signature Dual Head",
+       "E.CAM Signature Single Head",
+       "E.CAM Single Head",
+       "E.cam DCR Dual Head, B (e.soft)",
+       "E.cam DCR Single Head",
+       "E.cam Dual Head",
+       "E.cam Stand. Single (ICON S & e.soft)",
+       "Signature E.cam Single Camera, B",
+       "Signature Foresight ECAM Single",
+       "Symbia E",
+       "Symbia Evo",
+       "Symbia Evo Excel",
+       "Symbia Intevo",
+       "Symbia S",
+       "Symbia T Series Processing Wrkplc",
+       "Symbia T16",
+       "Symbia T_T2_T6"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "TubeEventLog",
+     "description": "",
+     "rules": [
+      {
+       "regex": ".*TubeEventLog.*.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": "CT.*.1esc.gz",
+       "codes": [
+        "PHI",
+        "PII",
+        "ACD"
+       ]
+      },
+      {
+       "regex": "CT.*.2esc",
+       "codes": [
+        "ACD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "Biograph",
+       "Biograph 16",
+       "Biograph 40",
+       "Biograph 64",
+       "Biograph Advanced Workflow",
+       "Biograph DUO",
+       "Biograph DUO LSO",
+       "Biograph HORIZON",
+       "Biograph LSO",
+       "Biograph Sensation 16",
+       "Biograph Vision",
+       "Biograph mCT",
+       "Biograph mCT Flow",
+       "Symbia Intevo",
+       "Symbia T Series Processing Wrkplc",
+       "Symbia T16",
+       "Symbia T_T2_T6"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "zip-2",
+     "description": "",
+     "rules": [
+      {
+       "regex": "CT.*Dump.*.zip",
+       "codes": [
+        "PHI",
+        "PII",
+        "TSD"
+       ]
+      },
+      {
+       "regex": "CT.*perf.zip",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": "MI.*SDC_Asset.*.zip",
+       "codes": [
+        "ACD"
+       ]
+      },
+      {
+       "regex": "MI.*SDC_BackupTrendDB.*.zip",
+       "codes": [
+        "ACD"
+       ]
+      },
+      {
+       "regex": "NM.*EvtCustomerLog.*.txt.gz",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": "NM.*EvtSystem.*.txt.gz",
+       "codes": [
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "Biograph",
+       "Biograph 16",
+       "Biograph 40",
+       "Biograph 64",
+       "Biograph Advanced Workflow",
+       "Biograph DUO",
+       "Biograph DUO LSO",
+       "Biograph HORIZON",
+       "Biograph LSO",
+       "Biograph Sensation 16",
+       "Biograph Vision",
+       "Biograph mCT",
+       "Biograph mCT Flow"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "EvtApplication-2",
+     "description": "",
+     "rules": [
+      {
+       "regex": "MI.*UPS.*.zip",
+       "codes": [
+        "PHI",
+        "UPD"
+       ]
+      },
+      {
+       "regex": "NM.*EvtApplication.*.txt.gz",
+       "codes": [
+        "PHI",
+        "PII"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "Biograph",
+       "Biograph 16",
+       "Biograph 40",
+       "Biograph 64",
+       "Biograph Advanced Workflow",
+       "Biograph DUO",
+       "Biograph DUO LSO",
+       "Biograph HORIZON",
+       "Biograph LSO",
+       "Biograph Sensation 16",
+       "Biograph mCT",
+       "Biograph mCT Flow"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "LogInterpreter",
+     "description": "",
+     "rules": [
+      {
+       "regex": "MI.*LogInterpreter_DCLogs.*",
+       "codes": [
+        "PHI"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "Biograph",
+       "Biograph 16",
+       "Biograph 40",
+       "Biograph 64",
+       "Biograph Advanced Workflow",
+       "Biograph DUO",
+       "Biograph DUO LSO",
+       "Biograph LSO",
+       "Biograph Sensation 16"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "CTNONE",
+     "description": "",
+     "rules": [
+      {
+       "regex": ".*MI.*CTNONE_SPECT.*.zip",
+       "codes": [
+        "UPD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "E.Soft Workstation",
+       "E.Soft Workstation P",
+       "E.Soft Workstation V",
+       "Symbia.net",
+       "Syngo Workplace"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "Tune",
+     "description": "",
+     "rules": [
+      {
+       "regex": ".*Tune.*.gz",
+       "codes": [
+        "TSD",
+        "STD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "Symbia Intevo",
+       "Symbia T Series Processing Wrkplc",
+       "Symbia T16",
+       "Symbia T_T2_T6"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "WrkStLog",
+     "description": "",
+     "rules": [
+      {
+       "regex": ".*WrkStLog.*.gz",
+       "codes": [
+        "PHI",
+        "PII",
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "Symbia T Series Processing Wrkplc",
+       "Symbia T16",
+       "Symbia T_T2_T6",
+       "e.soft C Cardiac P Workstation"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "txt-2",
+     "description": "",
+     "rules": [
+      {
+       "regex": ".*AppLog.*.gz",
+       "codes": [
+        "PHI",
+        "UPD",
+        "PII",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*EvtApplication.*.txt.gz",
+       "codes": [
+        "PHI",
+        "UPD",
+        "PII",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*Evtlog.*.txt",
+       "codes": [
+        "PHI",
+        "UPD",
+        "PII",
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "Symbia T Series Processing Wrkplc",
+       "Symbia T16",
+       "Symbia T_T2_T6"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "LogInterpreter-2",
+     "description": "",
+     "rules": [
+      {
+       "regex": "MI.*LogInterpreter_DCLogs.*",
+       "codes": [
+        "PHI",
+        "PII"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "Biograph HORIZON",
+       "Biograph mCT",
+       "Biograph mCT Flow"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "SaveLog",
+     "description": "",
+     "rules": [
+      {
+       "regex": "SaveLog.*.zip",
+       "codes": [
+        "PHI",
+        "UPD",
+        "PII",
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "Biograph Trinion",
+       "Symbia Pro.specta"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "zip-3",
+     "description": "",
+     "rules": [
+      {
+       "regex": "NM.*.TEAMVIEWER.*LOGFILE.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": "NM.*.tha4",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": "NM.*CalibrationTrendData.*.zip",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": "NM.*DB_MARSDeveloperMessages.*.zip",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": "NM.*DMSData.*.zip",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": "NM.*DetectorStateData.*.zip",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": "NM.*Exceptions.*.zip",
+       "codes": [
+        "PHI",
+        "PII",
+        "TSD"
+       ]
+      },
+      {
+       "regex": "NM.*IdtWeb.*.zip",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": "NM.*JSON_CalibrationStateData.*.zip",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": "NM.*JSON_CalibrationTrendData.*.zip",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": "NM.*JSON_GantryDisplayStateData.*.zip",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": "NM.*JSON_MarsStateData.*.zip",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": "NM.*JSON_StateData.*.zip",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": "NM.*PartitionUsage.*.zip",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": "NM.*SDC_Asset.*.zip",
+       "codes": [
+        "PII",
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": "NM.*SDC_DeveloperMessages.*.zip",
+       "codes": [
+        "PHI",
+        "UPD",
+        "PII",
+        "TSD"
+       ]
+      },
+      {
+       "regex": "NM.*SDC_MarsDeveloperMessages.*.zip",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": "NM.*SDC_MessageStatistics.*.xml",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": "NM.*SDC_MessagesExt.*.zip",
+       "codes": [
+        "PHI",
+        "UPD",
+        "PII",
+        "TSD"
+       ]
+      },
+      {
+       "regex": "NM.*SDC_PlatformMessages.*syspp.zip",
+       "codes": [
+        "UPD",
+        "PII",
+        "TSD"
+       ]
+      },
+      {
+       "regex": "NM.*SDC_ServiceReport.*.xml.zip",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": "NM.*SDC_WindowsMessages_Application.*.zip",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": "NM.*SDC_WindowsMessages_EMHLogging.*.zip",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": "NM.*SDC_WindowsMessages_System.*.zip",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": "NM.*SaveLog.*Small.*.zip.*",
+       "codes": [
+        "PHI",
+        "UPD",
+        "PII",
+        "TSD"
+       ]
+      },
+      {
+       "regex": "NM.*SiDaNet_Logfiles.*.zip",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": "NM.*TubeEventLog.*.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": "NM.*UtilizationMessages.*.zip",
+       "codes": [
+        "PHI",
+        "UPD",
+        "PII",
+        "TSD"
+       ]
+      },
+      {
+       "regex": "NM.*icstable.*.zip",
+       "codes": [
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "Symbia Pro.specta"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "zip-4",
+     "description": "",
+     "rules": [
+      {
+       "regex": "PT.*.tha4",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": "PT.*DB_MARSDeveloperMessages.*.zip",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": "PT.*DMSData.*.zip",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": "PT.*Exceptions.*.zip",
+       "codes": [
+        "PHI",
+        "PII",
+        "TSD"
+       ]
+      },
+      {
+       "regex": "PT.*IdtWeb.*.zip",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": "PT.*JSON_CalibrationStateData.*.zip",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": "PT.*JSON_MarsStateData.*.zip",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": "PT.*JSON_PetGantryStateData.*.zip",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": "PT.*PartitionUsage.*.zip",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": "PT.*SDC_Asset.*.zip",
+       "codes": [
+        "PII",
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": "PT.*SDC_DeveloperMessages.*.zip",
+       "codes": [
+        "PHI",
+        "UPD",
+        "PII",
+        "TSD"
+       ]
+      },
+      {
+       "regex": "PT.*SDC_MessageStatistics.*.xml",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": "PT.*SDC_PlatformMessages.*syspp.zip",
+       "codes": [
+        "UPD",
+        "PII",
+        "TSD"
+       ]
+      },
+      {
+       "regex": "PT.*SDC_ServiceReport.*.xml.zip",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": "PT.*SDC_WindowsMessages_Application.*.zip",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": "PT.*SDC_WindowsMessages_EMHLogging.*.zip",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": "PT.*SDC_WindowsMessages_System.*.zip",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": "PT.*SaveLog.*Small.*.zip.*",
+       "codes": [
+        "PHI",
+        "UPD",
+        "PII",
+        "TSD"
+       ]
+      },
+      {
+       "regex": "PT.*SiDaNet_Logfiles.*.zip",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": "PT.*TubeEventLog.*.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": "PT.*UtilizationMessages.*.zip",
+       "codes": [
+        "PHI",
+        "UPD",
+        "PII",
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "Biograph Trinion"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "SymbiaNetLog",
+     "description": "",
+     "rules": [
+      {
+       "regex": ".*MI.*AM.*.gz",
+       "codes": [
+        "ACD"
+       ]
+      },
+      {
+       "regex": ".*MrsLog.*.zip",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SymbiaNetLog.*.gz",
+       "codes": [
+        "ACD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "e.soft C Cardiac P Workstation"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "EvtApplication-3",
+     "description": "",
+     "rules": [
+      {
+       "regex": "MI.*LogInterpreter_DCLogs.*",
+       "codes": [
+        "PHI",
+        "PII",
+        "TSD"
+       ]
+      },
+      {
+       "regex": "MI.*UPS.*.zip",
+       "codes": [
+        "PHI",
+        "UPD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": "NM.*EvtApplication.*.txt.gz",
+       "codes": [
+        "PHI",
+        "PII",
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "Biograph Vision"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "shared",
+     "description": "",
+     "rules": [
+      {
+       "regex": ".*",
+       "codes": [
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "Cyclotron"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "shared-2",
+     "description": "",
+     "rules": [
+      {
+       "regex": ".*",
+       "codes": [
+        "PHI",
+        "UPD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "Dedicated Reconstruction System (DRS)"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "xml",
+     "description": "",
+     "rules": [
+      {
+       "regex": "MI.*AM.*.xml.gz",
+       "codes": [
+        "PII",
+        "ACD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "Symbia Intevo"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "EvtApplication-4",
+     "description": "",
+     "rules": [
+      {
+       "regex": "NM.*EvtApplication.*.txt.gz",
+       "codes": [
+        "PHI"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "Biograph mCT"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "Helpdesk/CIM Files",
+     "description": "",
+     "rules": [
+      {
+       "regex": ".*installed_policies\\.txt",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*MNP\\.XML(\\.BAK)?",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SystemManagementBaseCheck\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*BlockingAction\\.xml",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*RequiredActions\\.xml",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*RegistrationInfo\\.xml",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*LastRegistrationInfo\\.xml",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*RegistrationBackendInfo\\.xml",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*oainstall\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*opcactivate\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*System\\.txt",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*trace",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*svc_actual_state\\.xml",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*svc_admin(\\.log|\\.prot)([1-9])?",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*svc_service(\\.log|\\.prot)([1-9])?",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*svc_tunnel(\\.log|\\.prot)([1-9])?",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*bbcutil_ping\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*export\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*MNP_.*\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*ovconfget\\.log",
+       "codes": [
+        "ACD"
+       ]
+      },
+      {
+       "regex": ".*sysmgmt_.*\\.log(\\.tmp)?",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*WebService\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*\\.EDM",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*GetBEData\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*history\\.csv",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*MedClient\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*radexecd\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*radiafd\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*radkill\\.l00",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*radntfyc\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*radrexfu\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*radsched\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*radshist\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*radstate\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*radstgms\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*radtray\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*rc\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*registerclient\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SIEMENS_RIM_REPORTING(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SIEMENS_RIM_TIMER_ONBOOT(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*sysbasecheck\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SYSTEM_MASTER_SDGUI(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SYSTEM_RIM_BOOTTIMER_RESET(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SYSTEM_SDGUI_.*(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*TransferControl\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*unregisterclient\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*update_cata\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*upgrdmaint\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*upgrdmaint_setup\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*packageinfo\\.xml",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*(agent|sd)_(actual|desired)_state(\\.xml|\\.xsd)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*BackendServer\\.xml",
+       "codes": [
+        "ACD"
+       ]
+      },
+      {
+       "regex": ".*SDIConfig\\.xml",
+       "codes": [
+        "ACD"
+       ]
+      },
+      {
+       "regex": ".*SDInstaller.*\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*application_1\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*trace_1\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*error_1\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*sd_agent\\.txt",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*sddll\\.txt",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SDServer\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SWDOCX\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*hosts",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*lmhosts",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*pfw-(domain|private|public)\\.log(\\.old)?",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*pfirewall\\.log(\\.old)?",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*Microsoft-Windows-AppLocker.*\\.evtx",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*Microsoft-Windows-CodeIntegrity%4Operational.evtx",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*connections_incoming\\.txt",
+       "codes": [
+        "PII",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*TeamViewer.*_Logfile(_OLD)?\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*tvconnector(\\.conf|\\.log|\\.prot)([1-9])?",
+       "codes": [
+        "PII",
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*tvexchange\\.txt(\\.old)?",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*tvgateway(\\.conf|\\.log|\\.prot)([1-9])?",
+       "codes": [
+        "PII",
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*NVCOMWrapper.*\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*LSS_(Install|Uninstall).*\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*LSSRegister\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*access\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*error\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*install\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*nvdlrA00\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*nvdmrA00.*\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*rms.*\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*main\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*navigate\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*results\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*setup\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*startup\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*connect_lss(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*lss_connect\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SetClientData\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SYSTEM_RIM_REG_DAILY\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SYSTEM_AUDIT_ASSETDAILY\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*AX_AX.*-.*-.*(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*HS_SY.*-.*-.*(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*MR_MR.*-.*-.*(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*CT_CT.*-.*-.*(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*XP_XP.*-.*-.*(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*MI_MI.*-.*-.*(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*CS_CS.*-.*-.*(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*srs.*\\.xml.*",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*srs-config\\.log.*",
+       "codes": [
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": true,
+      "products": [],
+      "families": []
+     }
+    }
+   ]
+  },
+  "PACS": {
+   "family_based": false,
+   "sets": [
+    {
+     "name": "HealthCheck",
+     "description": "",
+     "rules": [
+      {
+       "regex": ".*_HealthCheck_.*",
+       "codes": [
+        "ACD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "syngo Dynamics",
+       "syngo Workflow(MLR)",
+       "syngo Workflow(SLR)"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "SDC",
+     "description": "",
+     "rules": [
+      {
+       "regex": ".*Healthcheck.*",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SDC_Asset.*",
+       "codes": [
+        "PII",
+        "ACD"
+       ]
+      },
+      {
+       "regex": ".*SDC_MessageStatistics.*",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SDC_SystemUsage.*",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*UtilizationMessages.*",
+       "codes": [
+        "PHI",
+        "UPD"
+       ]
+      },
+      {
+       "regex": ".*_Exceptions.*",
+       "codes": [
+        "PHI",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_SDC_MeteringEvents_.*",
+       "codes": [
+        "UPD",
+        "PII"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "syngo carbon",
+       "syngo.via"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "SiteSummary",
+     "description": "",
+     "rules": [
+      {
+       "regex": ".*SiteSummary.*",
+       "codes": [
+        "ACD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "syngo.plaza",
+       "syngo.via"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "vir",
+     "description": "",
+     "rules": [
+      {
+       "regex": ".*BGO-CLU0.*",
+       "codes": [
+        "UPD"
+       ]
+      },
+      {
+       "regex": ".*Healthcheck.*",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SHC-Report.*",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*UtilizationMessages.*",
+       "codes": [
+        "UPD"
+       ]
+      },
+      {
+       "regex": ".*_C64_.*",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_Exceptions.*",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_UtilizationLoadPerformanceMessages_.*",
+       "codes": [
+        "UPD"
+       ]
+      },
+      {
+       "regex": ".*vir-app.*",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*vir-web.*",
+       "codes": [
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "syngo.plaza"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "WebViewerUtilizationMessages",
+     "description": "",
+     "rules": [
+      {
+       "regex": ".*FieldUpdaterLogs.*",
+       "codes": [
+        "ACD"
+       ]
+      },
+      {
+       "regex": ".*InstallLogs.*",
+       "codes": [
+        "ACD"
+       ]
+      },
+      {
+       "regex": ".*PerformanceLog.*",
+       "codes": [
+        "UPD"
+       ]
+      },
+      {
+       "regex": ".*WF_Prediction.*",
+       "codes": [
+        "PHI",
+        "UPD"
+       ]
+      },
+      {
+       "regex": ".*WebViewerUtilizationMessages.*",
+       "codes": [
+        "PHI",
+        "UPD"
+       ]
+      },
+      {
+       "regex": ".*_SyngoConfiguration_.*",
+       "codes": [
+        "ACD"
+       ]
+      },
+      {
+       "regex": ".*_report_.*",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*result_.*",
+       "codes": [
+        "PHI"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "syngo.via"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "SiteSummary-2",
+     "description": "",
+     "rules": [
+      {
+       "regex": ".*HealthCheck_.*",
+       "codes": [
+        "PHI",
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*Messaging.*",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*OPM_SiteSummary_.*",
+       "codes": [
+        "ACD"
+       ]
+      },
+      {
+       "regex": ".*StatisticReports.*",
+       "codes": [
+        "UPD"
+       ]
+      },
+      {
+       "regex": ".*StatusUI.*",
+       "codes": [
+        "PHI",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*syngoX_SiteSummary.*",
+       "codes": [
+        "ACD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "syngo Imaging"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "log",
+     "description": "",
+     "rules": [
+      {
+       "regex": "ConfigurationPortal.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": "ReportingService.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": "SyngoDesktopIntegration.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "Desktop Connector"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "Healthcheck",
+     "description": "",
+     "rules": [
+      {
+       "regex": ".*Healthcheck.*",
+       "codes": [
+        "ACD"
+       ]
+      },
+      {
+       "regex": "VMWARE_ASL4-VMGMT.*",
+       "codes": [
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "Virtualization Platform"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "HCUDC",
+     "description": "",
+     "rules": [
+      {
+       "regex": ".*_HCUDC_.*",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*_IDM.*",
+       "codes": [
+        "UPD",
+        "PII"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "syngo carbon"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "dpt",
+     "description": "",
+     "rules": [
+      {
+       "regex": "dpt-info.*",
+       "codes": [
+        "ACD"
+       ]
+      },
+      {
+       "regex": "dpt-metrics.*",
+       "codes": [
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "DicomProxy"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "shared",
+     "description": "",
+     "rules": [
+      {
+       "regex": ".*",
+       "codes": [
+        "UPD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "syngo Virtual Cockpit"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "log-2",
+     "description": "",
+     "rules": [
+      {
+       "regex": ".*\\.log",
+       "codes": [
+        "PHI",
+        "PII",
+        "ACD",
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "syngo.share"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "RESMD",
+     "description": "",
+     "rules": [
+      {
+       "regex": "RESMD_.*",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "ResolutionMD"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "Helpdesk/CIM Files",
+     "description": "",
+     "rules": [
+      {
+       "regex": ".*installed_policies\\.txt",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*MNP\\.XML(\\.BAK)?",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SystemManagementBaseCheck\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*BlockingAction\\.xml",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*RequiredActions\\.xml",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*RegistrationInfo\\.xml",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*LastRegistrationInfo\\.xml",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*RegistrationBackendInfo\\.xml",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*oainstall\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*opcactivate\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*System\\.txt",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*trace",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*svc_actual_state\\.xml",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*svc_admin(\\.log|\\.prot)([1-9])?",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*svc_service(\\.log|\\.prot)([1-9])?",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*svc_tunnel(\\.log|\\.prot)([1-9])?",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*bbcutil_ping\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*export\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*MNP_.*\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*ovconfget\\.log",
+       "codes": [
+        "ACD"
+       ]
+      },
+      {
+       "regex": ".*sysmgmt_.*\\.log(\\.tmp)?",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*WebService\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*\\.EDM",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*GetBEData\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*history\\.csv",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*MedClient\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*radexecd\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*radiafd\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*radkill\\.l00",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*radntfyc\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*radrexfu\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*radsched\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*radshist\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*radstate\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*radstgms\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*radtray\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*rc\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*registerclient\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SIEMENS_RIM_REPORTING(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SIEMENS_RIM_TIMER_ONBOOT(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*sysbasecheck\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SYSTEM_MASTER_SDGUI(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SYSTEM_RIM_BOOTTIMER_RESET(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SYSTEM_SDGUI_.*(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*TransferControl\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*unregisterclient\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*update_cata\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*upgrdmaint\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*upgrdmaint_setup\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*packageinfo\\.xml",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*(agent|sd)_(actual|desired)_state(\\.xml|\\.xsd)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*BackendServer\\.xml",
+       "codes": [
+        "ACD"
+       ]
+      },
+      {
+       "regex": ".*SDIConfig\\.xml",
+       "codes": [
+        "ACD"
+       ]
+      },
+      {
+       "regex": ".*SDInstaller.*\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*application_1\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*trace_1\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*error_1\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*sd_agent\\.txt",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*sddll\\.txt",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SDServer\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SWDOCX\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*hosts",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*lmhosts",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*pfw-(domain|private|public)\\.log(\\.old)?",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*pfirewall\\.log(\\.old)?",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*Microsoft-Windows-AppLocker.*\\.evtx",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*Microsoft-Windows-CodeIntegrity%4Operational.evtx",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*connections_incoming\\.txt",
+       "codes": [
+        "PII",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*TeamViewer.*_Logfile(_OLD)?\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*tvconnector(\\.conf|\\.log|\\.prot)([1-9])?",
+       "codes": [
+        "PII",
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*tvexchange\\.txt(\\.old)?",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*tvgateway(\\.conf|\\.log|\\.prot)([1-9])?",
+       "codes": [
+        "PII",
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*NVCOMWrapper.*\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*LSS_(Install|Uninstall).*\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*LSSRegister\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*access\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*error\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*install\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*nvdlrA00\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*nvdmrA00.*\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*rms.*\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*main\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*navigate\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*results\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*setup\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*startup\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*connect_lss(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*lss_connect\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SetClientData\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SYSTEM_RIM_REG_DAILY\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SYSTEM_AUDIT_ASSETDAILY\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*AX_AX.*-.*-.*(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*HS_SY.*-.*-.*(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*MR_MR.*-.*-.*(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*CT_CT.*-.*-.*(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*XP_XP.*-.*-.*(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*MI_MI.*-.*-.*(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*CS_CS.*-.*-.*(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*srs.*\\.xml.*",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*srs-config\\.log.*",
+       "codes": [
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": true,
+      "products": [],
+      "families": []
+     }
+    }
+   ]
+  },
+  "XP": {
+   "family_based": false,
+   "sets": [
+    {
+     "name": "tmp",
+     "description": "",
+     "rules": [
+      {
+       "regex": ".*FTPDummy\\.tmp",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SFTPDummy\\.tmp",
+       "codes": [
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "LUMINOS Q-namix R",
+       "LUMINOS Q-namix T",
+       "Luminos Agile",
+       "Luminos Fusion",
+       "Luminos Select",
+       "Luminos_Impulse",
+       "Luminos_Lotus_Max",
+       "Luminos_dRF",
+       "MOBILETT ELARA MAX",
+       "MOBILETT Impact",
+       "MOBILETT MIRA",
+       "MOBILETT MIRA Max VE10",
+       "MOBILETT MIRA Max VF10",
+       "MULTIX FUSION",
+       "Multitom Rax",
+       "Multix Impact",
+       "Multix Impact E",
+       "Multix_Impact_C",
+       "Multix_Impact_VA2",
+       "Ysio"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "Boot",
+     "description": "",
+     "rules": [
+      {
+       "regex": "XP_XP.*_(post|pre)Boot\\.zip",
+       "codes": [
+        "UPD",
+        "ACD",
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "Luminos Agile",
+       "Luminos_Lotus_Max",
+       "Luminos_dRF",
+       "MOBILETT ELARA MAX",
+       "MOBILETT MIRA Max VE10",
+       "Multitom Rax",
+       "Multix Impact",
+       "Multix Impact E",
+       "Multix_Impact_C",
+       "Multix_Impact_VA2",
+       "UROSKOP_OMNIA_FLC",
+       "Ysio"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "SystemCanBeUsed",
+     "description": "",
+     "rules": [
+      {
+       "regex": "XP_XP.*\\.Failed\\.SystemCanBeUsed",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": "XP_XP.*\\.Failed\\.SystemLocked",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": "XP_XP.*\\.Precheck\\.PermanentFailed",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": "XP_XP.*\\.Precheck\\.Success",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": "XP_XP.*\\.Precheck\\.TemporaryFailed",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": "XP_XP.*\\.Rollback_NOK\\.SystemCanBeUsed",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": "XP_XP.*\\.Rollback_OK\\.SystemCanBeUsed",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": "XP_XP.*\\.Success\\.SystemCanBeUsed",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": "XP_XP.*_preBootCOBR\\.zip",
+       "codes": [
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "LUMINOS Q-namix R",
+       "LUMINOS Q-namix T",
+       "Luminos Agile",
+       "Luminos_Lotus_Max",
+       "Luminos_dRF",
+       "Multitom Rax",
+       "UROSKOP_OMNIA_FLC"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "postBoot",
+     "description": "",
+     "rules": [
+      {
+       "regex": "XP_XP.*_postBoot\\.zip",
+       "codes": [
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "Luminos Agile",
+       "Luminos_Lotus_Max",
+       "Luminos_dRF",
+       "Multitom Rax",
+       "UROSKOP_OMNIA_FLC"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "FLCImage",
+     "description": "",
+     "rules": [
+      {
+       "regex": ".*FLCImage_DCM_.*",
+       "codes": [
+        "UPD",
+        "RD",
+        "ACD"
+       ]
+      },
+      {
+       "regex": ".*FLCImage_FLC_.*",
+       "codes": [
+        "UPD",
+        "RD",
+        "ACD"
+       ]
+      },
+      {
+       "regex": ".*_EventLogs_.*",
+       "codes": [
+        "PHI",
+        "UPD",
+        "ACD",
+        "TSD",
+        "STD"
+       ]
+      },
+      {
+       "regex": ".*_FLCConfigdata_.*",
+       "codes": [
+        "PHI",
+        "UPD",
+        "ACD",
+        "TSD",
+        "STD"
+       ]
+      },
+      {
+       "regex": ".*_FLCEventlog_.*",
+       "codes": [
+        "PHI",
+        "UPD",
+        "ACD",
+        "TSD",
+        "STD"
+       ]
+      },
+      {
+       "regex": ".*_FLCImagingData_.*",
+       "codes": [
+        "UPD",
+        "ACD"
+       ]
+      },
+      {
+       "regex": ".*_FLCTransferFiles_.*",
+       "codes": [
+        "UPD",
+        "ACD",
+        "TSD",
+        "STD"
+       ]
+      },
+      {
+       "regex": ".*_FlightRecorderLogs_.*",
+       "codes": [
+        "PHI",
+        "UPD",
+        "ACD",
+        "TSD",
+        "STD"
+       ]
+      },
+      {
+       "regex": ".*_OtherLogs_.*",
+       "codes": [
+        "PHI",
+        "UPD",
+        "ACD",
+        "TSD",
+        "STD"
+       ]
+      },
+      {
+       "regex": ".*_System.txt_.*",
+       "codes": [
+        "UPD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "Cios Connect",
+       "Cios Fusion",
+       "Cios_Alpha_VA20",
+       "Cios_Select_VA10"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "Boot-2",
+     "description": "",
+     "rules": [
+      {
+       "regex": "XP_XP.*_(post|pre)Boot\\.zip",
+       "codes": [
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "LUMINOS Q-namix R",
+       "LUMINOS Q-namix T",
+       "YSIO_Xpree",
+       "YSIO_Xpree_Gen2"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "StartupLog",
+     "description": "",
+     "rules": [
+      {
+       "regex": ".*_StartupLog_Service_VC30.*zip",
+       "codes": [
+        "UPD",
+        "ACD",
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "MAMMOMAT Inspiration",
+       "MOBILETT ELARA MAX"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "Boot-3",
+     "description": "",
+     "rules": [
+      {
+       "regex": "XP_.*_FLC_(post|pre)Boot.*\\.zip",
+       "codes": [
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "LUMINOS Q-namix R",
+       "LUMINOS Q-namix T"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "zip",
+     "description": "",
+     "rules": [
+      {
+       "regex": "XP_11574001_.*_(post|pre)Boot\\.zip",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": "XP_11574001_.*_SDC_Asset_.*zip",
+       "codes": [
+        "UPD",
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": "XP_11574001_.*_SDC_IPDetectorMonitoring_.*zip",
+       "codes": [
+        "UPD",
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": "XP_11574001_.*_SDC_PlatformMessages_.*zip",
+       "codes": [
+        "UPD",
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": "XP_11574001_.*_SDC_UISLogs_.*zip",
+       "codes": [
+        "UPD",
+        "ACD",
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "YSIO_Xpree_Gen2"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "zip-2",
+     "description": "",
+     "rules": [
+      {
+       "regex": "XP_11107464_.*_(post|pre)Boot\\.zip",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": "XP_11107464_.*_SDC_Asset_.*zip",
+       "codes": [
+        "UPD",
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": "XP_11107464_.*_SDC_PlatformMessages_.*zip",
+       "codes": [
+        "UPD",
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": "XP_11107464_.*_SDC_UISLogs_.*zip",
+       "codes": [
+        "UPD",
+        "ACD",
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "YSIO_Xpree"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "FLCEventlog",
+     "description": "",
+     "rules": [
+      {
+       "regex": "XP_10893488_.*_FLCEventlog_.*zip",
+       "codes": [
+        "UPD",
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": "XP_10893489_.*_FLCEventlog_.*zip",
+       "codes": [
+        "UPD",
+        "ACD",
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "Luminos Fusion"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "zip-3",
+     "description": "",
+     "rules": [
+      {
+       "regex": "XP_11020660_.*_FLCEventlog_.*zip",
+       "codes": [
+        "UPD",
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": "XP_11020660_.*_FLCImagingData_partial_.*zip",
+       "codes": [
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "MULTIX FUSION"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "zip-4",
+     "description": "",
+     "rules": [
+      {
+       "regex": "XP_11020788_.*_(IS)?Eventlog_.*zip",
+       "codes": [
+        "UPD",
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": "XP_11020788_.*_SDC_Asset_.*zip",
+       "codes": [
+        "UPD",
+        "ACD",
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "Multix Impact"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "zip-5",
+     "description": "",
+     "rules": [
+      {
+       "regex": "XP_11020896_.*_(IS)?Eventlog_.*zip",
+       "codes": [
+        "UPD",
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": "XP_11020896_.*_SDC_Asset_.*zip",
+       "codes": [
+        "UPD",
+        "ACD",
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "Multix_Impact_C"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "zip-6",
+     "description": "",
+     "rules": [
+      {
+       "regex": "XP_11333888_.*_(IS)?Eventlog_.*zip",
+       "codes": [
+        "UPD",
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": "XP_11333888_.*_SDC_Asset_.*zip",
+       "codes": [
+        "UPD",
+        "ACD",
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "Multix_Impact_VA2"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "zip-7",
+     "description": "",
+     "rules": [
+      {
+       "regex": "XP_11333999_.*_(IS)?Eventlog_.*zip",
+       "codes": [
+        "UPD",
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": "XP_11333999_.*_SDC_Asset_.*zip",
+       "codes": [
+        "UPD",
+        "ACD",
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "Multix Impact E"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "StartupLog-2",
+     "description": "",
+     "rules": [
+      {
+       "regex": ".*_StartupLog_Service.*zip",
+       "codes": [
+        "UPD",
+        "ACD",
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "MAMMOMAT B-brilliant"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "StartupLog-3",
+     "description": "",
+     "rules": [
+      {
+       "regex": ".*_StartupLog_Service_.*zip",
+       "codes": [
+        "UPD",
+        "ACD",
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "MAMMOMAT REVELATION"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "FLCEventlog-2",
+     "description": "",
+     "rules": [
+      {
+       "regex": "XP_10594738_.*_FLCEventlog_.*zip",
+       "codes": [
+        "UPD",
+        "ACD",
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "MOBILETT MIRA Max VE10"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "FLCEventlog-3",
+     "description": "",
+     "rules": [
+      {
+       "regex": "XP_10762470_.*_FLCEventlog_.*zip",
+       "codes": [
+        "UPD",
+        "ACD",
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "Ysio"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "FLCEventlog-4",
+     "description": "",
+     "rules": [
+      {
+       "regex": "XP_10762471_.*_FLCEventlog_.*zip",
+       "codes": [
+        "UPD",
+        "ACD",
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "Luminos_dRF"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "FLCEventlog-5",
+     "description": "",
+     "rules": [
+      {
+       "regex": "XP_10762472_.*_FLCEventlog_.*zip",
+       "codes": [
+        "UPD",
+        "ACD",
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "Luminos Agile"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "FLCEventlog-6",
+     "description": "",
+     "rules": [
+      {
+       "regex": "XP_10762473_.*_FLCEventlog_.*zip",
+       "codes": [
+        "UPD",
+        "ACD",
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "UROSKOP_OMNIA_FLC"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "FLCEventlog-7",
+     "description": "",
+     "rules": [
+      {
+       "regex": "XP_10860700_.*_FLCEventlog_.*zip",
+       "codes": [
+        "UPD",
+        "ACD",
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "Multitom Rax"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "FLCEventlog-8",
+     "description": "",
+     "rules": [
+      {
+       "regex": "XP_11107444_.*_FLCEventlog_.*zip",
+       "codes": [
+        "UPD",
+        "ACD",
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "MOBILETT ELARA MAX"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "FLCEventlog-9",
+     "description": "",
+     "rules": [
+      {
+       "regex": "XP_11574002_.*_FLCEventlog_.*zip",
+       "codes": [
+        "UPD",
+        "ACD",
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "LUMINOS Q-namix R"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "FLCEventlog-10",
+     "description": "",
+     "rules": [
+      {
+       "regex": "XP_11574003_.*_FLCEventlog_.*zip",
+       "codes": [
+        "UPD",
+        "ACD",
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "LUMINOS Q-namix T"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "FLCEventlog-11",
+     "description": "",
+     "rules": [
+      {
+       "regex": "XP_11574100_.*_FLCEventlog_.*zip",
+       "codes": [
+        "UPD",
+        "ACD",
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "Luminos_Lotus_Max"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "Eventlog",
+     "description": "",
+     "rules": [
+      {
+       "regex": "XP_11647500_.*_(IS)?Eventlog_.*zip",
+       "codes": [
+        "UPD",
+        "ACD",
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": false,
+      "products": [
+       "MOBILETT Impact"
+      ],
+      "families": []
+     }
+    },
+    {
+     "name": "Helpdesk/CIM Files",
+     "description": "",
+     "rules": [
+      {
+       "regex": ".*installed_policies\\.txt",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*MNP\\.XML(\\.BAK)?",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SystemManagementBaseCheck\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*BlockingAction\\.xml",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*RequiredActions\\.xml",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*RegistrationInfo\\.xml",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*LastRegistrationInfo\\.xml",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*RegistrationBackendInfo\\.xml",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*oainstall\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*opcactivate\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*System\\.txt",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*trace",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*svc_actual_state\\.xml",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*svc_admin(\\.log|\\.prot)([1-9])?",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*svc_service(\\.log|\\.prot)([1-9])?",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*svc_tunnel(\\.log|\\.prot)([1-9])?",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*bbcutil_ping\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*export\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*MNP_.*\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*ovconfget\\.log",
+       "codes": [
+        "ACD"
+       ]
+      },
+      {
+       "regex": ".*sysmgmt_.*\\.log(\\.tmp)?",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*WebService\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*\\.EDM",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*GetBEData\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*history\\.csv",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*MedClient\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*radexecd\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*radiafd\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*radkill\\.l00",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*radntfyc\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*radrexfu\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*radsched\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*radshist\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*radstate\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*radstgms\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*radtray\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*rc\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*registerclient\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SIEMENS_RIM_REPORTING(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SIEMENS_RIM_TIMER_ONBOOT(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*sysbasecheck\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SYSTEM_MASTER_SDGUI(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SYSTEM_RIM_BOOTTIMER_RESET(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SYSTEM_SDGUI_.*(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*TransferControl\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*unregisterclient\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*update_cata\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*upgrdmaint\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*upgrdmaint_setup\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*packageinfo\\.xml",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*(agent|sd)_(actual|desired)_state(\\.xml|\\.xsd)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*BackendServer\\.xml",
+       "codes": [
+        "ACD"
+       ]
+      },
+      {
+       "regex": ".*SDIConfig\\.xml",
+       "codes": [
+        "ACD"
+       ]
+      },
+      {
+       "regex": ".*SDInstaller.*\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*application_1\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*trace_1\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*error_1\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*sd_agent\\.txt",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*sddll\\.txt",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SDServer\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SWDOCX\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*hosts",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*lmhosts",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*pfw-(domain|private|public)\\.log(\\.old)?",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*pfirewall\\.log(\\.old)?",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*Microsoft-Windows-AppLocker.*\\.evtx",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*Microsoft-Windows-CodeIntegrity%4Operational.evtx",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*connections_incoming\\.txt",
+       "codes": [
+        "PII",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*TeamViewer.*_Logfile(_OLD)?\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*tvconnector(\\.conf|\\.log|\\.prot)([1-9])?",
+       "codes": [
+        "PII",
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*tvexchange\\.txt(\\.old)?",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*tvgateway(\\.conf|\\.log|\\.prot)([1-9])?",
+       "codes": [
+        "PII",
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*NVCOMWrapper.*\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*LSS_(Install|Uninstall).*\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*LSSRegister\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*access\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*error\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*install\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*nvdlrA00\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*nvdmrA00.*\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*rms.*\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*main\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*navigate\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*results\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*setup\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*startup\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*connect_lss(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*lss_connect\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SetClientData\\.log",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SYSTEM_RIM_REG_DAILY\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*SYSTEM_AUDIT_ASSETDAILY\\.log",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*AX_AX.*-.*-.*(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*HS_SY.*-.*-.*(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*MR_MR.*-.*-.*(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*CT_CT.*-.*-.*(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*XP_XP.*-.*-.*(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*MI_MI.*-.*-.*(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*CS_CS.*-.*-.*(\\.log|\\.bak)",
+       "codes": [
+        "ACD",
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*srs.*\\.xml.*",
+       "codes": [
+        "TSD"
+       ]
+      },
+      {
+       "regex": ".*srs-config\\.log.*",
+       "codes": [
+        "TSD"
+       ]
+      }
+     ],
+     "assign": {
+      "modality_wide": true,
+      "products": [],
+      "families": []
+     }
+    }
+   ]
+  }
+ }
+}

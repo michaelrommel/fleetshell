@@ -280,8 +280,8 @@
 	.check, .radio { flex-direction: row; align-items: center; gap: 0.4rem; }
 	.modes { display: flex; gap: 1rem; flex-wrap: wrap; }
 	.nested { border-left: 2px solid var(--border); padding-left: 0.8rem; display: flex; flex-direction: column; gap: 0.6rem; }
-	input { background: var(--bg-app); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.4rem 0.55rem; font: inherit; font-size: 0.85rem; }
-	input[type='radio'], input[type='checkbox'] { width: auto; }
+	input:not([type='checkbox']) { background: var(--bg-app); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.4rem 0.55rem; font: inherit; font-size: 0.85rem; }
+	input[type='radio'] { width: auto; }
 	input:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
 	button[type='submit']:not(.link-btn) { align-self: flex-start; background: var(--accent); color: var(--on-accent); border: none; border-radius: var(--radius); padding: 0.45rem 0.8rem; font: inherit; font-weight: 600; font-size: 0.85rem; cursor: pointer; }
 	button[type='submit']:not(.link-btn):hover { background: var(--accent-hover); }

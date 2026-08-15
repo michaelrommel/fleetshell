@@ -224,7 +224,7 @@
 	.two { display: grid; grid-template-columns: 1fr 1fr; gap: 0.6rem; }
 	label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.8rem; color: var(--text-muted); }
 	.check { flex-direction: row; align-items: center; gap: 0.4rem; }
-	input { background: var(--bg-app); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.4rem 0.55rem; font: inherit; font-size: 0.85rem; }
+	input:not([type='checkbox']) { background: var(--bg-app); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.4rem 0.55rem; font: inherit; font-size: 0.85rem; }
 	input:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
 	button[type='submit']:not(.link-btn) { align-self: flex-start; background: var(--accent); color: var(--on-accent); border: none; border-radius: var(--radius); padding: 0.45rem 0.8rem; font: inherit; font-weight: 600; font-size: 0.85rem; cursor: pointer; }
 	button[type='submit']:not(.link-btn):hover { background: var(--accent-hover); }

@@ -13,7 +13,7 @@
 	function withParams(changes: Record<string, string | null>): string {
 		const u = new URLSearchParams(pageState.url.searchParams);
 		for (const [k, v] of Object.entries(changes)) v === null ? u.delete(k) : u.set(k, v);
-		return `${base}/products?${u}`;
+		return `${base}/products/tree?${u}`;
 	}
 	const selHref = (id: string) => withParams({ sel: id, new: null });
 	const newModalityHref = $derived(withParams({ new: 'modality', sel: null }));
@@ -157,7 +157,7 @@
 	label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.8rem; color: var(--text-muted); }
 	.chk { flex-direction: row; align-items: center; gap: 0.4rem; font-size: 0.83rem; color: var(--text); }
 	.muted { color: var(--text-subtle); font-size: 0.78rem; }
-	input { background: var(--bg-app); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.4rem 0.55rem; font: inherit; font-size: 0.85rem; }
+	input:not([type='checkbox']) { background: var(--bg-app); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.4rem 0.55rem; font: inherit; font-size: 0.85rem; }
 	input:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
 	button[type='submit'] { align-self: flex-start; background: var(--accent); color: var(--on-accent); border: none; border-radius: var(--radius); padding: 0.45rem 0.8rem; font: inherit; font-weight: 600; font-size: 0.85rem; cursor: pointer; }
 	button[type='submit']:hover { background: var(--accent-hover); }

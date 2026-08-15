@@ -18,7 +18,7 @@ Stages run in order: reference, devices, users, grants.
 """
 
 from __future__ import annotations
-import argparse, csv, gzip, os, sys, uuid
+import argparse, csv, gzip, json, os, sys, uuid
 import psycopg
 from anonymize import IdMap, LabelMap, fake_person, fake_email, fake_serial, \
     hospital_generator, company_generator, site_generator, city_generator, \
@@ -500,10 +500,134 @@ def ensure_privileges(g):
     g.commit()
 
 
+# ---------------------------------------------------------------------------
+# STAGE: product families (populate product.family by NAME, reload-survivable)
+# ---------------------------------------------------------------------------
+def stage_families(g: psycopg.Connection, path: str | None = None):
+    """Populate product.family from the committed product_families.json
+    (family -> product names, keyed by NAME so it survives a reload). Per
+    modality: reset family to NULL for that modality's products, then set it for
+    the listed products ('*' = every product in the modality). The family strings
+    MUST match the classification sheet's family column so the dormant family
+    assignments resolve. See docs/data_classification.md."""
+    path = path or os.path.join(HERE, "product_families.json")
+    if not os.path.exists(path):
+        print(f"  families: {path} absent -- skipped")
+        return
+    with open(path) as f:
+        fam = json.load(f)
+    with g.cursor() as c:
+        for modality, groups in fam.items():
+            if modality.startswith("_"):
+                continue  # comment keys
+            c.execute("SELECT id, path::text FROM product WHERE kind='modality' AND name=%s", (modality,))
+            row = c.fetchone()
+            if not row:
+                print(f"  families {modality}: modality node not found -- skipped")
+                continue
+            mod_id, mod_path = row
+            c.execute("SELECT name, id FROM product WHERE kind='product' AND path <@ %s::ltree", (mod_path,))
+            prod_by_name = {}
+            for nm, pid in c.fetchall():
+                prod_by_name.setdefault(nm, pid)
+            # reset, then apply (file = source of truth for this modality).
+            # Wildcards first (modality default), then explicit lists so a named
+            # product always overrides the wildcard (e.g. the security appliance
+            # is its own family, not the modality-wide Numaris/Somaris default).
+            c.execute("UPDATE product SET family=NULL WHERE kind='product' AND path <@ %s::ltree", (mod_path,))
+            unmatched = set()
+            for family, names in groups.items():
+                if names == ["*"] or names == "*":
+                    c.execute("UPDATE product SET family=%s WHERE kind='product' AND path <@ %s::ltree",
+                              (family, mod_path))
+            for family, names in groups.items():
+                if names == ["*"] or names == "*":
+                    continue
+                for nm in names:
+                    pid = prod_by_name.get(nm)
+                    if pid is None:
+                        unmatched.add(nm); continue
+                    c.execute("UPDATE product SET family=%s WHERE id=%s", (family, pid))
+            c.execute("SELECT count(*) FROM product WHERE kind='product' AND family IS NOT NULL AND path <@ %s::ltree",
+                      (mod_path,))
+            n_set = c.fetchone()[0]
+            msg = f"  families {modality:5}: {n_set} product(s) tagged"
+            if unmatched:
+                msg += f", {len(unmatched)} UNMATCHED"
+            print(msg)
+            for u in sorted(unmatched):
+                print(f"      unmatched product name: {u}")
+    g.commit()
+
+
+# ---------------------------------------------------------------------------
+# STAGE: data classification (re-apply the committed, name-keyed artifact)
+# ---------------------------------------------------------------------------
+def stage_classification(g: psycopg.Connection, path: str | None = None):
+    """Re-apply classification.json by product/family NAME (never UUID), so a
+    full old_database reload cannot orphan it. Per-modality wipe-and-reload; the
+    committed artifact is the source of truth (round-trip via
+    classification_export.py). See docs/data_classification.md."""
+    path = path or os.path.join(HERE, "classification.json")
+    if not os.path.exists(path):
+        print(f"  classification: {path} absent -- skipped")
+        return
+    with open(path) as f:
+        art = json.load(f)
+    with g.cursor() as c:
+        for modality, block in art.get("modalities", {}).items():
+            c.execute("SELECT id, path::text FROM product WHERE kind='modality' AND name=%s", (modality,))
+            row = c.fetchone()
+            if not row:
+                print(f"  classification {modality}: modality node not found -- skipped")
+                continue
+            mod_id, mod_path = row
+            c.execute("SELECT name, id FROM product WHERE kind='product' AND path <@ %s::ltree", (mod_path,))
+            prod_by_name = {}
+            for nm, pid in c.fetchall():
+                prod_by_name.setdefault(nm, pid)   # first wins if names collide
+            # wipe existing classification for this modality (cascades)
+            c.execute("DELETE FROM classification_set WHERE modality_id=%s", (mod_id,))
+            n_sets = n_rules = n_assign = 0
+            unmatched = set()
+            for s in block.get("sets", []):
+                c.execute("INSERT INTO classification_set(modality_id,name,description) "
+                          "VALUES(%s,%s,%s) RETURNING id",
+                          (mod_id, s["name"], s.get("description") or None))
+                set_id = c.fetchone()[0]; n_sets += 1
+                for i, r in enumerate(s.get("rules", [])):
+                    c.execute("INSERT INTO classification_rule(set_id,regex,sort_order) "
+                              "VALUES(%s,%s,%s) RETURNING id", (set_id, r["regex"], i))
+                    rid = c.fetchone()[0]; n_rules += 1
+                    for code in dict.fromkeys(r.get("codes", [])):
+                        c.execute("INSERT INTO classification_rule_class(rule_id,code) "
+                                  "VALUES(%s,%s) ON CONFLICT DO NOTHING", (rid, code))
+                a = s.get("assign", {})
+                if a.get("modality_wide"):
+                    c.execute("INSERT INTO classification_assignment(set_id,product_id,family) "
+                              "VALUES(%s,NULL,NULL)", (set_id,)); n_assign += 1
+                for fam in a.get("families", []):
+                    c.execute("INSERT INTO classification_assignment(set_id,product_id,family) "
+                              "VALUES(%s,NULL,%s)", (set_id, fam)); n_assign += 1
+                for pname in a.get("products", []):
+                    pid = prod_by_name.get(pname)
+                    if pid is None:
+                        unmatched.add(pname); continue
+                    c.execute("INSERT INTO classification_assignment(set_id,product_id,family) "
+                              "VALUES(%s,%s,NULL)", (set_id, pid)); n_assign += 1
+            msg = f"  classification {modality:5}: {n_sets} sets, {n_rules} rules, {n_assign} assignments"
+            if unmatched:
+                msg += f", {len(unmatched)} UNMATCHED product(s)"
+            print(msg)
+            for u in sorted(unmatched):
+                print(f"      unmatched product name: {u}")
+    g.commit()
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--stage", default="all",
-                    choices=["all","reference","devices","users","grants"])
+                    choices=["all","reference","devices","users","grants","families","classification"])
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--keep", action="store_true", help="keep the id maps (do not destroy)")
     a = ap.parse_args()
@@ -523,6 +647,10 @@ def main():
         print("users:");     stage_users(l, a.limit)
     if a.stage in ("all","grants"):
         print("grants:");    stage_grants(g, l, a.limit)
+    if a.stage in ("all","reference","families"):
+        print("families:"); stage_families(g)
+    if a.stage in ("all","reference","classification"):
+        print("classification:"); stage_classification(g)
 
     for m in ALL_MAPS: m.save()
     with g.cursor() as c:

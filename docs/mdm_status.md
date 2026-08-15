@@ -2,7 +2,9 @@
 
 This is the entry point for the Master Data Management + authorization rebuild.
 Read this first, then `docs/mdm_design.md` (architecture), `docs/authz_caching.md`
-(performance), and `docs/data_import.md` (bulk import).
+(performance), `docs/data_import.md` (bulk import), and
+`docs/data_classification.md` (the data-classification feature + its import
+pipeline).
 
 ## What this is
 
@@ -95,6 +97,7 @@ psql "$GLOBAL_WRITER_URL" -f sql/migrate_device_identity.sql   # device serial/F
 psql "$GLOBAL_WRITER_URL" -f sql/migrate_gateway_enrich.sql    # gateway (RS router) name/city/router_type/admin_ip/... + trigram indexes
 psql "$GLOBAL_WRITER_URL" -f sql/migrate_gateway_ipsec.sql     # gateway public_ip/psk/ipsec (IPsec tunnel config; UI-authored, not imported)
 psql "$GLOBAL_WRITER_URL" -f sql/migrate_gateway_hostname.sql  # dns_name -> nullable hostname (dynamic-IP DynDNS); clears synthetic fleetshell names
+psql "$GLOBAL_WRITER_URL" -f sql/migrate_data_classification.sql # data_class catalog + classification_set/rule/rule_class/assignment (data classification)
 
 # 1. Reset the loaded/derived data (keeps schema + authz_privilege canonical seed).
 #    product CASCADE also clears product_model + product_model_app via their FK.
@@ -104,6 +107,8 @@ psql "$LOCAL_WRITER_URL"  -c "TRUNCATE app_user, login_account CASCADE;"
 # 2. Re-import from the legacy CSVs (fresh id maps; maps destroyed at the end).
 cd import && rm -f *.map.json
 python load.py --stage all                # single-system grants + product models (RDPRODUCTMODEL: ~1386 models) + device identity fields
+#   NOTE: --stage all also re-applies classification.json (by product/family NAME)
+#   so data classification survives the product-UUID regeneration. Nothing else needed.
 
 # 3. Post-load, GLOBAL: normalize privileges to CRUD, then build the group tree.
 psql "$GLOBAL_WRITER_URL" -f ../sql/migrate_authz_catalog.sql
@@ -125,10 +130,30 @@ Notes:
 
 ## WHERE TO START NEXT (priority order)
 
-**Resume here: the remaining primary section is Customers/Sites**, then the
+**Resume here: the next major feature is the Data Transfer Matrix** (new
+session). After that, the remaining primary section is Customers/Sites, then the
 device **per-device application override** (`device_app`), then **Services >
-Infoproxy** + the **Valkey spool**. Products, Devices, Gateways, and the whole
-Administration section are built.
+Infoproxy** + the **Valkey spool**. Products (incl. **Data Classification**),
+Devices, Gateways, and the whole Administration section are built.
+
+### Data Classification (BUILT -- see `docs/data_classification.md`)
+
+`/products` is now tabbed: **Product Tree | Data Classification**. The
+classification tab (modality-scoped: Rule Sets / Assignments / Preview) assigns
+fixed data classes to device files by filename regex and syncs the resolved
+result into the Valkey hash `data_classes:<MODALITY>:<PRODUCT>` for aeroftp.
+Gated by `product:edit` (Phase 1: interim `is_admin`). Real data imported from
+two spreadsheets via a name-keyed, reload-survivable pipeline:
+`classification_dedup.py` (xlsx -> `classification.json`, lossless
+support-based dedup) + `load.py --stage classification` / `--stage families`
+(re-applied by product/family NAME on every reload) + `classification_export.py`
+(DB -> file round-trip). Family mapping lives in `product_families.json`;
+`product.family` is populated for CT/MR (Somaris/Numaris). New files:
+`migrate_data_classification.sql`, `src/lib/server/classification.ts`,
+`products/{+layout,+page,classification/,tree/}`, and the four import scripts +
+JSON artifacts. Remaining: a few dormant families (`Somaris 7`, security
+appliances) are manual prod cleanup; automatic write-through to Valkey on edit
+is deferred (currently manual "Sync to Valkey" button).
 
 ### Session recap (latest work, all in `fleetshell-portal-dev` unless noted)
 

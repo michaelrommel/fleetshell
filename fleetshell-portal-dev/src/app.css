@@ -25,6 +25,10 @@
 	--success: #43ac4a;
 	--danger: #e5484d;
 	--focus: var(--accent);
+	/* Muted accent for small toggle controls (checkboxes) -- the full accent is
+	 * too blaring at checkbox size. Derived from the accent so both themes get a
+	 * toned-down variant (var() resolves per-theme at use time). */
+	--check-on: color-mix(in srgb, var(--accent) 70%, var(--text-subtle));
 	--radius: 6px;
 	--font-ui: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
 }
@@ -79,6 +83,28 @@ body {
 }
 
 a { color: var(--accent); }
+
+/* Compact, muted checkbox -- one custom control on every page (replaces the
+   browser default). Filled-square toggle style; the muted --check-on avoids the
+   blaring full accent at this size. Pages must style text fields with
+   input:not([type='checkbox']) so their padding/border do not leak in here. */
+input[type='checkbox'] {
+	appearance: none;
+	-webkit-appearance: none;
+	width: 15px;
+	height: 15px;
+	margin: 0;
+	flex: none;
+	padding: 0;
+	border: 1px solid var(--border);
+	border-radius: 4px;
+	background: var(--surface);
+	cursor: pointer;
+	vertical-align: middle;
+}
+input[type='checkbox']:hover:not(:disabled) { border-color: var(--check-on); }
+input[type='checkbox']:checked { background: var(--check-on); border-color: var(--check-on); }
+input[type='checkbox']:disabled { opacity: 0.5; cursor: default; }
 
 /* Shared form action bar + buttons -- consistent across every dialog:
    Delete leftmost, Save/Create rightmost, Cancel touching to its left. */
