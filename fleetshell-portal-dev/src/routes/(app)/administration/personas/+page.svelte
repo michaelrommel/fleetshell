@@ -3,8 +3,10 @@
 	import { page as pageState } from '$app/state';
 	import { enhance } from '$app/forms';
 	import SplitPane from '$lib/components/SplitPane.svelte';
+	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 
 	let { data, form } = $props();
+	let confirmDelete = $state(false);
 
 	let groupQuery = $state('');
 	let groupResults = $state<{ group_id: string; label: string }[]>([]);
@@ -30,10 +32,8 @@
 	const prevHref = $derived(withParams({ page: String(data.page - 1), before: data.prevCursor, after: null }));
 	const nextHref = $derived(withParams({ page: String(data.page + 1), after: data.nextCursor, before: null }));
 	const newHref = $derived(withParams({ new: '1', sel: null }));
+	const cancelHref = $derived(withParams({ new: null, sel: null }));
 	const selHref = (uid: string) => withParams({ sel: uid, new: null });
-	function confirmSubmit(e: SubmitEvent, msg: string) {
-		if (!confirm(msg)) e.preventDefault();
-	}
 </script>
 
 <SplitPane storageKey="personas" defaultLeft={40}>
@@ -75,7 +75,7 @@
 		{#if data.detail}
 			<div class="card detail">
 				<h3>Edit persona <code>{data.detail.user_id}</code></h3>
-				<form method="POST" action="?/updatePersona" use:enhance>
+				<form id="personaEdit" method="POST" action="?/updatePersona" use:enhance>
 					<input type="hidden" name="user_id" value={data.detail.user_id} />
 					<div class="two">
 						<label>First name<input name="firstname" value={data.detail.firstname} required /></label>
@@ -85,7 +85,6 @@
 					<label class="check">
 						<input type="checkbox" name="is_admin" checked={data.detail.is_admin} /> Administration access
 					</label>
-					<button type="submit">Save</button>
 				</form>
 
 				<h4>Group memberships</h4>
@@ -148,12 +147,9 @@
 					{/if}
 				</details>
 
-				<div class="danger-zone">
-					<form method="POST" action="?/deletePersona"
-					      onsubmit={(e) => confirmSubmit(e, `Delete persona "${data.detail?.firstname} ${data.detail?.lastname}"?`)}>
-						<input type="hidden" name="user_id" value={data.detail.user_id} />
-						<button type="submit" class="danger-btn">Delete persona</button>
-					</form>
+				<div class="actions-bar">
+					<button type="button" class="act-delete" onclick={() => (confirmDelete = true)}>Delete persona</button>
+					<button type="submit" form="personaEdit" class="act-primary">Save</button>
 				</div>
 			</div>
 		{:else if data.isNew}
@@ -169,7 +165,10 @@
 						<label>Home region<input name="home_region" value="eu-west-2" /></label>
 					</div>
 					<label class="check"><input type="checkbox" name="is_admin" /> Administration access</label>
-					<button type="submit">Create persona</button>
+					<div class="actions-bar">
+						<a class="act-cancel" href={cancelHref}>Cancel</a>
+						<button type="submit" class="act-primary">Create persona</button>
+					</div>
 				</form>
 				<p class="hint">Add group memberships after creating to grant rights.</p>
 			</div>
@@ -179,6 +178,15 @@
 		{#if form?.error}<p class="error">{form.error}</p>{/if}
 	{/snippet}
 </SplitPane>
+
+{#if data.detail}
+	<ConfirmDialog bind:open={confirmDelete} title="Delete persona?" message={`Delete "${data.detail.firstname} ${data.detail.lastname}"? This cannot be undone.`}>
+		<form method="POST" action="?/deletePersona" use:enhance={() => async ({ update }) => { confirmDelete = false; await update(); }}>
+			<input type="hidden" name="user_id" value={data.detail.user_id} />
+			<button type="submit" class="act-delete">Delete</button>
+		</form>
+	</ConfirmDialog>
+{/if}
 
 <style>
 	.col-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.6rem; gap: 0.6rem; flex: none; }
@@ -218,8 +226,8 @@
 	.check { flex-direction: row; align-items: center; gap: 0.4rem; }
 	input { background: var(--bg-app); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.4rem 0.55rem; font: inherit; font-size: 0.85rem; }
 	input:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
-	button[type='submit'] { align-self: flex-start; background: var(--accent); color: var(--on-accent); border: none; border-radius: var(--radius); padding: 0.45rem 0.8rem; font: inherit; font-weight: 600; font-size: 0.85rem; cursor: pointer; }
-	button[type='submit']:hover { background: var(--accent-hover); }
+	button[type='submit']:not(.link-btn) { align-self: flex-start; background: var(--accent); color: var(--on-accent); border: none; border-radius: var(--radius); padding: 0.45rem 0.8rem; font: inherit; font-weight: 600; font-size: 0.85rem; cursor: pointer; }
+	button[type='submit']:not(.link-btn):hover { background: var(--accent-hover); }
 
 	.members { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.3rem; }
 	.members li { display: flex; align-items: center; justify-content: space-between; gap: 0.6rem; font-size: 0.85rem; }
@@ -231,9 +239,6 @@
 	.results li { display: flex; align-items: center; justify-content: space-between; gap: 0.6rem; font-size: 0.82rem; }
 	.hint { color: var(--text-subtle); font-size: 0.78rem; margin: 0.4rem 0 0; }
 	.error { color: var(--danger); font-size: 0.85rem; margin: 0.4rem 0 0; }
-	.danger-zone { margin-top: 1.2rem; padding-top: 0.8rem; border-top: 1px solid var(--divider); }
-	button[type='submit'].danger-btn { background: var(--danger); color: #fff; border: none; border-radius: var(--radius); padding: 0.4rem 0.8rem; font: inherit; font-size: 0.82rem; font-weight: 600; cursor: pointer; }
-	button[type='submit'].danger-btn:hover { background: color-mix(in srgb, var(--danger) 82%, #000); }
 	code { background: var(--surface-2); padding: 0 0.3rem; border-radius: 3px; font-size: 0.78rem; color: var(--text-muted); }
 
 	.grants-box { margin-top: 1.3rem; }

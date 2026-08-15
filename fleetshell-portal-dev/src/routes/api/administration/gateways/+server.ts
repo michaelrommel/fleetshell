@@ -11,9 +11,9 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 	const q = (url.searchParams.get('q') ?? '').trim();
 	if (q.length < 2) return json({ items: [] });
 	const like = '%' + q + '%';
-	const items = await globalDb<{ id: string; dns_name: string; label: string; region: string }[]>`
-		SELECT id::text AS id, dns_name, label, region FROM gateway
-		WHERE dns_name ILIKE ${like} OR label ILIKE ${like} OR region ILIKE ${like}
-		ORDER BY dns_name LIMIT 25`;
+	const items = await globalDb<{ id: string; name: string; hospital: string; region: string }[]>`
+		SELECT id::text AS id, COALESCE(name, hostname) AS name, hospital, region FROM gateway
+		WHERE name ILIKE ${like} OR hostname ILIKE ${like} OR hospital ILIKE ${like} OR region ILIKE ${like}
+		ORDER BY COALESCE(name, hostname) LIMIT 25`;
 	return json({ items });
 };

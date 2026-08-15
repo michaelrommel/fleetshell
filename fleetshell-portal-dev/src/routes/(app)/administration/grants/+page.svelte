@@ -111,7 +111,7 @@
 						<p class="hint">Empty = all groups. Each picked group becomes its own grant, covering that group and everything under it.</p>
 					{/if}
 
-					<button type="submit">Create grant</button>
+					<div class="actions-bar"><button type="submit" class="act-primary">Create grant</button></div>
 				</form>
 			</div>
 		{:else}
@@ -126,7 +126,7 @@
 	      use:enhance={() => async ({ update }) => { confirmOpen = false; await update(); }}>
 		<input type="hidden" name="grant_id" value={pendingGrant?.grant_id ?? ''} />
 		<input type="hidden" name="group_id" value={pendingGrant?.group_id ?? ''} />
-		<button type="submit" class="danger-btn">Delete</button>
+		<button type="submit" class="act-delete">Delete</button>
 	</form>
 </ConfirmDialog>
 
@@ -150,8 +150,6 @@
 	.del { flex: none; background: none; border: none; color: var(--danger); cursor: pointer; font: inherit; font-size: 0.78rem; padding: 0; }
 	.del:hover { color: color-mix(in srgb, var(--danger) 78%, #fff); }
 	.modal-form { display: contents; }
-	button[type='submit'].danger-btn { background: var(--danger); color: #fff; border: none; border-radius: var(--radius); padding: 0.45rem 0.9rem; font: inherit; font-weight: 600; font-size: 0.85rem; cursor: pointer; }
-	button[type='submit'].danger-btn:hover { background: color-mix(in srgb, var(--danger) 82%, #000); }
 	.muted { color: var(--text-subtle); font-size: 0.8rem; }
 
 	form { display: flex; flex-direction: column; gap: 0.7rem; }
@@ -168,5 +166,5 @@
 	button[type='submit']:hover { background: var(--accent-hover); }
 	.error { color: var(--danger); font-size: 0.85rem; margin: 0.4rem 0 0; }
 
-	@media (max-width: 60rem) { .scope-grid { grid-template-columns: 1fr; } }
+	@media (max-width: 75rem) { .scope-grid { grid-template-columns: 1fr; } }
 </style>

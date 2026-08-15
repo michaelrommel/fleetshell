@@ -139,10 +139,34 @@ CREATE INDEX IF NOT EXISTS ix_grant_scope ON authz_grant(scope_id);
 
 CREATE TABLE IF NOT EXISTS gateway (
     id        uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    dns_name  text UNIQUE NOT NULL,        -- e.g. 'us.gateway.fleetshell.com'
-    region    text NOT NULL,               -- which regional VPC it lives in
-    label     text NOT NULL DEFAULT ''
+    hostname  text,                        -- DynDNS hostname (dynamic-IP gateways); NULL for static-IP
+    region    text NOT NULL,               -- which regional VPC it lives in (REGIONNAME)
+    hospital  text NOT NULL DEFAULT '',    -- anonymized customer/hospital (IDENTIFIER2; shared map)
+    -- RS-router (communication interface) detail, from RDRSROUTERDETAILVIEWV1:
+    name              text,                -- NAME (router id / cisco serial) -- RAW
+    city              text,                -- IDENTIFIER1 (anonymized; shared map with device city)
+    gateway_model     text,                -- DISPLAYROUTERTYPE (e.g. 'Cisco 867VAE-K9'; 'undefined' -> NULL)
+    connection_type   text,                -- CONNECTIONTYPE decoded (e.g. 'Internet with IPSec')
+    operational_state text,                -- OPERATIONALSTATE decoded (e.g. 'Access Allowed')
+    static_ip         text,                -- STATICIP
+    nat_type          text,                -- NATTYPE
+    admin_ip          text,                -- IPADDRESSADM1 (anonymized)
+    admin_ip2         text,                -- IPADDRESSADM2 (anonymized)
+    country           text,                -- COUNTRYNAME
+    -- IPsec tunnel / crypto: the operational connection data (authored in the UI,
+    -- spooled to Valkey fleetipsec:* keyed by public_ip). See fleetshell-portal
+    -- src/lib/server/gateways.ts (SiteRecord). Not imported from the legacy CSV.
+    public_ip         text,                -- external tunnel endpoint IP (Valkey key)
+    psk               text,                -- IPsec pre-shared key
+    ipsec             jsonb                -- SiteRecord: { ike_version, ike_identity, static_ip,
+                                           --   dyndns_password, ike_enc[], ike_auth[], ike_dh[],
+                                           --   esp_enc[], esp_auth[], esp_pfs[], remote_ts[] }
 );
+CREATE INDEX IF NOT EXISTS ix_gateway_publicip_trgm ON gateway USING gin (public_ip gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS ix_gateway_name_trgm     ON gateway USING gin (name gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS ix_gateway_hospital_trgm ON gateway USING gin (hospital gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS ix_gateway_city_trgm     ON gateway USING gin (city gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS ix_gateway_adminip_trgm  ON gateway USING gin (admin_ip gin_trgm_ops);
 
 CREATE TABLE IF NOT EXISTS customer (
     id      uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -248,6 +272,7 @@ CREATE TABLE IF NOT EXISTS device (
     ip_address         text,              -- IPADDRESS1 (primary)
     ip_real            text,              -- REALIPADDRESS (secondary)
     contact            text,              -- CONTACT (PII; anonymized)
+    city               text,              -- CITY (anonymized; shared map with gateway city)
     attrs              jsonb NOT NULL DEFAULT '{}'::jsonb,   -- extensible dimensions
     updated_at         timestamptz NOT NULL DEFAULT now()
 );

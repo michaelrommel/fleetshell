@@ -91,7 +91,10 @@ cd infrastructure
 # 0. Product/model schema (idempotent; MUST precede load.py so the new columns +
 #    product_model / product_model_app tables exist before the importer writes them).
 psql "$GLOBAL_WRITER_URL" -f sql/migrate_product_model.sql
-psql "$GLOBAL_WRITER_URL" -f sql/migrate_device_identity.sql   # device serial/FL/IP/tid/host/ord/contact + trigram indexes
+psql "$GLOBAL_WRITER_URL" -f sql/migrate_device_identity.sql   # device serial/FL/IP/tid/host/ord/contact/city + trigram indexes
+psql "$GLOBAL_WRITER_URL" -f sql/migrate_gateway_enrich.sql    # gateway (RS router) name/city/router_type/admin_ip/... + trigram indexes
+psql "$GLOBAL_WRITER_URL" -f sql/migrate_gateway_ipsec.sql     # gateway public_ip/psk/ipsec (IPsec tunnel config; UI-authored, not imported)
+psql "$GLOBAL_WRITER_URL" -f sql/migrate_gateway_hostname.sql  # dns_name -> nullable hostname (dynamic-IP DynDNS); clears synthetic fleetshell names
 
 # 1. Reset the loaded/derived data (keeps schema + authz_privilege canonical seed).
 #    product CASCADE also clears product_model + product_model_app via their FK.
@@ -122,9 +125,11 @@ Notes:
 
 ## WHERE TO START NEXT (priority order)
 
-**Resume here: build the Devices page.** The Products page (product tree) and
-the whole Administration section are done; Devices is the remaining primary
-sidebar section with no view yet.
+**Resume here: the remaining primary section is Customers/Sites.** Products,
+Devices, Gateways, and the whole Administration section are done. Gateways is a
+master-detail browser over the RS-router / communication-interface records
+(Google-style search, enriched fields from `RDRSROUTERDETAILVIEWV1`, the
+attached-devices relation, admin edit/create/delete); see `docs/portal_ui.md`.
 
 0. **DONE so far** (see `docs/portal_ui.md` for detail):
    - Nucleus AppShell (top bar + icon rail) + identity model (password login ->

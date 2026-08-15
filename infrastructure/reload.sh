@@ -1,5 +1,6 @@
 psql "$GLOBAL_WRITER_URL" -f sql/migrate_product_model.sql
 psql "$GLOBAL_WRITER_URL" -f sql/migrate_device_identity.sql
+psql "$GLOBAL_WRITER_URL" -f sql/migrate_gateway_enrich.sql
 psql "$GLOBAL_WRITER_URL" -c "TRUNCATE region, product, gateway, device, customer, customer_site, principal_group, authz_role, authz_scope, authz_grant CASCADE;"
 psql "$LOCAL_WRITER_URL"  -c "TRUNCATE app_user, login_account CASCADE;"
 cd import

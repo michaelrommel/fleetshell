@@ -113,6 +113,16 @@ def site_generator():
     return lambda: f"{fake.city()} Site"
 
 
+def city_generator():
+    return lambda: fake.city()
+
+
+def public_ip_generator():
+    # A plausible PUBLIC IPv4 (tunnel endpoint); avoids private/reserved blocks.
+    octet1 = (45, 62, 77, 80, 84, 88, 91, 94, 176, 185, 193, 203, 212, 217)
+    return lambda: f"{random.choice(octet1)}.{random.randint(0,255)}.{random.randint(0,255)}.{random.randint(1,254)}"
+
+
 # --- device-identity generators (format-preserving, stable via LabelMap) -----
 # These fake the VALUE while keeping the general SHAPE, so the anonymized dump
 # stays realistic and searchable without being identifying.

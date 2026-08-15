@@ -82,7 +82,7 @@
 	.gutter:hover::before, .split.dragging .gutter::before { width: 3px; background: var(--accent); }
 	.split.dragging { user-select: none; cursor: col-resize; }
 
-	@media (max-width: 60rem) {
+	@media (max-width: 75rem) {
 		.split { flex-direction: column; }
 		.pane { flex: none !important; }
 		.gutter { display: none; }

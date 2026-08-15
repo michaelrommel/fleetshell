@@ -16,7 +16,8 @@ ALTER TABLE device
     ADD COLUMN IF NOT EXISTS order_number        text,   -- ORDERNO
     ADD COLUMN IF NOT EXISTS ip_address          text,   -- IPADDRESS1 (primary)
     ADD COLUMN IF NOT EXISTS ip_real             text,   -- REALIPADDRESS (secondary)
-    ADD COLUMN IF NOT EXISTS contact             text;   -- CONTACT (PII; anonymized)
+    ADD COLUMN IF NOT EXISTS contact             text,   -- CONTACT (PII; anonymized)
+    ADD COLUMN IF NOT EXISTS city                text;   -- CITY (anonymized; shared map with gateway city)
 
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 CREATE INDEX IF NOT EXISTS ix_device_serial_trgm ON device USING gin (serial gin_trgm_ops);

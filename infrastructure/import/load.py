@@ -21,9 +21,9 @@ from __future__ import annotations
 import argparse, csv, gzip, os, sys, uuid
 import psycopg
 from anonymize import IdMap, LabelMap, fake_person, fake_email, fake_serial, \
-    hospital_generator, company_generator, site_generator, \
+    hospital_generator, company_generator, site_generator, city_generator, \
     functional_location_generator, ip_generator, technical_ident_generator, \
-    hostid_generator, orderno_generator, contact_generator
+    hostid_generator, orderno_generator, contact_generator, public_ip_generator
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SRC = os.path.join(HERE, "old_database")
@@ -53,9 +53,11 @@ tid_lbl     = LabelMap(os.path.join(HERE, "tid.map.json"),       technical_ident
 host_lbl    = LabelMap(os.path.join(HERE, "host.map.json"),      hostid_generator())
 ord_lbl     = LabelMap(os.path.join(HERE, "ord.map.json"),       orderno_generator())
 contact_lbl = LabelMap(os.path.join(HERE, "contact.map.json"),   contact_generator())
+city_lbl    = LabelMap(os.path.join(HERE, "city.map.json"),      city_generator())
+pubip_gen   = public_ip_generator()   # synthesized per gateway (no real value to map)
 
 ALL_MAPS = [user_map, group_map, device_map, gateway_map, product_map, model_map, customer_map, site_map,
-            hospital_lbl, customer_lbl, site_lbl, fl_lbl, ip_lbl, tid_lbl, host_lbl, ord_lbl, contact_lbl]
+            hospital_lbl, customer_lbl, site_lbl, fl_lbl, ip_lbl, tid_lbl, host_lbl, ord_lbl, contact_lbl, city_lbl]
 
 # --- role name -> (resource_type, verb) list ---------------------------------
 CRUD_DEVICE = [("device","view"),("device","connect"),("device","edit"),("device","delete")]
@@ -189,16 +191,54 @@ def stage_reference(g: psycopg.Connection, emit: bool = True):
                   msat, on_conflict="product_id")
         print(f"  product_model: {len(mnodes)}")
 
-    # --- gateways from the detail view (has region/country/identifier names) ---
+    # --- gateways (RS routers = communication interfaces) from the detail view ---
+    # Enriched per the Gateways page: router NAME (id / cisco serial) kept RAW;
+    # IDENTIFIER2 (customer/hospital) shares the device hospital map so the same
+    # real name anonymizes identically on device + gateway; IDENTIFIER1 (city)
+    # and admin IPs anonymized (IPs via the shared device IP map). SITENAME is
+    # 'none' everywhere -> skipped. Enum/code + type fields kept raw for now;
+    # drop unwanted columns once the data is visible in the UI.
+    def an(m, raw):
+        v = (raw or "").strip()
+        return m.get(v) if v else None
+    def raw(v):
+        v = (v or "").strip()
+        return v or None
+    # Decode the code fields to their user-readable labels (fallback: raw code).
+    CONN_LABELS = {"5": "Internet with IPSec", "20": "Internet with IPSec (DMVPN)"}
+    OPSTATE_LABELS = {"55": "Access Allowed", "21": "Access Denied"}
+    def decode(m, v):
+        v = (v or "").strip()
+        return m.get(v, v or None) if v else None
+    def gwmodel(v):
+        v = (v or "").strip()
+        return None if v in ("", "undefined") else v
     grows = []
     for r in read("RDRSROUTERDETAILVIEWV1"):
         gid = gateway_map.get(r["ID"])
         gateway_src_ids.add(r["ID"])
-        dns = f"gw-{r['ID']}.gateway.fleetshell.com"
-        label = customer_lbl.get(r["IDENTIFIER2"] or r["ID"])   # anonymized site/customer name
-        grows.append((gid, dns, r.get("REGIONNAME") or "", label))
+        # NOTE: hostname (DynDNS) is left NULL -- authored in the UI for dynamic-IP
+        # gateways. In production it, plus the DynDNS password (WEBDNSPWID /
+        # WEBDNSPWPW in the source), would feed the IPsec dyndns config.
+        grows.append((
+            gid, r.get("REGIONNAME") or "",
+            hospital_lbl.get(r.get("IDENTIFIER2") or r["ID"]),   # hospital = anon customer/hospital (shared map)
+            raw(r.get("NAME")),                 # name (router id / cisco serial) RAW
+            an(city_lbl, r.get("IDENTIFIER1")), # city (anon)
+            gwmodel(r.get("DISPLAYROUTERTYPE")),          # gateway_model ('undefined' -> NULL)
+            decode(CONN_LABELS, r.get("CONNECTIONTYPE")),      # connection_type (decoded)
+            decode(OPSTATE_LABELS, r.get("OPERATIONALSTATE")), # operational_state (decoded)
+            raw(r.get("STATICIP")),             # static_ip RAW
+            raw(r.get("NATTYPE")),              # nat_type RAW
+            an(ip_lbl, r.get("IPADDRESSADM1")), # admin_ip (anon)
+            an(ip_lbl, r.get("IPADDRESSADM2")), # admin_ip2 (anon)
+            raw(r.get("COUNTRYNAME")),          # country RAW
+            pubip_gen(),                        # public_ip (synthesized tunnel endpoint)
+        ))
     if emit:
-        copy_rows(g, "gateway (id,dns_name,region,label)", grows, on_conflict="id")
+        copy_rows(g, "gateway (id,region,hospital,name,city,gateway_model,connection_type,"
+                     "operational_state,static_ip,nat_type,admin_ip,admin_ip2,country,public_ip)",
+                  grows, on_conflict="id")
         print(f"  gateway: {len(grows)}")
 
 
@@ -258,7 +298,7 @@ def stage_devices(g: psycopg.Connection, limit: int | None):
             hospital_lbl.get(r.get("HOSPITAL") or r["ID"]),
             None,                                   # software_version unknown in export
             access,
-            psycopg.types.json.Json({"city": None}),
+            psycopg.types.json.Json({}),
             fake_serial(),                          # serial (SERIAL)
             an(fl_lbl,   r.get("IDENTIFIER3")),     # functional_location
             an(tid_lbl,  r.get("SYSTEMID2")),       # technical_ident
@@ -267,6 +307,7 @@ def stage_devices(g: psycopg.Connection, limit: int | None):
             an(ip_lbl,   r.get("IPADDRESS1")),      # ip_address
             an(ip_lbl,   r.get("REALIPADDRESS")),   # ip_real (same map -> same fake per real ip)
             an(contact_lbl, r.get("CONTACT")),      # contact (PII)
+            an(city_lbl, r.get("CITY")),            # city (anon; shared map with gateway city)
         ))
         if len(drows) >= 10000:
             _flush_devices(g, drows, cust_rows, site_rows); drows.clear()
@@ -283,7 +324,7 @@ def _flush_devices(g, drows, cust_rows, site_rows):
         copy_rows(g, "device (id,region_path,country_iso,modality,product_path,customer_id,"
                      "site_id,gateway_id,hospital_name,software_version,access_requirement,attrs,"
                      "serial,functional_location,technical_ident,host_hw_id,order_number,"
-                     "ip_address,ip_real,contact)", drows, on_conflict="id")
+                     "ip_address,ip_real,contact,city)", drows, on_conflict="id")
 
 
 # =============================================================================

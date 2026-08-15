@@ -5,13 +5,12 @@
 	import { enhance } from '$app/forms';
 	import SplitPane from '$lib/components/SplitPane.svelte';
 	import EntityPicker from '$lib/components/EntityPicker.svelte';
+	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 
 	let { data, form } = $props();
+	let confirmDelete = $state(false);
 
 	// local search box seeded from the URL; submitted via the form (stage 1).
-	let q = $state(data.q);
-	$effect(() => { q = data.q; });
-
 	// Count (approach A): carried in the URL while paging (data.total is a number);
 	// when the filter changes (data.total === null) the client fetches it once.
 	let fetchedCount = $state<number | null>(null);
@@ -43,8 +42,16 @@
 	}
 	const selHref = (id: string) => withParams({ sel: id, new: null });
 	const newHref = $derived(withParams({ new: '1', sel: null }));
+	const cancelHref = $derived(withParams({ new: null, sel: null }));
 	function setMode(m: string) { return withParams({ mode: m, after: null, before: null, page: null, sel: null }); }
-	function confirmSubmit(e: SubmitEvent, msg: string) { if (!confirm(msg)) e.preventDefault(); }
+	let searchInput: HTMLInputElement;
+	function doSearch() {
+		goto(withParams({ q: searchInput.value.trim() || null, after: null, before: null, page: null, n: null }), { keepFocus: true, noScroll: true });
+	}
+	function clearSearch() {
+		searchInput.value = ''; searchInput.focus();
+		goto(withParams({ q: null, after: null, before: null, page: null, n: null }), { keepFocus: true, noScroll: true });
+	}
 
 	const canEdit = $derived(data.isAdmin);
 	const d = $derived(data.detail as Record<string, string | null> | null);
@@ -65,11 +72,13 @@
 			</div>
 		</div>
 
-		<form method="GET" action={`${base}/devices`} class="searchbar">
+		<form method="GET" action={`${base}/devices`} class="searchbar" onsubmit={(e) => { e.preventDefault(); doSearch(); }}>
 			{#if data.mode === 'all'}<input type="hidden" name="mode" value="all" />{/if}
-			<input name="q" bind:value={q} placeholder="serial / functional location / IP  ·  sn: fl: ip: tid: host: ord:" autocomplete="off" spellcheck="false" />
+			<div class="search-wrap">
+				<input name="q" value={data.q} bind:this={searchInput} placeholder="serial / functional location / IP  ·  sn: fl: ip: tid: host: ord:" autocomplete="off" spellcheck="false" />
+				{#if data.q}<button type="button" class="in-clear" onclick={clearSearch} aria-label="Clear search">✕</button>{/if}
+			</div>
 			<button type="submit">Search</button>
-			{#if data.q}<a class="clear" href={setMode(data.mode)}>Clear</a>{/if}
 		</form>
 
 		<div class="card list">
@@ -80,11 +89,11 @@
 				<tbody>
 					{#each data.devices as dev (dev.id)}
 						<tr class:sel={dev.id === data.sel} onclick={() => goto(selHref(dev.id), { keepFocus: true, noScroll: true })}>
-							<td class="mono">{dev.serial ?? ''}</td>
+							<td class="mono"><div>{dev.serial ?? ''}</div>{#if dev.partno}<div class="sub">{dev.partno}</div>{/if}</td>
 							<td class="mono">{dev.functional_location ?? ''}</td>
 							<td><div class="model-cell">{dev.model_name ?? ''}</div>{#if dev.product_name}<div class="sub">{dev.product_name}</div>{/if}</td>
 							<td class="mono">{dev.ip_address ?? ''}</td>
-							<td>{dev.customer_name ?? dev.hospital_name ?? ''}</td>
+							<td><div>{dev.customer_name ?? dev.hospital_name ?? ''}</div>{#if dev.city}<div class="sub">{dev.city}</div>{/if}</td>
 						</tr>
 					{:else}
 						<tr><td colspan="5" class="empty">No devices{data.q ? ' match' : ' in scope'}.</td></tr>
@@ -111,7 +120,10 @@
 				<h3>New device</h3>
 				<form method="POST" action="?/createDevice" use:enhance>
 					{@render fields(null, true)}
-					<button type="submit" class="save">Create device</button>
+					<div class="actions-bar">
+						<a class="act-cancel" href={cancelHref}>Cancel</a>
+						<button type="submit" class="act-primary">Create device</button>
+					</div>
 				</form>
 			</div>
 		{:else if d}
@@ -124,27 +136,31 @@
 
 				<form method="POST" action="?/updateDevice" use:enhance>
 					<input type="hidden" name="id" value={d.id} />
-					{@render fields(d, canEdit)}
+					{#key d.id}
+						{@render fields(d, canEdit)}
+					{/key}
 					{#if canEdit}
-						<button type="submit" class="save">Save device</button>
+						<div class="actions-bar">
+							<button type="button" class="act-delete" onclick={() => (confirmDelete = true)}>Delete device</button>
+							<button type="submit" class="act-primary">Save device</button>
+						</div>
 					{/if}
 				</form>
-
-				{#if canEdit}
-					<div class="danger-zone">
-						<form method="POST" action="?/deleteDevice" use:enhance
-						      onsubmit={(e) => confirmSubmit(e, `Delete device "${d?.serial || d?.id}"? This cannot be undone.`)}>
-							<input type="hidden" name="id" value={d.id} />
-							<button type="submit" class="danger-btn">Delete device</button>
-						</form>
-					</div>
-				{/if}
 			</div>
 		{:else}
 			<div class="card placeholder">Select a device, or search.</div>
 		{/if}
 	{/snippet}
 </SplitPane>
+
+{#if d}
+	<ConfirmDialog bind:open={confirmDelete} title="Delete device?" message={`Delete "${d.serial || d.id}"? This cannot be undone.`}>
+		<form method="POST" action="?/deleteDevice" use:enhance={() => async ({ update }) => { confirmDelete = false; await update(); }}>
+			<input type="hidden" name="id" value={d.id} />
+			<button type="submit" class="act-delete">Delete</button>
+		</form>
+	</ConfirmDialog>
+{/if}
 
 {#snippet fields(x: Record<string, string | null> | null, edit: boolean)}
 	<div class="grid2">
@@ -157,6 +173,7 @@
 		<label>IP address<input name="ip_address" value={x?.ip_address ?? ''} disabled={!edit} /></label>
 		<label>IP (real)<input name="ip_real" value={x?.ip_real ?? ''} disabled={!edit} /></label>
 		<label class="wide">Hospital<input name="hospital_name" value={x?.hospital_name ?? ''} disabled={!edit} /></label>
+		<label>City<input name="city" value={x?.city ?? ''} disabled={!edit} /></label>
 		<label class="wide">Contact<input name="contact" value={x?.contact ?? ''} disabled={!edit} /></label>
 		<label>Access requirement
 			<select name="access_requirement" value={x?.access_requirement ?? 'open'} disabled={!edit}>
@@ -171,6 +188,10 @@
 		<span class="rlabel">Product model</span>
 		<EntityPicker api="/api/administration/models" name="product_path" idField="path" labelField="display"
 			value={x?.product_path ?? null} label={x?.model_name ?? null} disabled={!edit} placeholder="search model..." />
+		{#if x?.model_partno}
+			<span class="rlabel"></span>
+			<span class="partno-note">Part no <span class="mono">{x.model_partno}</span></span>
+		{/if}
 		<span class="rlabel">Region</span>
 		<EntityPicker api="/api/administration/regions" name="region_path" idField="path" labelField="name"
 			value={x?.region_path ?? null} label={x?.region_name ?? null} disabled={!edit} placeholder="search region..." />
@@ -181,8 +202,8 @@
 		<EntityPicker api="/api/administration/sites" name="site_id" idField="id" labelField="name"
 			value={x?.site_id ?? null} label={x?.site_name ?? null} disabled={!edit} placeholder="search site..." />
 		<span class="rlabel">Gateway</span>
-		<EntityPicker api="/api/administration/gateways" name="gateway_id" idField="id" labelField="dns_name"
-			value={x?.gateway_id ?? null} label={x?.gateway_dns ?? null} disabled={!edit} placeholder="search gateway..." />
+		<EntityPicker api="/api/administration/gateways" name="gateway_id" idField="id" labelField="name"
+			value={x?.gateway_id ?? null} label={x?.gateway_name ?? null} disabled={!edit} placeholder="search gateway..." />
 	</div>
 {/snippet}
 
@@ -198,11 +219,12 @@
 	.new-btn:hover { background: var(--accent-hover); }
 
 	.searchbar { display: flex; gap: 0.4rem; margin-bottom: 0.6rem; flex: none; align-items: center; }
-	.searchbar input { flex: 1; background: var(--bg-app); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.45rem 0.6rem; font: inherit; font-size: 0.85rem; }
+	.search-wrap { position: relative; flex: 1; display: flex; }
+	.searchbar input { width: 100%; background: var(--bg-app); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.45rem 1.9rem 0.45rem 0.6rem; font: inherit; font-size: 0.85rem; }
 	.searchbar input:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
-	.searchbar button { background: var(--accent); color: var(--on-accent); border: none; border-radius: var(--radius); padding: 0.45rem 0.8rem; font: inherit; font-weight: 600; font-size: 0.83rem; cursor: pointer; }
-	.searchbar .clear { color: var(--text-subtle); font-size: 0.8rem; text-decoration: none; }
-	.searchbar .clear:hover { text-decoration: underline; }
+	.in-clear { position: absolute; right: 0.35rem; top: 50%; transform: translateY(-50%); background: none; border: none; color: var(--text-subtle); cursor: pointer; font-size: 0.8rem; line-height: 1; padding: 0.2rem; border-radius: var(--radius); }
+	.in-clear:hover { color: var(--text); }
+	.searchbar > button { background: var(--accent); color: var(--on-accent); border: none; border-radius: var(--radius); padding: 0.45rem 0.8rem; font: inherit; font-weight: 600; font-size: 0.83rem; cursor: pointer; }
 
 	.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
 	.list { flex: 1; min-height: 0; overflow-y: auto; padding: 0.2rem 0.3rem; }
@@ -243,11 +265,7 @@
 
 	.rel { display: grid; grid-template-columns: 8rem 1fr; gap: 0.5rem 0.8rem; align-items: start; }
 	.rlabel { align-self: center; font-size: 0.76rem; color: var(--text-muted); }
+	.partno-note { align-self: center; font-size: 0.76rem; color: var(--text-subtle); }
 
-	.save { margin-top: 1rem; background: var(--accent); color: var(--on-accent); border: none; border-radius: var(--radius); padding: 0.5rem 0.9rem; font: inherit; font-weight: 600; font-size: 0.85rem; cursor: pointer; }
-	.save:hover { background: var(--accent-hover); }
-	.danger-zone { margin-top: 1.3rem; padding-top: 0.8rem; border-top: 1px solid var(--divider); }
-	.danger-btn { background: var(--danger); color: #fff; border: none; border-radius: var(--radius); padding: 0.4rem 0.8rem; font: inherit; font-size: 0.82rem; font-weight: 600; cursor: pointer; }
-	.danger-btn:hover { background: color-mix(in srgb, var(--danger) 82%, #000); }
 	.error { color: var(--danger); font-size: 0.85rem; margin: 0 0 0.8rem; }
 </style>

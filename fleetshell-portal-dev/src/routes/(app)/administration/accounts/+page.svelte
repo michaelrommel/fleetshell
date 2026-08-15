@@ -3,8 +3,10 @@
 	import { page as pageState } from '$app/state';
 	import { enhance } from '$app/forms';
 	import SplitPane from '$lib/components/SplitPane.svelte';
+	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 
 	let { data, form } = $props();
+	let confirmDelete = $state(false);
 
 	// Create-form: default persona mode + existing-persona picker.
 	let defaultMode = $state<'new' | 'existing'>('new');
@@ -32,13 +34,11 @@
 	const prevHref = $derived(withParams({ page: String(data.page - 1), before: data.prevCursor, after: null }));
 	const nextHref = $derived(withParams({ page: String(data.page + 1), after: data.nextCursor, before: null }));
 	const newHref = $derived(withParams({ new: '1', account: null }));
+	const cancelHref = $derived(withParams({ new: null, account: null }));
 	const selHref = (id: string) => withParams({ account: id, new: null });
 
 	function personaHref(uid: string): string {
 		return `${base}/administration/personas?sel=${encodeURIComponent(uid)}`;
-	}
-	function confirmSubmit(e: SubmitEvent, msg: string) {
-		if (!confirm(msg)) e.preventDefault();
 	}
 
 	const primary = $derived(data.linked.find((p) => p.is_primary) ?? null);
@@ -87,14 +87,13 @@
 		{#if data.detail}
 			<div class="card detail">
 				<h3>{data.detail.username} <code>{data.detail.account_id}</code></h3>
-				<form method="POST" action="?/updateAccount" use:enhance>
+				<form id="accountEdit" method="POST" action="?/updateAccount" use:enhance>
 					<input type="hidden" name="account_id" value={data.detail.account_id} />
 					<div class="two">
 						<label>Email<input name="email" type="email" value={data.detail.email} required /></label>
 						<label>Display name<input name="display_name" value={data.detail.display_name ?? ''} /></label>
 					</div>
 					<label>Reset password<input name="password" type="password" autocomplete="new-password" placeholder="leave blank to keep" /></label>
-					<button type="submit">Save</button>
 				</form>
 
 				<h4>Default persona</h4>
@@ -164,16 +163,13 @@
 							<label>Home region<input name="home_region" value="eu-west-2" /></label>
 						</div>
 						<label class="check"><input type="checkbox" name="is_admin" /> Administration access</label>
-						<button type="submit">Create &amp; link</button>
+						<div class="actions-bar"><button type="submit" class="act-primary">Create &amp; link</button></div>
 					</form>
 				</details>
 
-				<div class="danger-zone">
-					<form method="POST" action="?/deleteAccount"
-					      onsubmit={(e) => confirmSubmit(e, `Delete account "${data.detail?.username}"? Its personas are kept.`)}>
-						<input type="hidden" name="account_id" value={data.detail.account_id} />
-						<button type="submit" class="danger-btn">Delete account</button>
-					</form>
+				<div class="actions-bar">
+					<button type="button" class="act-delete" onclick={() => (confirmDelete = true)}>Delete account</button>
+					<button type="submit" form="accountEdit" class="act-primary">Save</button>
 				</div>
 			</div>
 		{:else if data.isNew}
@@ -226,7 +222,10 @@
 						</div>
 					{/if}
 
-					<button type="submit">Create account</button>
+					<div class="actions-bar">
+						<a class="act-cancel" href={cancelHref}>Cancel</a>
+						<button type="submit" class="act-primary">Create account</button>
+					</div>
 				</form>
 			</div>
 		{:else}
@@ -235,6 +234,15 @@
 		{#if form?.error}<p class="error">{form.error}</p>{/if}
 	{/snippet}
 </SplitPane>
+
+{#if data.detail}
+	<ConfirmDialog bind:open={confirmDelete} title="Delete account?" message={`Delete "${data.detail.username}"? Its personas are kept.`}>
+		<form method="POST" action="?/deleteAccount" use:enhance={() => async ({ update }) => { confirmDelete = false; await update(); }}>
+			<input type="hidden" name="account_id" value={data.detail.account_id} />
+			<button type="submit" class="act-delete">Delete</button>
+		</form>
+	</ConfirmDialog>
+{/if}
 
 <style>
 	.col-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.6rem; gap: 0.6rem; flex: none; }
@@ -275,8 +283,8 @@
 	input { background: var(--bg-app); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.4rem 0.55rem; font: inherit; font-size: 0.85rem; }
 	input[type='radio'], input[type='checkbox'] { width: auto; }
 	input:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
-	button[type='submit'] { align-self: flex-start; background: var(--accent); color: var(--on-accent); border: none; border-radius: var(--radius); padding: 0.45rem 0.8rem; font: inherit; font-weight: 600; font-size: 0.85rem; cursor: pointer; }
-	button[type='submit']:hover { background: var(--accent-hover); }
+	button[type='submit']:not(.link-btn) { align-self: flex-start; background: var(--accent); color: var(--on-accent); border: none; border-radius: var(--radius); padding: 0.45rem 0.8rem; font: inherit; font-weight: 600; font-size: 0.85rem; cursor: pointer; }
+	button[type='submit']:not(.link-btn):hover { background: var(--accent-hover); }
 
 	.members { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.3rem; }
 	.members li { display: flex; align-items: center; justify-content: space-between; gap: 0.6rem; font-size: 0.85rem; }
@@ -291,9 +299,6 @@
 	.sub-form summary { cursor: pointer; font-size: 0.82rem; color: var(--text-muted); }
 	.sub-form[open] summary { color: var(--text); margin-bottom: 0.5rem; }
 	.warn-box { color: var(--danger); font-size: 0.82rem; margin: 0; background: color-mix(in srgb, var(--danger) 10%, transparent); border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent); border-radius: var(--radius); padding: 0.45rem 0.6rem; }
-	.danger-zone { margin-top: 1.2rem; padding-top: 0.8rem; border-top: 1px solid var(--divider); }
-	button[type='submit'].danger-btn { background: var(--danger); color: #fff; border: none; border-radius: var(--radius); padding: 0.4rem 0.8rem; font: inherit; font-size: 0.82rem; font-weight: 600; cursor: pointer; }
-	button[type='submit'].danger-btn:hover { background: color-mix(in srgb, var(--danger) 82%, #000); }
 	.error { color: var(--danger); font-size: 0.85rem; margin: 0.4rem 0 0; }
 	code { background: var(--surface-2); padding: 0 0.3rem; border-radius: 3px; font-size: 0.78rem; color: var(--text-muted); }
 

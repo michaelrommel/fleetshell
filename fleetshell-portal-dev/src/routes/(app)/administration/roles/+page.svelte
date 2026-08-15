@@ -2,8 +2,10 @@
 	import { base } from '$app/paths';
 	import { page as pageState } from '$app/state';
 	import { enhance } from '$app/forms';
+	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 
 	let { data, form } = $props();
+	let confirmDelete = $state(false);
 
 	function withParams(changes: Record<string, string | null>): string {
 		const u = new URLSearchParams(pageState.url.searchParams);
@@ -11,10 +13,8 @@
 		return `${base}/administration/roles?${u}`;
 	}
 	const newHref = $derived(withParams({ new: '1', sel: null }));
+	const cancelHref = $derived(withParams({ new: null, sel: null }));
 	const selHref = (id: string) => withParams({ sel: id, new: null });
-	function confirmSubmit(e: SubmitEvent, msg: string) {
-		if (!confirm(msg)) e.preventDefault();
-	}
 </script>
 
 <div class="grid">
@@ -57,7 +57,7 @@
 				</form>
 
 				<h4>Privileges</h4>
-				<form method="POST" action="?/setPrivileges" use:enhance>
+				<form id="roleEdit" method="POST" action="?/setPrivileges" use:enhance>
 					<input type="hidden" name="id" value={data.detail.id} />
 					<table class="matrix">
 						<thead>
@@ -80,19 +80,15 @@
 							{/each}
 						</tbody>
 					</table>
-					<button type="submit">Save privileges</button>
 				</form>
 
 				<h4>Usage</h4>
 				<p class="usage">Used in <strong>{data.usage.grants}</strong> grant(s) across
 					<strong>{data.usage.groups}</strong> group(s).</p>
 
-				<div class="danger-zone">
-					<form method="POST" action="?/deleteRole"
-					      onsubmit={(e) => confirmSubmit(e, `Delete role "${data.detail?.name}"?`)}>
-						<input type="hidden" name="id" value={data.detail.id} />
-						<button type="submit" class="danger-btn">Delete role</button>
-					</form>
+				<div class="actions-bar">
+					<button type="button" class="act-delete" onclick={() => (confirmDelete = true)}>Delete role</button>
+					<button type="submit" form="roleEdit" class="act-primary">Save privileges</button>
 				</div>
 			</div>
 		{:else if data.isNew}
@@ -100,7 +96,10 @@
 				<h3>New role</h3>
 				<form method="POST" action="?/createRole" use:enhance>
 					<label>Role name<input name="name" required /></label>
-					<button type="submit">Create role</button>
+					<div class="actions-bar">
+						<a class="act-cancel" href={cancelHref}>Cancel</a>
+						<button type="submit" class="act-primary">Create role</button>
+					</div>
 				</form>
 				<p class="hint">Assign privileges after creating.</p>
 			</div>
@@ -110,6 +109,15 @@
 		{#if form?.error}<p class="error">{form.error}</p>{/if}
 	</section>
 </div>
+
+{#if data.detail}
+	<ConfirmDialog bind:open={confirmDelete} title="Delete role?" message={`Delete "${data.detail.name}"? This cannot be undone.`}>
+		<form method="POST" action="?/deleteRole" use:enhance={() => async ({ update }) => { confirmDelete = false; await update(); }}>
+			<input type="hidden" name="id" value={data.detail.id} />
+			<button type="submit" class="act-delete">Delete</button>
+		</form>
+	</ConfirmDialog>
+{/if}
 
 <style>
 	.grid { display: grid; grid-template-columns: 1fr 1.3fr; gap: 1.4rem; flex: 1; min-height: 0; }
@@ -162,9 +170,6 @@
 	.error { color: var(--danger); font-size: 0.85rem; margin: 0.4rem 0 0; }
 	code { background: var(--surface-2); padding: 0 0.3rem; border-radius: 3px; font-size: 0.72rem; color: var(--text-muted); }
 
-	.danger-zone { margin-top: 1.2rem; padding-top: 0.8rem; border-top: 1px solid var(--divider); }
-	button[type='submit'].danger-btn { background: var(--danger); color: #fff; border: none; border-radius: var(--radius); padding: 0.4rem 0.8rem; font: inherit; font-size: 0.82rem; font-weight: 600; cursor: pointer; }
-	button[type='submit'].danger-btn:hover { background: color-mix(in srgb, var(--danger) 82%, #000); }
 
-	@media (max-width: 60rem) { .grid { grid-template-columns: 1fr; } }
+	@media (max-width: 75rem) { .grid { grid-template-columns: 1fr; } }
 </style>

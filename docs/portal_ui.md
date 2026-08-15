@@ -216,7 +216,32 @@ Bell/news is still a placeholder (`newsCount` = 0, `TODO(news)`).
    ~455ms visible-id-set floor (the earlier `authorizedDeviceIds` +
    `id = ANY(20000)` approach was the cause of the original 4-7s loads and is
    removed).
-3. **Gateways**: list + view-edit adapted from the legacy gateway page.
+3. **Gateways** (BUILT): master-detail (`SplitPane`, storageKey `gateways`) over
+   the RS-router / communication-interface records. **Left**: Google-style search
+   (bare terms over name / hospital / city / public IP; qualifiers `name:` `hosp:`
+   `city:` `ip:` = public IP, `admin:` = admin IP), a results table (name /
+   hospital+city / region / model+conn / **public IP** / device count) with keyset
+   pagination and an inline total (~20k rows, cheap count). **Right**: full detail + edit (admin) of the enriched
+   fields (name, dns_name, hospital, city, region, country, gateway_model,
+   connection_type, operational_state, nat_type, admin_ip/2, static_ip), the
+   **attached-devices list** (the communication-interface <-> device relation:
+   first 50 + total, each linking to the device), and admin create + delete
+   (delete blocked when devices still reference it). The enriched columns come
+   from `RDRSROUTERDETAILVIEWV1` via `migrate_gateway_enrich.sql` + `load.py`
+   (router NAME raw; IDENTIFIER2/city anonymized via shared maps;
+   connection_type/operational_state decoded to labels; `undefined`
+   gateway_model -> NULL). **Tunnel / IPsec** (the operational connection data)
+   is authored in the detail/create form via `IpsecEditor.svelte` -- a faithful
+   port of the legacy fleetshell-portal gateway crypto UI (public IP + PSK with
+   show/hide, IP type + IKE version, IKE Phase 1 / Phase 2 chip multi-selects for
+   enc/auth/DH/PFS, remote traffic selectors) -- stored as `gateway.public_ip` +
+   `psk` + `ipsec` jsonb (SiteRecord shape), ready to be **spooled to Valkey**
+   `fleetipsec:*` keyed by `public_ip` (spool step TBD). Not imported from the
+   CSV; filled in for manually-created test gateways. Migration:
+   `migrate_gateway_ipsec.sql` (additive; no reload needed). The `public_ip`
+   (tunnel endpoint) shown in the list + searched via `ip:` is **synthesized**
+   (public-looking fake) by `load.py` / a one-time backfill, since the real ones
+   lived in Valkey, not the CSV.
 4. **Customers / Sites**: customer list with their sites; view-edit;
    `access_requirement` (open/device/customer/site) surfaced. (Customer/site
    master data needs proper production exports -- see `docs/data_import.md`.)

@@ -117,7 +117,7 @@
 	</div>
 
 	{#if canEdit}
-		<button type="submit" class="save">Save applications</button>
+		<div class="actions-bar"><button type="submit" class="save">Save applications</button></div>
 	{/if}
 </form>
 
@@ -175,6 +175,6 @@
 	.guac-param-drive:has(input:disabled) { opacity: 0.4; cursor: not-allowed; }
 	.guac-param-record { margin-left: 12px; color: var(--danger); }
 
-	.save { margin-top: 0.7rem; background: var(--accent); color: var(--on-accent); border: none; border-radius: var(--radius); padding: 0.45rem 0.85rem; font: inherit; font-weight: 600; font-size: 0.85rem; cursor: pointer; }
+	.save { background: var(--accent); color: var(--on-accent); border: none; border-radius: var(--radius); padding: 0.45rem 0.85rem; font: inherit; font-weight: 600; font-size: 0.85rem; cursor: pointer; }
 	.save:hover { background: var(--accent-hover); }
 </style>

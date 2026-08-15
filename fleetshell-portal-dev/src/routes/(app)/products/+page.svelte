@@ -5,8 +5,10 @@
 	import ProductTree from '$lib/components/ProductTree.svelte';
 	import AppEditor from '$lib/components/AppEditor.svelte';
 	import SplitPane from '$lib/components/SplitPane.svelte';
+	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 
 	let { data, form } = $props();
+	let confirmDelete = $state(false);
 
 	function withParams(changes: Record<string, string | null>): string {
 		const u = new URLSearchParams(pageState.url.searchParams);
@@ -15,7 +17,7 @@
 	}
 	const selHref = (id: string) => withParams({ sel: id, new: null });
 	const newModalityHref = $derived(withParams({ new: 'modality', sel: null }));
-	function confirmSubmit(e: SubmitEvent, msg: string) { if (!confirm(msg)) e.preventDefault(); }
+	const cancelHref = $derived(withParams({ new: null, sel: null }));
 
 	const childKind = (kind: string) => (kind === 'modality' ? 'product' : kind === 'product' ? 'model' : null);
 	const canEdit = $derived(data.isAdmin);
@@ -39,7 +41,10 @@
 				<form method="POST" action="?/createNode" use:enhance>
 					<input type="hidden" name="parent_id" value="" />
 					<label>Modality name<input name="name" required /></label>
-					<button type="submit">Create modality</button>
+					<div class="actions-bar">
+						<a class="act-cancel" href={cancelHref}>Cancel</a>
+						<button type="submit" class="act-primary">Create modality</button>
+					</div>
 				</form>
 			</div>
 		{:else if data.detail}
@@ -71,7 +76,7 @@
 
 				{#if detail.kind === 'model' && data.model}
 					{@const model = data.model}
-					<form method="POST" action="?/saveModel" use:enhance class="model">
+					<form id="modelEdit" method="POST" action="?/saveModel" use:enhance class="model">
 						<input type="hidden" name="id" value={detail.id} />
 						<label>Name<input name="name" value={detail.name} required disabled={!canEdit} /></label>
 						<div class="row">
@@ -80,7 +85,6 @@
 							<label>Serial to<input name="serial_to" value={model.serial_to ?? ''} inputmode="numeric" disabled={!canEdit} /></label>
 						</div>
 						<label class="chk"><input type="checkbox" name="is_host_computer" checked={model.is_host_computer} disabled={!canEdit} /> Device is a host computer</label>
-						{#if canEdit}<button type="submit">Save model</button>{/if}
 					</form>
 
 					{#key detail.id}
@@ -107,11 +111,9 @@
 				{/if}
 
 				{#if canEdit}
-					<div class="danger-zone">
-						<form method="POST" action="?/deleteNode" use:enhance onsubmit={(e) => confirmSubmit(e, `Delete "${detail.name || 'this node'}"? This cannot be undone.`)}>
-							<input type="hidden" name="id" value={detail.id} />
-							<button type="submit" class="danger-btn">Delete {detail.kind}</button>
-						</form>
+					<div class="actions-bar">
+						<button type="button" class="act-delete" onclick={() => (confirmDelete = true)}>Delete {detail.kind}</button>
+						{#if detail.kind === 'model'}<button type="submit" form="modelEdit" class="act-primary">Save model</button>{/if}
 					</div>
 				{/if}
 			</div>
@@ -120,6 +122,15 @@
 		{/if}
 	{/snippet}
 </SplitPane>
+
+{#if data.detail}
+	<ConfirmDialog bind:open={confirmDelete} title={`Delete ${data.detail.kind}?`} message={`Delete "${data.detail.name || 'this node'}"? This cannot be undone.`}>
+		<form method="POST" action="?/deleteNode" use:enhance={() => async ({ update }) => { confirmDelete = false; await update(); }}>
+			<input type="hidden" name="id" value={data.detail.id} />
+			<button type="submit" class="act-delete">Delete</button>
+		</form>
+	</ConfirmDialog>
+{/if}
 
 <style>
 	.col-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.6rem; gap: 0.6rem; flex: none; }
@@ -150,6 +161,7 @@
 	input:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
 	button[type='submit'] { align-self: flex-start; background: var(--accent); color: var(--on-accent); border: none; border-radius: var(--radius); padding: 0.45rem 0.8rem; font: inherit; font-weight: 600; font-size: 0.85rem; cursor: pointer; }
 	button[type='submit']:hover { background: var(--accent-hover); }
+	.inline button[type='submit'] { align-self: flex-end; }
 	.link { color: var(--accent); text-decoration: none; }
 	.link:hover { text-decoration: underline; }
 	code { background: var(--surface-2); padding: 0 0.3rem; border-radius: 3px; font-size: 0.72rem; color: var(--text-muted); }
@@ -159,10 +171,7 @@
 	.addchild > summary::-webkit-details-marker { display: none; }
 	.addchild[open] > summary { margin-bottom: 0.5rem; }
 
-	.danger-zone { margin-top: 1.4rem; padding-top: 0.8rem; border-top: 1px solid var(--divider); }
-	.danger-btn { background: var(--danger); color: #fff; border: none; border-radius: var(--radius); padding: 0.4rem 0.8rem; font: inherit; font-size: 0.82rem; font-weight: 600; cursor: pointer; }
-	.danger-btn:hover { background: color-mix(in srgb, var(--danger) 82%, #000); }
 	.error { color: var(--danger); font-size: 0.85rem; margin: 0 0 0.8rem; }
 
-	@media (max-width: 60rem) { .grid { grid-template-columns: 1fr; } }
+	@media (max-width: 75rem) { .grid { grid-template-columns: 1fr; } }
 </style>

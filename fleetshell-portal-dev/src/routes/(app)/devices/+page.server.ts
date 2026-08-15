@@ -18,7 +18,7 @@ type ListRow = {
 	id: string; serial: string | null; functional_location: string | null; ip_address: string | null;
 	technical_ident: string | null; hospital_name: string | null; country_iso: string | null;
 	access_requirement: string; model_name: string | null; product_name: string | null;
-	customer_name: string | null; gateway: string | null;
+	customer_name: string | null; gateway: string | null; city: string | null; partno: string | null;
 };
 
 export const load: PageServerLoad = async ({ locals, url }) => {
@@ -51,11 +51,12 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 
 	// Shared projection + name joins (nested fragments).
 	const cols = globalDb`d.id::text AS id, d.serial, d.functional_location, d.ip_address, d.technical_ident,
-		d.hospital_name, d.country_iso, d.access_requirement, m.name AS model_name,
+		d.hospital_name, d.country_iso, d.access_requirement, d.city, m.name AS model_name, pm.partno::text AS partno,
 		(SELECT pr.name FROM product pr WHERE pr.path = subpath(d.product_path, 0, nlevel(d.product_path) - 1)) AS product_name,
-		cu.name AS customer_name, gw.dns_name AS gateway`;
+		       cu.name AS customer_name, COALESCE(gw.name, gw.hostname) AS gateway`;
 	const joins = globalDb`
-		LEFT JOIN product m   ON m.path = d.product_path
+		LEFT JOIN product m        ON m.path = d.product_path
+		LEFT JOIN product_model pm ON pm.product_id = m.id
 		LEFT JOIN customer cu ON cu.id = d.customer_id
 		LEFT JOIN gateway gw  ON gw.id = d.gateway_id`;
 
@@ -100,17 +101,18 @@ async function loadDetail(sel: string | null) {
 	if (!sel) return null;
 	const [d] = await globalDb<Record<string, unknown>[]>`
 		SELECT d.id::text AS id, d.serial, d.functional_location, d.technical_ident, d.host_hw_id,
-		       d.order_number, d.ip_address, d.ip_real, d.contact, d.hospital_name, d.software_version,
+		       d.order_number, d.ip_address, d.ip_real, d.contact, d.city, d.hospital_name, d.software_version,
 		       d.access_requirement, d.country_iso,
 		       d.product_path::text AS product_path, d.region_path::text AS region_path,
 		       d.customer_id::text AS customer_id, d.site_id::text AS site_id, d.gateway_id::text AS gateway_id,
-		       m.name AS model_name,
+		       m.name AS model_name, pm.partno::text AS model_partno,
 		       (SELECT pr.name FROM product pr WHERE pr.path = subpath(d.product_path, 0, nlevel(d.product_path) - 1)) AS product_name,
 		       (SELECT md.name FROM product md WHERE md.path = subltree(d.product_path, 0, 2)) AS modality_name,
 		       reg.name AS region_name, cu.name AS customer_name, si.name AS site_name,
-		       gw.dns_name AS gateway_dns, gw.label AS gateway_label
+		       gw.hostname AS gateway_dns, COALESCE(gw.name, gw.hostname) AS gateway_name, gw.hospital AS gateway_label
 		FROM device d
 		LEFT JOIN product m        ON m.path = d.product_path
+		LEFT JOIN product_model pm ON pm.product_id = m.id
 		LEFT JOIN region reg       ON reg.path = d.region_path
 		LEFT JOIN customer cu      ON cu.id = d.customer_id
 		LEFT JOIN customer_site si ON si.id = d.site_id
@@ -136,6 +138,7 @@ function editFields(d: FormData) {
 		ip_real: orNull(d.get('ip_real')),
 		contact: orNull(d.get('contact')),
 		hospital_name: orNull(d.get('hospital_name')),
+		city: orNull(d.get('city')),
 		software_version: orNull(d.get('software_version')),
 		access_requirement: ['open', 'device', 'customer', 'site'].includes(String(d.get('access_requirement')))
 			? String(d.get('access_requirement')) : 'open',
@@ -160,7 +163,7 @@ export const actions: Actions = {
 				serial = ${f.serial}, functional_location = ${f.functional_location},
 				technical_ident = ${f.technical_ident}, host_hw_id = ${f.host_hw_id},
 				order_number = ${f.order_number}, ip_address = ${f.ip_address}, ip_real = ${f.ip_real},
-				contact = ${f.contact}, hospital_name = ${f.hospital_name}, software_version = ${f.software_version},
+				contact = ${f.contact}, hospital_name = ${f.hospital_name}, city = ${f.city}, software_version = ${f.software_version},
 				access_requirement = ${f.access_requirement},
 				product_path = ${f.product_path}::ltree,
 				modality = (SELECT md.name FROM product md WHERE md.path = subltree(${f.product_path}::ltree, 0, 2)),
@@ -178,10 +181,10 @@ export const actions: Actions = {
 		const f = editFields(d);
 		const [row] = await globalDb<{ id: string }[]>`
 			INSERT INTO device (serial, functional_location, technical_ident, host_hw_id, order_number,
-				ip_address, ip_real, contact, hospital_name, software_version, access_requirement,
+				ip_address, ip_real, contact, hospital_name, city, software_version, access_requirement,
 				product_path, modality, region_path, country_iso, customer_id, site_id, gateway_id)
 			VALUES (${f.serial}, ${f.functional_location}, ${f.technical_ident}, ${f.host_hw_id}, ${f.order_number},
-				${f.ip_address}, ${f.ip_real}, ${f.contact}, ${f.hospital_name}, ${f.software_version}, ${f.access_requirement},
+				${f.ip_address}, ${f.ip_real}, ${f.contact}, ${f.hospital_name}, ${f.city}, ${f.software_version}, ${f.access_requirement},
 				${f.product_path}::ltree,
 				(SELECT md.name FROM product md WHERE md.path = subltree(${f.product_path}::ltree, 0, 2)),
 				${f.region_path}::ltree,

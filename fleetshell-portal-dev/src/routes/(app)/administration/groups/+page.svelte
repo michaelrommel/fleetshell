@@ -4,8 +4,10 @@
 	import { enhance } from '$app/forms';
 	import SplitPane from '$lib/components/SplitPane.svelte';
 	import GroupTree from '$lib/components/GroupTree.svelte';
+	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 
 	let { data, form } = $props();
+	let confirmDelete = $state(false);
 
 	function withParams(changes: Record<string, string | null>): string {
 		const u = new URLSearchParams(pageState.url.searchParams);
@@ -13,8 +15,8 @@
 		return `${base}/administration/groups?${u}`;
 	}
 	const newHref = $derived(withParams({ new: '1', sel: null, mq: null }));
+	const cancelHref = $derived(withParams({ new: null, sel: null, mq: null }));
 	const selHref = (id: string) => withParams({ sel: id, new: null, mq: null });
-	function confirmSubmit(e: SubmitEvent, msg: string) { if (!confirm(msg)) e.preventDefault(); }
 	function displayLabel(label: string): string {
 		return label.startsWith('user:') ? `Single User Grants (${label})` : label;
 	}
@@ -111,12 +113,8 @@
 					</ul>
 				{/if}
 
-				<div class="danger-zone">
-					<form method="POST" action="?/deleteGroup"
-					      onsubmit={(e) => confirmSubmit(e, `Delete group "${data.detail ? displayLabel(data.detail.label) : ''}"? Its grants and memberships are removed.`)}>
-						<input type="hidden" name="group_id" value={data.detail.group_id} />
-						<button type="submit" class="danger-btn">Delete group</button>
-					</form>
+				<div class="actions-bar">
+					<button type="button" class="act-delete" onclick={() => (confirmDelete = true)}>Delete group</button>
 				</div>
 			</div>
 		{:else if data.isNew}
@@ -125,7 +123,10 @@
 				<form method="POST" action="?/createGroup" use:enhance>
 					<label>Group label<input name="label" required /></label>
 					<label>Home region<input name="home_region" value="eu-west-2" /></label>
-					<button type="submit">Create group</button>
+					<div class="actions-bar">
+						<a class="act-cancel" href={cancelHref}>Cancel</a>
+						<button type="submit" class="act-primary">Create group</button>
+					</div>
 				</form>
 				<p class="hint">Add members and grants after creating.</p>
 			</div>
@@ -135,6 +136,15 @@
 		{#if form?.error}<p class="error">{form.error}</p>{/if}
 	{/snippet}
 </SplitPane>
+
+{#if data.detail}
+	<ConfirmDialog bind:open={confirmDelete} title="Delete group?" message={`Delete "${displayLabel(data.detail.label)}"? Its grants and memberships are removed.`}>
+		<form method="POST" action="?/deleteGroup" use:enhance={() => async ({ update }) => { confirmDelete = false; await update(); }}>
+			<input type="hidden" name="group_id" value={data.detail.group_id} />
+			<button type="submit" class="act-delete">Delete</button>
+		</form>
+	</ConfirmDialog>
+{/if}
 
 <style>
 	.col-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.6rem; gap: 0.6rem; flex: none; }
@@ -154,13 +164,13 @@
 	form { display: flex; flex-direction: column; gap: 0.6rem; }
 	.rename { flex-direction: row; align-items: flex-end; gap: 0.6rem; }
 	.rename label { flex: 1; }
-	.rename button[type='submit'] { align-self: flex-end; }
+	form.rename button[type='submit'] { align-self: flex-end; }
 	.region { font-size: 0.8rem; color: var(--text-muted); margin: 0.3rem 0 0; }
 	label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.8rem; color: var(--text-muted); }
 	input { background: var(--bg-app); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.4rem 0.55rem; font: inherit; font-size: 0.85rem; }
 	input:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
-	button[type='submit'] { align-self: flex-start; background: var(--accent); color: var(--on-accent); border: none; border-radius: var(--radius); padding: 0.45rem 0.8rem; font: inherit; font-weight: 600; font-size: 0.85rem; cursor: pointer; }
-	button[type='submit']:hover { background: var(--accent-hover); }
+	button[type='submit']:not(.link-btn) { align-self: flex-start; background: var(--accent); color: var(--on-accent); border: none; border-radius: var(--radius); padding: 0.45rem 0.8rem; font: inherit; font-weight: 600; font-size: 0.85rem; cursor: pointer; }
+	button[type='submit']:not(.link-btn):hover { background: var(--accent-hover); }
 
 	.grants-box { margin-top: 1.1rem; }
 	.grants-box > summary {
@@ -195,8 +205,5 @@
 	.error { color: var(--danger); font-size: 0.85rem; margin: 0.4rem 0 0; }
 	code { background: var(--surface-2); padding: 0 0.3rem; border-radius: 3px; font-size: 0.76rem; color: var(--text-muted); }
 
-	.danger-zone { margin-top: 1.2rem; padding-top: 0.8rem; border-top: 1px solid var(--divider); }
-	button[type='submit'].danger-btn { background: var(--danger); color: #fff; border: none; border-radius: var(--radius); padding: 0.4rem 0.8rem; font: inherit; font-size: 0.82rem; font-weight: 600; cursor: pointer; }
-	button[type='submit'].danger-btn:hover { background: color-mix(in srgb, var(--danger) 82%, #000); }
 
 </style>
