@@ -125,11 +125,69 @@ Notes:
 
 ## WHERE TO START NEXT (priority order)
 
-**Resume here: the remaining primary section is Customers/Sites.** Products,
-Devices, Gateways, and the whole Administration section are done. Gateways is a
-master-detail browser over the RS-router / communication-interface records
-(Google-style search, enriched fields from `RDRSROUTERDETAILVIEWV1`, the
-attached-devices relation, admin edit/create/delete); see `docs/portal_ui.md`.
+**Resume here: the remaining primary section is Customers/Sites**, then the
+device **per-device application override** (`device_app`), then **Services >
+Infoproxy** + the **Valkey spool**. Products, Devices, Gateways, and the whole
+Administration section are built.
+
+### Session recap (latest work, all in `fleetshell-portal-dev` unless noted)
+
+- **Products** (`/products`): model tree + `AppEditor` for `product_model_app`
+  (the app definitions a device inherits). App editor lets you add/remove any
+  number of rows (no minimum); an app-less model shows an empty list.
+- **Devices** (`/devices`): full browser (search, scope toggle, keyset paging,
+  view/edit/create/delete). Now also shows **partno** (2nd line in the list +
+  under Product model) and a read-only **Applications** section resolved from the
+  device's model (`product_model_app` -> inherited). **City** field added.
+- **Gateways** (`/gateways`): full browser + detail. Enriched from
+  `RDRSROUTERDETAILVIEWV1` (name, city, gateway_model, decoded connection_type /
+  operational_state, admin_ip, country), the **attached-devices** relation, and
+  the **IPsec / tunnel** editor (`IpsecEditor.svelte`: public_ip + psk + ipsec
+  jsonb = the legacy SiteRecord; IKE/ESP chip multi-selects). `dns_name` was
+  repurposed -> nullable **`hostname`** (dynamic-IP DynDNS); `public_ip` is
+  synthesized (public-looking) since the real ones lived in Valkey. Migrations:
+  `migrate_gateway_enrich.sql`, `migrate_gateway_ipsec.sql`,
+  `migrate_gateway_hostname.sql`.
+- **Services** primary nav added (Infoproxy / E-Mail Relay / File Transfer) --
+  placeholder page; the product-model page deep-links to
+  `/services/infoproxy?product=<id>`.
+- **Performance**: devices scope paging ~455ms (was 4-7s) via
+  `authz_visible_device_ids`; exact count only on filter change (URL-carry
+  approach A, `/devices/count`).
+- **UI/UX consistency pass** (all dialogs): shared `.actions-bar` +
+  `.act-primary`/`.act-cancel`/`.act-delete` in `app.css` -- Delete leftmost,
+  Save/Create rightmost, Cancel to its left; every Delete is **red** and routed
+  through **`ConfirmDialog`** (no more `confirm()`/`alert()`). Also:
+  `SplitPane.svelte` (draggable, width persisted per page), dark scrollbars,
+  `EntityPicker` redesigned (value + Change), in-field search x + keep-focus on
+  Enter, responsive breakpoint 960->1200px.
+- New components: `ProductTree`, `AppEditor`, `EntityPicker`, `SplitPane`,
+  `IpsecEditor`. New endpoints: `/api/administration/{models,gateways}`,
+  `/devices/count`.
+- New migrations (apply order = the reload flow above, step 0):
+  `migrate_product_model.sql`, `migrate_device_identity.sql`,
+  `migrate_gateway_enrich.sql`, `migrate_gateway_ipsec.sql`,
+  `migrate_gateway_hostname.sql`.
+- **Note**: `product_model_app` is currently **empty** in the DB (no model has
+  apps defined yet -- legacy per-device configs were not migrated). Define apps
+  on a model via the AppEditor and its devices inherit them live.
+
+### Next up
+
+1. **Customers / Sites page** -- the last primary section (customer list + sites,
+   view-edit, `access_requirement` surfaced). Customer/site master data still
+   needs proper production exports (`docs/data_import.md`).
+2. **Per-device application override** (`device_app`): a `device_app` table +
+   migration, `resolve_apps` (device rows override else the model's
+   `product_model_app`), and an override editor (reuse `AppEditor`) with
+   revert-to-model. The device page currently shows the inherited list read-only.
+3. **Services > Infoproxy** (proxy destination authz, filterable by product
+   model) + **Valkey spool** for the gateway IPsec (`fleetipsec:site:<public_ip>`
+   / `fleetipsec:psk:<public_ip>` from `gateway.ipsec` / `gateway.psk`) so a test
+   device can actually connect. The DynDNS password would come from the source
+   `WEBDNSPWID`/`WEBDNSPWPW` in production.
+4. **Single-system grant creation** in the Grants tab -- now unblocked by the
+   real device browser (device serials/FL exist).
 
 0. **DONE so far** (see `docs/portal_ui.md` for detail):
    - Nucleus AppShell (top bar + icon rail) + identity model (password login ->

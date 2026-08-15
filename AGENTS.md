@@ -959,7 +959,7 @@ customer/site). Hot path: resolve user->groups locally, then evaluate
 groups->grants->scopes against globally-replicated master data. The list query
 is index-using SQL (GiST on ltree paths), no bitmaps.
 
-### Status: infra + schema + import + perf DONE; portal shell + full Administration DONE.
+### Status: infra + schema + import + perf DONE; portal shell + Administration + Products + Devices + Gateways DONE.
 
 The portal-dev application chrome is built (`docs/portal_ui.md`): brand top-bar
 (Healthineers logo + "FleetShell Portal"; theme toggle, bell/news placeholder,
@@ -984,17 +984,44 @@ subtree -- decomposed into one grant per combination; `ScopePicker` +
 
 Apply order after a reload: `migrate_identity_local.sql` +
 `migrate_identity_primary.sql` + `migrate_persona_rename.sql` (local) +
-`migrate_authz_catalog.sql` (global), `build_group_hierarchy.py --apply`, then
+`migrate_authz_catalog.sql` + `migrate_product_model.sql` +
+`migrate_device_identity.sql` + `migrate_gateway_enrich.sql` +
+`migrate_gateway_ipsec.sql` + `migrate_gateway_hostname.sql` (global; the last
+five run BEFORE `load.py`), `build_group_hierarchy.py --apply`, then
 `seed_login_accounts.mjs | psql` (accounts `super/super123`, `nora/nora123`).
 See `docs/mdm_status.md` "Re-running the data pipeline / full reload".
 
+**Primary sections built** (see `docs/portal_ui.md` + `docs/product_admin.md`):
+- **Products** (`/products`): modality>product>model tree (`kind` discriminator,
+  `family`, `product_model` satellite = partno/serial-range/host-flag,
+  `product_model_app` = the Connect-app defaults via `AppEditor.svelte`). Models
+  imported from `RDPRODUCTMODEL`.
+- **Devices** (`/devices`): Google-style search (`sn:`/`fl:`/`ip:`/`tid:`/`host:`/
+  `ord:`), admin scope toggle, keyset paging (~455ms; count URL-carried),
+  view/edit/create/delete, `EntityPicker` relations, partno, city, and a
+  **read-only inherited Applications** list (from the model's
+  `product_model_app`). Identity fields imported anonymized from
+  RDSERVICEDSYSTEM; `product_path` points at the model (via PRODUCTMODELID).
+- **Gateways** (`/gateways`): browser + detail over the RS-router / communication
+  interface, enriched from `RDRSROUTERDETAILVIEWV1`, attached-devices relation,
+  and the **IPsec/tunnel editor** (`IpsecEditor.svelte`; `public_ip`+`psk`+`ipsec`
+  jsonb = the legacy Valkey SiteRecord). `dns_name` repurposed -> nullable
+  `hostname` (DynDNS); `public_ip` synthesized.
+- **Services** nav placeholder (Infoproxy / E-Mail Relay / File Transfer).
+- UI consistency: shared `.actions-bar`/`.act-*` (Delete left, Cancel, Save/
+  Create right; red delete via `ConfirmDialog`), `SplitPane` (draggable,
+  persisted), dark scrollbars, in-field search x + keep-focus.
+
 **RESUME HERE (see `docs/mdm_status.md` WHERE TO START NEXT):** (1) the
-**Products** page (product-tree browser/editor over the `product` ltree; reuse
-the tree pattern), then (2) the **Devices** page (detail/view+edit + a device
-browser, which also unblocks single-system grant creation). After that: slice C
-(group-membership `authz_can` enforcement replacing `is_admin`), L0/L1 Valkey
-caches (+ re-benchmark now inheritance is live), real SAML/OAuth, and the
-Dockerfile + ECS/ALB `/dev/*` deploy.
+**Customers/Sites** page (last primary section); (2) the device **per-device app
+override** (`device_app` table + `resolve_apps` + override editor -- the device
+Applications list is currently read-only/inherited); (3) **Services > Infoproxy**
++ the **Valkey spool** of `gateway.ipsec`/`psk` to `fleetipsec:*` so a test
+device can connect; (4) single-system grant creation (now unblocked by the
+device browser). Later: slice C (group-membership `authz_can` replacing
+`is_admin`), L0/L1 Valkey caches (+ re-benchmark), real SAML/OAuth, and the
+Dockerfile + ECS/ALB `/dev/*` deploy. NOTE: `product_model_app` is empty in the
+DB today -- define apps on a model and its devices inherit them.
 
 ### Hard rules (do not break — see `docs/mdm_design.md` §5.1)
 

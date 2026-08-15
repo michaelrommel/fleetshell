@@ -204,7 +204,11 @@ Bell/news is still a placeholder (`newsCount` = 0, `TODO(news)`).
    `authz_scope_device` has no FK cascade). New APIs: `/api/administration/models`
    (kind='model') and `/api/administration/gateways`. Device identity fields +
    model re-point come from `migrate_device_identity.sql` + `load.py`
-   (RDSERVICEDSYSTEM). Components: `EntityPicker.svelte`.
+   (RDSERVICEDSYSTEM). Components: `EntityPicker.svelte`. The detail also shows
+   **partno** (list 2nd line + under Product model), **city**, and a read-only
+   **Applications** list resolved from the device's model (`product_model_app` ->
+   inherited; per-device `device_app` override is the next slice). Every dialog
+   uses the shared `.actions-bar` / `.act-*` buttons + `ConfirmDialog` delete.
 
    **Count / performance**: the list total uses **approach A (URL-carry)** --
    the page query alone is ~455ms (scope) / instant (all, PK keyset); the
