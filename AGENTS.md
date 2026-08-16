@@ -892,7 +892,9 @@ MDM: read `docs/mdm_status.md` first** (start-here handoff), then
 ### New components (not in §1's original layout)
 
 ```
-fleetshell-portal-dev/       # NEW SvelteKit portal, served under /dev/ (base path)
+fleetshell-portal/       # SvelteKit MDM portal (Aurora-backed; served at site root)
+                         #   custom server.js entry (WebSocket); CMD node server.js.
+                         #   The retired old portal lives in fleetshell-portal-old/.
   src/lib/components/
     AppShell.svelte           #   brand top-bar + icon-rail sidebar (Nucleus look)
     Logo.svelte               #   inlined Siemens Healthineers wordmark (--logo-fg)
@@ -926,6 +928,7 @@ fleetshell-portal-dev/       # NEW SvelteKit portal, served under /dev/ (base pa
 infrastructure/
   make_aurora_global.sh        # Aurora Global DB (master data + authz), + reader + RDS Proxy
   make_aurora_local.sh         # Standalone Aurora (user PII + group membership)
+  deploy_portal.sh             # ECS task-def migration (env+secrets) + update-service for the new portal
   sql/
     schema_global.sql          # master data + polymorphic authz model + region ltree
     schema_local.sql           # login_account + app_user personas + group_membership
@@ -1142,7 +1145,9 @@ override editor -- the device
 Applications list is currently read-only/inherited); (2)
 single-system grant creation (now unblocked by the device browser). Later: slice C
 (group-membership `authz_can` replacing `is_admin`), L0/L1 Valkey caches (+
-re-benchmark), real SAML/OAuth, and the Dockerfile + ECS/ALB `/dev/*` deploy.
+re-benchmark), real SAML/OAuth. The container is BUILT (`fleetshell-portal/Dockerfile`
++ `scripts/build_portal.sh` -> ECR); it serves at the site root (BASE_PATH empty)
+and replaces the running portal container (no ALB change).
 NOTE: `product_model_app` is empty in the DB today -- define apps on a model and
 its devices inherit them. The **File Subscriptions Valkey spool** and the
 **Device/Gateway Valkey spool** (`systems:by-ip` + `fleetipsec:*`, write-through

@@ -61,9 +61,9 @@ pipelining (single-key commands issued without an await between them).
   `dtm.json` (name->code via MRS id; only denials).
 - `load.py` `stage_dtm` - re-applies `dtm.json` (reload-survivable); `stage_users`
   imports `app_user.country` from `RDUSER.COUNTRYID`.
-- `fleetshell-portal-dev/src/lib/server/dtm.ts` - loaders, `saveMatrix`,
+- `fleetshell-portal/src/lib/server/dtm.ts` - loaders, `saveMatrix`,
   `syncFromCountryToValkey` (atomic per-country), and the `dtmKey` builder.
-- `fleetshell-portal-dev/scripts/spool-dtm.mjs` - standalone bulk/reconcile
+- `fleetshell-portal/scripts/spool-dtm.mjs` - standalone bulk/reconcile
   export (atomic per country; drops stale/legacy keys).
 - `Countries -> Data Transfer Matrix` editor - grid (destination rows x class
   columns grouped by kind), exceptions-first view, row/column bulk-set,

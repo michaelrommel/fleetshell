@@ -10,9 +10,9 @@ pipeline).
 
 Replacing the Valkey key/value store as the system of record for
 device/gateway/customer relations and authorization. A brand-new SvelteKit
-portal (`fleetshell-portal-dev/`, served under `/dev/`) reads from Aurora
-PostgreSQL instead of Valkey. The legacy portal (`fleetshell-portal/`) is
-untouched and still serves `/`.
+portal (`fleetshell-portal/`, served at the site root) reads from Aurora
+PostgreSQL instead of Valkey. The retired legacy portal was moved to
+`fleetshell-portal-old/` (kept for reference; no longer built or deployed).
 
 ## Status: DONE
 
@@ -39,7 +39,7 @@ untouched and still serves `/`.
 - **Performance validated at real volume** (see `docs/authz_caching.md` §11):
   list page-1 ~330–390 ms for the broadest users (whole fleet / 41k devices),
   <50 ms expected for narrow users, point check 25 ms. Down from 173 s.
-- **Portal dev slice working** (`fleetshell-portal-dev/`): password login for a
+- **Portal dev slice working** (`fleetshell-portal/`): password login for a
   `login_account` (the human) that assumes one of its linked `app_user` personas
   via a post-login **Persona Selector** (switchable from the top bar); Nucleus
   AppShell (top bar + icon rail); authorized device list; **full Administration**
@@ -65,7 +65,7 @@ node infrastructure/import/seed_login_accounts.mjs | psql "$LOCAL_WRITER_URL"
 
 # 3. Portal
 cp .env.example .env            # fill GLOBAL_/LOCAL_DB_PASSWORD, SESSION_SECRET
-npm install && npm run dev      # http://localhost:5173/dev/login
+npm install && npm run dev      # http://localhost:5173/login
 # login super/super123 (all personas, incl. SuperUser=admin) or nora/nora123
 ```
 
@@ -248,7 +248,7 @@ authorization (no per-member execute/delegate re-check; the only surviving
 `migrate_region_tree.sql`. NOTE: `--stage all` already runs `stage_families` +
 `stage_classification` (Data Classification is registered).
 
-### Session recap (latest work, all in `fleetshell-portal-dev` unless noted)
+### Session recap (latest work, all in `fleetshell-portal` unless noted)
 
 - **Products** (`/products`): model tree + `AppEditor` for `product_model_app`
   (the app definitions a device inherits). App editor lets you add/remove any
@@ -476,9 +476,16 @@ authorization (no per-member execute/delegate re-check; the only surviving
    `src/lib/server/identity.ts` `verifyLogin` (+ `session.ts`) for the IdP; the
    person/persona split already anticipates it (callers read `locals.userId`).
 
-6. **Deploy** - Dockerfile for `fleetshell-portal-dev` (mirror
-   `fleetshell-portal/Dockerfile`, `CMD node server.js`) + an infra script for a
-   new ECS service/target group behind the existing ALB with a `/dev/*` rule.
+6. **Deploy** - Dockerfile for `fleetshell-portal` (custom `server.js` entry,
+   `CMD node server.js`) + `scripts/build_portal.sh` (buildx -> ECR). Serves at
+   the site root (BASE_PATH empty); replaces the running portal container.
+   The ECS task-def migration (env + secrets: Aurora Global via RDS Proxy, Local
+   via cluster endpoint, Valkey, JWT/CLIENT_CERT/CLIENT_KEY/SESSION_SECRET from
+   Secrets Manager) is scripted in `infrastructure/deploy_portal.sh` (cluster
+   `aeroftp-cluster`, service `fleetshell-portal-service-v6kb01vb`). Client
+   cert/key are env-injected (`CLIENT_CERT`/`CLIENT_KEY`, already wired as
+   secrets) -- there is NO `certs/` directory; when unset the cert endpoints
+   return a PLACEHOLDER (dev only).
 
 ## Hard rules the next agent MUST preserve
 

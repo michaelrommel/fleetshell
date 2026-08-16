@@ -232,7 +232,7 @@ Done:
    devices, ~1M grants, 7.7k users. Test users seeded (`seed_test_users.py`).
 4. Performance validated at volume (§ `docs/authz_caching.md` §11): list
    ~330-390 ms broadest / <50 ms narrow, check 25 ms.
-5. Portal dev slice (`fleetshell-portal-dev/`): dev login, authorized device
+5. Portal dev slice (`fleetshell-portal/`): dev login, authorized device
    list, two themes, WebSocket server.
 
 Next (priority order):

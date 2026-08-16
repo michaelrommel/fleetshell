@@ -1,14 +1,14 @@
 # FleetShell portal-dev UI Design
 
 Status: shell implemented; section views in progress.
-Scope: the SvelteKit UI of `fleetshell-portal-dev/` (served under `/dev/`). This
+Scope: the SvelteKit UI of `fleetshell-portal/` (served at the site root). This
 doc describes the application chrome (top bar + sidebar), the routing layout,
 theming, and the roadmap for the section views and Administration submenus.
 
 The visual target is the Siemens Healthineers "Remote Service" / Nucleus look
-(`fleetshell-portal-dev/theme-reference/*.png`): dark brand top-bar, an icon
-rail on the left, and a content card area. The legacy portal
-(`fleetshell-portal/`) has the same top-bar + sidebar concept and working
+(`fleetshell-portal/theme-reference/*.png`): dark brand top-bar, an icon
+rail on the left, and a content card area. The retired legacy portal
+(`fleetshell-portal-old/`) has the same top-bar + sidebar concept and working
 Device/Gateway view-edit pages that we adapt; the difference here is the new
 theming and the master-data (Aurora) backing store.
 
@@ -82,16 +82,16 @@ src/routes/
       roles/ groups/ grants/  stubs
 ```
 
-The base path is `/dev` (`svelte.config.js`), so a nav `href` of `/devices`
-renders at `/dev/devices`. `AppShell` prefixes `base` for every link and for the
-active-route check.
+The base path is empty (`svelte.config.js`, override via `BASE_PATH`), so a nav
+`href` of `/devices` renders at `/devices`. `AppShell` prefixes `base` for every
+link and for the active-route check (so a non-empty base still works).
 
 ## 4. Theming
 
 `src/app.css` defines tokens under `:root`/`[data-theme='nucleus']` (default)
 and `[data-theme='gruvbox']`. `hooks.server.ts` injects `data-theme` at SSR to
 avoid a flash. The top-bar toggle flips the attribute instantly and POSTs to
-`/dev/theme` to persist (cookie + DB). Add a light Nucleus variant later as its
+`/theme` to persist (cookie + DB). Add a light Nucleus variant later as its
 own `[data-theme='...']` block; the shell needs no changes because it only reads
 tokens. `--logo-fg` should be overridden in any light theme.
 
