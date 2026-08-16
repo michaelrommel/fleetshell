@@ -355,8 +355,10 @@ CREATE INDEX IF NOT EXISTS ix_subscription_server_server ON subscription_server(
 -- Flattened per-source-IP into Valkey at spool time for a Squid external_acl.
 CREATE TABLE IF NOT EXISTS proxy_destination_rule_collection (
     id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    name        text NOT NULL UNIQUE,
-    description text
+    name        text NOT NULL,
+    proxy_type  text NOT NULL DEFAULT 'internet' CHECK (proxy_type IN ('intranet','internet')),
+    description text,
+    UNIQUE (proxy_type, name)
 );
 
 CREATE TABLE IF NOT EXISTS proxy_destination_rule (
@@ -380,6 +382,12 @@ CREATE TABLE IF NOT EXISTS proxy_destination_binding (
 CREATE INDEX IF NOT EXISTS ix_proxy_binding_collection ON proxy_destination_binding(collection_id);
 CREATE INDEX IF NOT EXISTS ix_proxy_binding_product    ON proxy_destination_binding(product_id);
 CREATE INDEX IF NOT EXISTS ix_proxy_binding_device     ON proxy_destination_binding(device_id);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_proxy_binding_device
+    ON proxy_destination_binding(collection_id, device_id) WHERE device_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS ux_proxy_binding_product
+    ON proxy_destination_binding(collection_id, product_id) WHERE product_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS ux_proxy_binding_any
+    ON proxy_destination_binding(collection_id) WHERE device_id IS NULL AND product_id IS NULL;
 
 -- Devices: scope dimensions promoted to indexed columns; long tail in jsonb.
 CREATE TABLE IF NOT EXISTS device (

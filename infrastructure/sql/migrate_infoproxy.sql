@@ -30,9 +30,20 @@ DROP TABLE IF EXISTS destination_group;
 -- A named container of rules. Reusable; referenced by many bindings.
 CREATE TABLE IF NOT EXISTS proxy_destination_rule_collection (
     id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    name        text NOT NULL UNIQUE,
+    name        text NOT NULL,
+    proxy_type  text NOT NULL DEFAULT 'internet'
+                CHECK (proxy_type IN ('intranet','internet')),   -- which Squid serves it
     description text
 );
+-- Idempotent add for DBs created before proxy_type existed.
+ALTER TABLE proxy_destination_rule_collection ADD COLUMN IF NOT EXISTS proxy_type text;
+UPDATE proxy_destination_rule_collection SET proxy_type = 'internet' WHERE proxy_type IS NULL;
+ALTER TABLE proxy_destination_rule_collection ALTER COLUMN proxy_type SET NOT NULL;
+-- Unique per (proxy_type, name): the same collection name may exist for both
+-- proxies. Replace any earlier name-only unique constraint.
+ALTER TABLE proxy_destination_rule_collection DROP CONSTRAINT IF EXISTS proxy_destination_rule_collection_name_key;
+CREATE UNIQUE INDEX IF NOT EXISTS ux_proxy_collection_type_name
+    ON proxy_destination_rule_collection(proxy_type, name);
 
 -- One allowed target. A rule is ONLY the destination tuple -- no device/product
 -- scope lives here (that is the binding's job).
@@ -64,5 +75,13 @@ CREATE TABLE IF NOT EXISTS proxy_destination_binding (
 CREATE INDEX IF NOT EXISTS ix_proxy_binding_collection ON proxy_destination_binding(collection_id);
 CREATE INDEX IF NOT EXISTS ix_proxy_binding_product    ON proxy_destination_binding(product_id);
 CREATE INDEX IF NOT EXISTS ix_proxy_binding_device     ON proxy_destination_binding(device_id);
+-- One binding per (collection, scope): no duplicate device/model, and a single
+-- ANY/ANY (global) binding per collection.
+CREATE UNIQUE INDEX IF NOT EXISTS ux_proxy_binding_device
+    ON proxy_destination_binding(collection_id, device_id) WHERE device_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS ux_proxy_binding_product
+    ON proxy_destination_binding(collection_id, product_id) WHERE product_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS ux_proxy_binding_any
+    ON proxy_destination_binding(collection_id) WHERE device_id IS NULL AND product_id IS NULL;
 
 COMMIT;

@@ -361,10 +361,14 @@ def stage_devices(g: psycopg.Connection, limit: int | None):
 
     drows = []
     n = 0
+    sysname_map: dict[str, str] = {}   # legacy RDSERVICEDSYSTEM.NAME -> new device UUID
     for r in read("RDSERVICEDSYSTEM"):
         n += 1
         if limit and n > limit: break
         did = device_map.get(r["ID"])
+        nm = (r.get("NAME") or "").strip()
+        if nm:
+            sysname_map[nm] = did      # last wins on duplicate names
         rid = r["REGIONID"]
         pid = r["PRODUCTID"]
         pmid = (r.get("PRODUCTMODELID") or "").strip()
@@ -408,6 +412,15 @@ def stage_devices(g: psycopg.Connection, limit: int | None):
         if len(drows) >= 10000:
             _flush_devices(g, drows, cust_rows, site_rows); drows.clear()
     _flush_devices(g, drows, cust_rows, site_rows)
+    # Persist NAME -> device UUID so the infoproxy importer can attribute the
+    # legacy Customer-System proxy bindings to the right (anonymized) device.
+    # Written as a plain file (NOT an IdMap) so it survives the end-of-run map
+    # destroy; regenerated on every reload. Gitignored (real system names).
+    sysname_path = os.path.join(HERE, "sysname_device.map.json")
+    with open(sysname_path, "w") as f:
+        json.dump(sysname_map, f)
+    print(f"  [sysname map] wrote {len(sysname_map)} NAME->device entries to {sysname_path} "
+          f"(kept for import_infoproxy; NOT destroyed with the id maps)")
     print(f"  devices: {n if not limit else min(n,limit)}  customers:{len(seen_cust)} sites:{len(seen_site)}")
 
 
@@ -759,7 +772,10 @@ def stage_dtm(g: psycopg.Connection, path: str | None = None):
             c.execute("INSERT INTO dtm_variant(code,label) VALUES(%s,%s) "
                       "ON CONFLICT (code) DO UPDATE SET label=EXCLUDED.label", (code, label))
         n_matrix = n_deny = 0
-        for from_iso, byvar in sorted(matrices.items()):
+        n_from = len(matrices)
+        for i, (from_iso, byvar) in enumerate(sorted(matrices.items()), 1):
+            print(f"    dtm [{i}/{n_from}] {from_iso}: {len(byvar)} variant(s)...", flush=True)
+            c_deny0 = n_deny
             for variant, block in sorted(byvar.items()):
                 # Rebuild this FROM x variant from scratch (dtm_deny cascades).
                 c.execute("DELETE FROM dtm_matrix WHERE from_iso=%s AND variant=%s", (from_iso, variant))
@@ -772,6 +788,8 @@ def stage_dtm(g: psycopg.Connection, path: str | None = None):
                                   "VALUES(%s,%s,%s,%s) ON CONFLICT DO NOTHING",
                                   (from_iso, to_iso, variant, code))
                         n_deny += 1
+            g.commit()   # commit per FROM-country so progress is durable + visible
+            print(f"      {from_iso}: {n_deny - c_deny0} denied cells", flush=True)
         print(f"  dtm: {len(matrices)} FROM-countries, {n_matrix} matrices, {n_deny} denied cells")
     g.commit()
 
@@ -819,7 +837,8 @@ def main():
 
     if not a.keep and a.stage == "all":
         for m in ALL_MAPS: m.destroy()
-        print("id maps destroyed (import is now irreversible)")
+        print("id maps destroyed (import is now irreversible); "
+              "sysname_device.map.json is intentionally kept for import_infoproxy")
     else:
         print("id maps kept (rerun-friendly). Delete *.map.json when done.")
 

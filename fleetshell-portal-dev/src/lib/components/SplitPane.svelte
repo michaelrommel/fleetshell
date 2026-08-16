@@ -126,7 +126,7 @@
 <style>
 	.split { display: flex; flex: 1; min-height: 0; align-items: stretch; position: relative; }
 	.pane { min-width: 0; display: flex; flex-direction: column; min-height: 0; }
-	.pane.right { flex: 1 1 0; overflow-y: auto; }
+	.pane.right { flex: 1 1 0; overflow-y: auto; padding: 3px 6px; }
 	.gutter {
 		flex: 0 0 auto; width: 11px; margin: 0 0.3rem; cursor: col-resize;
 		position: relative; touch-action: none; align-self: stretch;
@@ -163,5 +163,11 @@
 		.split:not(.compact) { flex-direction: column; }
 		.split:not(.compact) .pane { flex: none !important; }
 		.split:not(.compact) .gutter { display: none; }
+		/* Stacked: the right pane sits below the list -- give a clear divider + gap
+		   so the two do not flow into each other (the gutter is hidden here). */
+		.split:not(.compact) .pane.right {
+			margin-top: 0.9rem; padding-top: 0.9rem;
+			border-top: 4px solid color-mix(in srgb, var(--border) 50%, transparent);
+		}
 	}
 </style>

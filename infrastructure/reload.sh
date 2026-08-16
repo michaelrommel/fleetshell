@@ -59,6 +59,14 @@ step "Import file subscriptions (servers + subscriptions + attach matrix)"
 # ANONYMIZE like load.py. Reads the gitignored xlsx from old_database/.
 IMPORT_GLOBAL_DSN="$IMPORT_GLOBAL_DSN" ANONYMIZE="${ANONYMIZE:-1}" python import_subscriptions.py
 
+step "Import infoproxy (proxy destination collections + rules + bindings)"
+# Reads the legacy Info Proxy exports (gitignored, old_database/) + the
+# sysname_device.map.json written by stage_devices above, to attribute the
+# per-Customer-System proxy bindings to the right (anonymized) device. A
+# `product` TRUNCATE CASCADE emptied proxy_destination_binding; this rebuilds
+# collections/rules/bindings from scratch.
+IMPORT_GLOBAL_DSN="$IMPORT_GLOBAL_DSN" python import_infoproxy.py
+
 step "Seed test users + login accounts"
 python seed_test_users.py
 node seed_login_accounts.mjs | psql "$LOCAL_WRITER_URL"

@@ -4,6 +4,7 @@ import { base } from '$app/paths';
 import { globalDb } from '$lib/server/db';
 import { getPersona } from '$lib/server/identity';
 import { listCountries } from '$lib/server/dtm';
+import { syncToValkey } from '$lib/server/subscriptions';
 
 // File Subscriptions is master data authored by administrators. Phase 1 uses the
 // interim is_admin gate, like the rest of the portal-dev sections.
@@ -291,10 +292,17 @@ export const actions: Actions = {
 		throw redirect(303, backTo('subscriptions', subId));
 	},
 
-	// Spool the resolved subscriptions to Valkey for aeroftp. NOT WIRED UP YET --
-	// see docs/mdm_status.md open item "File Subscriptions -> Valkey spool".
+	// Spool the resolved subscriptions to Valkey for aeroftp: per product,
+	// applicable file matchers + their (activated) delivery targets. See
+	// src/lib/server/subscriptions.ts.
 	spoolValkey: async ({ locals }) => {
 		await requireAdmin(locals);
-		return { notice: 'Valkey spool is not wired up yet -- coming soon.' };
+		try {
+			const { written, deleted } = await syncToValkey();
+			return { notice: `Spooled ${written} product subscription set${written === 1 ? '' : 's'}`
+				+ (deleted ? `; removed ${deleted} empty/stale.` : '.') };
+		} catch (e) {
+			return fail(500, { error: `Valkey spool failed: ${(e as Error).message}` });
+		}
 	},
 };

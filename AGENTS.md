@@ -28,7 +28,8 @@ and have enough context to proceed.
 ```
 fleetshell/
 ├── Cargo.toml                  # Cargo workspace (resolver = "2")
-│                               # members: fleetshell-client/src-tauri, fleetshell-gateway, test-guac
+│                               # members: fleetshell-client/src-tauri, fleetshell-gateway,
+│                               #          squid-infoproxy, test-guac
 ├── Cargo.lock
 ├── AGENTS.md                   # ← this file
 ├── TODO.md                     # Detailed task tracking
@@ -134,6 +135,14 @@ fleetshell/
 └── test-guac/                  # Smoke-test tool: connect to guacd or gateway
     ├── Cargo.toml              # rustls dependency for optional TLS in gateway mode
     └── src/main.rs             # Direct guacd mode + gateway mode (GATEWAY_TLS=true)
+
+└── squid-infoproxy/            # Rust Squid external_acl_type helper (Info Proxy authz)
+    ├── Cargo.toml              # rustls/ring + ipnet; no async runtime (blocking helper)
+    ├── README.md               # deployment + Squid config
+    └── src/
+        ├── main.rs             # CLI + stdin OK/ERR loop (fail-closed)
+        ├── valkey.rs           # minimal blocking RESP client (AUTH/SELECT/SMEMBERS), rediss
+        └── matcher.rs          # destination-rule matching (CIDR/DNS-suffix/port/proto)
 ```
 
 ---
@@ -951,6 +960,7 @@ infrastructure/
 docs/
   mdm_status.md                # START HERE: current state + where to start next
   data_classification.md       # data-classification feature (Rule Sets/Assignments) + import pipeline
+  file_subscriptions.md        # File Subscriptions: spool key layout + delivery-runtime design (handler fleet)
   mdm_design.md                # architecture: two planes, authz model, §5.1 hard rules
   authz_caching.md             # perf: L0/L1 caches, §11 validated benchmark
   data_import.md               # import + anonymization plan
@@ -971,7 +981,7 @@ customer/site). Hot path: resolve user->groups locally, then evaluate
 groups->grants->scopes against globally-replicated master data. The list query
 is index-using SQL (GiST on ltree paths), no bitmaps.
 
-### Status: infra + schema + import + perf DONE; portal shell + Administration + Products (incl. Data Classification) + Devices + Gateways + Countries/Region Tree + Data Transfer Matrix + Customers/Sites + Services>File Subscriptions DONE; Services>Infoproxy schema DONE. Next: Infoproxy UI + spool.
+### Status: infra + schema + import + perf DONE; portal shell + Administration + Products (incl. Data Classification) + Devices + Gateways + Countries/Region Tree + Data Transfer Matrix + Customers/Sites + Services>File Subscriptions (incl. Valkey spool) + Services>Infoproxy (schema + import + UI + Valkey spool + Squid helper) DONE. Next: deploy the Squid helper + scheduled spool refresh; gateway IPsec Valkey spool.
 
 The portal-dev application chrome is built (`docs/portal_ui.md`): brand top-bar
 (Healthineers logo + "FleetShell Portal"; theme toggle, bell/news placeholder,
@@ -1020,8 +1030,9 @@ See `docs/mdm_status.md` "Re-running the data pipeline / full reload".
   jsonb = the legacy Valkey SiteRecord). `dns_name` repurposed -> nullable
   `hostname` (DynDNS); `public_ip` synthesized.
 - **Services** (`/services`): tabbed **Infoproxy | E-Mail | File Subscriptions**
-  (`services/+layout.svelte`; `/services` redirects to the first tab). Infoproxy
-  and E-Mail are placeholders. **File Subscriptions is BUILT**
+  (`services/+layout.svelte`; `/services` redirects to the first tab). E-Mail is a
+  placeholder. **Infoproxy is BUILT** (see the RESUME HERE block below).
+  **File Subscriptions is BUILT**
   (`services/subscriptions/`): two draggable `SplitPane` tabs -- **Subscriber
   Servers** (delivery-target CRUD: name/ip_address/country/use-case/comment/
   activated + delivery method ADLS|S3|SCP + root path / use-partno-folder /
@@ -1033,8 +1044,17 @@ See `docs/mdm_status.md` "Re-running the data pipeline / full reload".
   `negate`; detail attaches to servers via a tickable server grid via
   `?/saveSubServers`). Both save-set actions rewrite one side's
   `subscription_server` in a txn (no giant matrix -- 282x56 locked the browser). A
-  `Save to Valkey` spool-out button exists on both views but is UNWIRED
-  (`spoolValkey` returns a "coming soon" notice). Schema
+  `Save to Valkey` spool-out button on both views is **WIRED** (`spoolValkey` ->
+  `src/lib/server/subscriptions.ts` `syncToValkey`, standalone mirror
+  `scripts/spool-subscriptions.mjs`): per device product it resolves the
+  applicable subscriptions (global + modality-wide + product) x ALL their
+  delivery targets into the product-keyed hash
+  `ftp_subscriptions:<MODALITY>:<PRODUCT>` for aeroftp (server objects carry
+  `activated`; deactivated servers are NOT skipped -- their jobs still queue
+  during downtime and deliver on reactivation). The delivery RUNTIME
+  (aeroftp -> Valkey list+pubsub -> handler fleet -> per-server job queues) is
+  designed in `docs/file_subscriptions.md` (next: a new top-level Rust package).
+  Schema
   `migrate_file_subscriptions.sql` (`subscriber_server` / `subscription` /
   `subscription_server`). Data imported by `import/import_subscriptions.py`
   (gitignored xlsx -> 56 servers / 282 subs / 297 attachments; honors ANONYMIZE;
@@ -1046,56 +1066,87 @@ See `docs/mdm_status.md` "Re-running the data pipeline / full reload".
   wrappers (Products/Countries/Services/Admin) no longer cap at 80rem -- they fill
   the viewport width like Customers.
 
-**RESUME HERE -- Infoproxy UI (next session, ~3h break).** Today we settled
-**Services > Infoproxy** (proxy/Squid destination authorization) and built its
-**schema only**. State + plan:
+**Services > Infoproxy is now COMPLETE (schema + import + UI + Valkey spool +
+Squid helper).** RESUME HERE next session: DEPLOY the Squid helper
+(the `squid-infoproxy` Rust package) on the intranet/internet Squid hosts and
+schedule a spool refresh (`scripts/spool-infoproxy.mjs`), then the File
+Subscriptions Valkey spool + the gateway IPsec Valkey spool.
+**Services > Infoproxy** (proxy/Squid destination authorization) is fully built:
+schema + legacy import + UI + the runtime spool-out + helper.
 
 - **Schema DONE + LIVE** (`infrastructure/sql/migrate_infoproxy.sql`, folded into
   `schema_global.sql`, in `reload.sh` after `migrate_file_subscriptions.sql`).
-  **Three tables** (empty -- no legacy export yet, import later):
-  - `proxy_destination_rule_collection` (id, name UNIQUE, description) -- a NAMED
-    container of rules ("iPad Rule Collection"). Purely administrative; **NOT** an
-    authz group. Do not conflate with the authz subsystem (authz only governs who
-    may edit these, product-based).
+  **Three tables:**
+  - `proxy_destination_rule_collection` (id, name, **proxy_type** intranet|internet,
+    description; UNIQUE(proxy_type,name)) -- a NAMED container of rules ("iPad Rule
+    Collection"). Purely administrative; **NOT** an authz group. `proxy_type`
+    picks which Squid (intranet vs internet) serves it.
   - `proxy_destination_rule` (id, collection_id, target_cidr, target_dns,
     target_port_from, target_port_to, protocol; CHECK cidr OR dns). A rule is
-    **ONLY an allowed target** -- no device/product scope on it. Always lives in a
-    collection.
+    **ONLY an allowed target** -- no device/product scope. Always in a collection.
   - `proxy_destination_binding` (id, collection_id, device_id|NULL, product_id|NULL)
     -- the SCOPE. Applies a collection to a device (NULL=ANY) and/or product MODEL
-    (NULL=ANY; product.kind='model'). Reusable: one collection binds many times.
+    (NULL=ANY; product.kind='model'). Reusable. Partial UNIQUE indexes prevent
+    duplicate device/product bindings + enforce a single ANY/ANY per collection.
     Match: `(device_id IS NULL OR =D) AND (product_id IS NULL OR =D's model)`;
     both NULL = global.
-- **Runtime decided (not built): Squid `external_acl_type` helper + Valkey.** A
-  spooler flattens binding->collection->rule OFFLINE into a per-source-IP
-  allow-list in Valkey (Squid sees only the source IP; resolve device
-  modality/product/serial at spool time via `device.ip_address -> device -> model
-  -> matching bindings`). Helper does an O(1) `%SRC` lookup + matches
-  `%DST/%PORT/%PROTO`; Squid caches the verdict. Chosen over pre-generated
-  squid.conf fast ACLs (linear `http_access` scan blows up on the single-system
-  binding volume). ICAP is content adaptation, not the ACL mechanism.
-- **TO BUILD next:** (1) `services/infoproxy/+page.*` -- collection list +
-  rules editor + bindings editor (reuse `EntityPicker` for device, product-picker
-  scoped to `kind='model'`); a central filterable rules table where
-  `?product=<model>` shows collections bound to that model OR ANY (legacy
-  model-dialog semantics); wire the product-tree deep-link
-  (`View destinations for this model ->` at `products/tree/+page.svelte`). (2) The
-  Valkey key layout + spooler + the Squid helper. (3) Importer when the legacy
-  ~2226-rule export lands. All writes admin-gated / `authz_can(persona,verb,product)`.
+- **Legacy data IMPORTED (`import/import_infoproxy.py`, in `reload.sh` after
+  `import_subscriptions.py`).** 16 collections / 391 rules / 2198 bindings
+  (2111 device-precise + 75 model + 8 global + intranet). Sources (gitignored
+  old_database/): `infoproxy_rules_intranet.txt` (intranet defs + assignment),
+  `infoproxy_rules_internet.txt` (internet collection defs), and the authoritative
+  **`table-export.html`** (internet assignment grid; supersedes the scrambled
+  `info_proxy_internet.txt` PDF). Per-device attribution: legacy Customer System ==
+  `RDSERVICEDSYSTEM.NAME`, resolved via **`sysname_device.map.json`** (NAME->device
+  UUID) which `load.py` stage_devices writes and, crucially, does NOT destroy with
+  the id maps (logged explicitly). Loose ANY/ANY inline rules -> synthetic
+  "Intranet/Internet Global (imported)" collections.
+- **UI BUILT (`services/infoproxy/+page.*`).** SplitPane: left = collection list
+  (single-line rows like admin>Roles: name + right-aligned `N url` chip + `N mdl` /
+  `N sys` counts or `ANY`), a search box + two proxy-type chips
+  (Internet/Intranet, both on by default) + orange `+ New`. Right = two sub-tabs:
+  **Destinations** (permitted-URL rules grid; replace-all `?/saveRules`) and
+  **Applies to** (three-tier scope: global `All systems` checkbox `?/toggleAny`;
+  **Product models** via `ScopePicker` over `/api/administration/models`,
+  replace-all `?/saveModels`; **Individual systems** searchable/incremental via
+  `/api/administration/proxy-binding` GET/POST/DELETE -- the GET does AND-of-terms
+  matching serial/IP/FL/hospital/**model name**, scales to the 2000+ device case).
+  Deep link `?product=<model>` filters to collections bound to that model OR ANY
+  (wired from the product-tree "View destinations" link). The `Save to Valkey`
+  spool-out button is **WIRED** (`spoolValkey` -> `src/lib/server/infoproxy.ts`
+  `syncToValkey`). `/api/administration/models` also returns `id`.
+- **Runtime BUILT: Squid `external_acl_type` helper + Valkey spool.** The spooler
+  (`src/lib/server/infoproxy.ts`, wired to `spoolValkey`; standalone mirror
+  `scripts/spool-infoproxy.mjs`) flattens binding->collection->rule OFFLINE into a
+  per-source-IP allow-list in Valkey (Squid sees only the source IP; device
+  modality/product/serial resolved at spool time via `device.ip_address -> device
+  -> model (product.path = device.product_path) -> matching bindings`). Key layout
+  `infoproxy:<proxy_type>:<source_ip>` = SET of TAB-delimited
+  `dns\tcidr\tport_from\tport_to\tprotocol` members; per proxy_type (intranet vs
+  internet = separate Squids); missing key = default DENY; each key rewritten
+  single-key DEL+SADD with stale-key UNLINK pruning. The Squid helper is
+  the Rust top-level package `squid-infoproxy` (rustls/ring RESP client; O(1) `%SRC` SMEMBERS + `%DST`/`%PORT`
+  match; `%PROTO` advisory unless `--strict-proto`; one instance per proxy type;
+  Squid config example in its docstring). Chosen over pre-generated squid.conf
+  fast ACLs (linear `http_access` scan blows up on the single-system binding
+  volume). ICAP is content adaptation, not the ACL mechanism. REMAINING
+  (deploy-only): install the helper on the Squid hosts + a scheduled spool
+  refresh. Later: importer refresh when a fuller legacy export lands.
 - Full detail in `docs/mdm_status.md` (WHERE TO START NEXT item 3) and the spec in
   `docs/product_admin.md` sec 4.
 
 **Also open (see `docs/mdm_status.md` WHERE TO START NEXT):** (1) the
 device **per-device app override** (`device_app` table + `resolve_apps` +
 override editor -- the device
-Applications list is currently read-only/inherited); (2) the **File Subscriptions
-Valkey spool** (wire `spoolValkey`); (3) the **Valkey spool** of
-`gateway.ipsec`/`psk` to `fleetipsec:*` so a test device can connect; (4)
+Applications list is currently read-only/inherited); (2) the **Valkey spool** of
+`gateway.ipsec`/`psk` to `fleetipsec:*` so a test device can connect; (3)
 single-system grant creation (now unblocked by the device browser). Later: slice C
 (group-membership `authz_can` replacing `is_admin`), L0/L1 Valkey caches (+
 re-benchmark), real SAML/OAuth, and the Dockerfile + ECS/ALB `/dev/*` deploy.
 NOTE: `product_model_app` is empty in the DB today -- define apps on a model and
-its devices inherit them.
+its devices inherit them. The **File Subscriptions Valkey spool** is now BUILT
+(`src/lib/server/subscriptions.ts` + `scripts/spool-subscriptions.mjs`;
+product-keyed hash `ftp_subscriptions:<MODALITY>:<PRODUCT>` for aeroftp).
 
 ### Hard rules (do not break — see `docs/mdm_design.md` §5.1)
 

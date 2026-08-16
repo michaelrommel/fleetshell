@@ -130,9 +130,19 @@ Notes:
 
 ## WHERE TO START NEXT (priority order)
 
-**Resume here (NEXT SESSION): rework the Devices and Gateways pages.** The Data
-Transfer Matrix, Countries/Region Tree, and Customers/Sites pages are all BUILT
-(see below).
+**Resume here (NEXT SESSION): the Info Proxy runtime is now BUILT** (spooler +
+Squid helper). **Services > Infoproxy** is fully built end to end -- schema, legacy
+import, UI, and now the Valkey spool + `external_acl_type` helper. `spoolValkey`
+is wired (the "Save to Valkey" button on the Infoproxy page); a standalone
+`scripts/spool-infoproxy.mjs` mirrors it for cron/CI. New helper
+`src/lib/server/infoproxy.ts` flattens binding->collection->rule into a
+per-source-IP allow-list keyed `infoproxy:<proxy_type>:<source_ip>` (SET of
+TAB-delimited `dns\tcidr\tport_from\tport_to\tprotocol` members; missing key =
+default DENY). The Squid `external_acl_type` helper is
+the Rust top-level package `squid-infoproxy` (blocking rustls/ring RESP client;
+O(1) SMEMBERS on %SRC, matches %DST/%PORT; protocol advisory unless
+`--strict-proto`; one instance per proxy type). Remaining: DEPLOY the helper on the actual Squid hosts + a scheduled
+spool refresh; optional Secrets-Manager hardening. See item 3 for the model.
 
 **Blocked on a data export:** real **multi-site customers** cannot be imported
 from the current dump -- `RDSERVICEDSYSTEM.CUSTOMERID` is empty for every device
@@ -279,13 +289,23 @@ authorization (no per-member execute/delegate re-check; the only surviving
   Schema `migrate_file_subscriptions.sql` (`subscriber_server` /
   `subscription` / `subscription_server`; folded into `schema_global.sql` +
   `reload.sh`, applied live). New endpoint `/api/administration/product-picker`
-  (product-UUID type-ahead, optional `mod` filter). A **"Save to Valkey"**
-  spool-out button is present on both views (beside the sub-tabs) but **NOT WIRED
-  UP** yet -- its `spoolValkey` action just returns a "coming soon" notice.
-  Deferred: the Valkey/aeroftp spool of resolved
-  subscriptions (wire up `spoolValkey` -> resolve each subscription's matched
-  files x attached servers and write the aeroftp keys; define the key layout),
-  and Secrets-Manager hardening of the plaintext credentials.
+  (product-UUID type-ahead, optional `mod` filter). The **"Save to Valkey"**
+  spool-out button (beside the sub-tabs) is **WIRED** -- `spoolValkey` ->
+  `src/lib/server/subscriptions.ts` `syncToValkey` (standalone mirror
+  `scripts/spool-subscriptions.mjs`). It resolves, per device product, the
+  applicable file-matcher subscriptions (global + modality-wide + product) and
+  ALL their attached delivery targets, writing the product-keyed hash
+  `ftp_subscriptions:<MODALITY>:<PRODUCT>` (field = subscription name; value =
+  JSON `{pattern, negate, servers:[<denormalized target incl. auth AND
+  `activated`>]}`) for aeroftp -- mirroring the classification
+  `data_classes:<MODALITY>:<PRODUCT>` convention. Deactivated servers are NOT
+  skipped (jobs are still enqueued during downtime so the backlog delivers on
+  reactivation); `activated` travels as data. Empty/stale keys are pruned. The
+  delivery RUNTIME (aeroftp ingest -> Valkey list+pubsub -> subscription-handler
+  fleet -> per-server job queues) is specified in **`docs/file_subscriptions.md`**
+  and is the next thing to build (a new top-level Rust package). Remaining:
+  Secrets-Manager hardening of the plaintext credentials; aeroftp reader adoption
+  of the key.
 - **File subscriptions imported** (`import/import_subscriptions.py`): loads the
   legacy denormalized overview (`old_database/subscription_overview_2026-05-05.xlsx`,
   gitignored) into the three tables -- **56 servers, 282 subscriptions, 297
@@ -338,18 +358,55 @@ authorization (no per-member execute/delegate re-check; the only surviving
    cidr/dns + port range + protocol; belongs to a collection; no scope on the
    rule), `proxy_destination_binding` (the scope: applies a collection to
    device|ANY and/or product-model|ANY; reusable). Rules always live in a
-   collection. Empty ruleset for now (no legacy export yet -- import later).
+   collection. **Legacy data IMPORTED** (see below).
    **Runtime decision: Squid `external_acl_type` helper + Valkey.** A spooler
    flattens binding->collection->rule OFFLINE into a per-source-IP allow-list in
    Valkey (Squid only sees the source IP; device modality/product/serial resolved
    at spool time via device.ip -> device -> model -> matching bindings). The helper
    does an O(1) `%SRC` lookup + dst/port/proto match; Squid caches the verdict. This
    scales to the single-system-binding volume where pre-generated squid.conf fast
-   ACLs would not (linear http_access scan). NOT built: the helper, the spool key
-   layout, and the **UI** (`services/infoproxy/+page.*`: central filterable rules
-   table -- `?product=<model>` shows collections bound to that model OR ANY --
-   + collection/rule/binding CRUD; wire the product-model deep-link landing). Then
-   the **Valkey spool** for the gateway IPsec (`fleetipsec:site:<public_ip>`
+   ACLs would not (linear http_access scan). **Legacy data IMPORTED**
+   (`import/import_infoproxy.py`): schema gained `proxy_type` (intranet|internet);
+   parses `infoproxy_rules_intranet.txt` (intranet: named collections + rules +
+   assignment table) + `infoproxy_rules_internet.txt` (internet collection defs) +
+   **`table-export.html`** (the authoritative HTML export of the internet
+   "2226 items" assignment grid -- clean 10 columns; supersedes the scrambled
+   `info_proxy_internet.txt` PDF text) into **16 collections / 391 rules / 2198
+   bindings**: intranet = 2 named + 91 global inline (synthetic "Intranet Global"),
+   all ANY/ANY; internet = 12 named + 32 inline (synthetic "Internet Global") +
+   **2111 device-precise** + **75 model-scoped** + 8 global bindings. Per-device
+   attribution: Customer System == `RDSERVICEDSYSTEM.NAME` (2112/2112 match),
+   resolved via `sysname_device.map.json` (NAME->device UUID, written by load.py
+   stage_devices). In `reload.sh` after `import_subscriptions.py`. **UI BUILT**
+   (`services/infoproxy/+page.*`): SplitPane -- left = collection list (single-line
+   rows like admin>Roles: name left, right-aligned `N url` chip + `N mdl` / `N sys`
+   counts or `ANY`) with search
+   + two proxy-type chips (Internet/Intranet, both on by default) + `+ New`; right
+   = two sub-tabs **Destinations** (permitted-URL rules grid, replace-all
+   `?/saveRules`) and **Applies to** (three-tier scope: global `All systems`
+   checkbox `?/toggleAny`; **Product models** `ScopePicker` over
+   `/api/administration/models` replace-all `?/saveModels`; **Individual systems**
+   searchable/incremental via `/api/administration/proxy-binding` GET/POST/DELETE,
+   scales to 2000+ devices; the filter does AND-of-terms over serial/IP/FL/hospital
+   /**model name**). Deep link `?product=<model>` filters to collections
+   bound to that model OR ANY (wired from the product-tree "View destinations"
+   link). Binding uniqueness via partial unique indexes (device/product/ANY). The
+   `Save to Valkey` spool-out button is **WIRED** (`spoolValkey` ->
+   `src/lib/server/infoproxy.ts` `syncToValkey`). `/api/administration/models`
+   now also returns `id`.
+   **Spool BUILT** -- `src/lib/server/infoproxy.ts` (+ standalone
+   `scripts/spool-infoproxy.mjs`) flattens binding->collection->rule into a
+   per-source-IP Valkey allow-list (per proxy_type; intranet vs internet are
+   separate Squids), keyed `infoproxy:<proxy_type>:<source_ip>` = SET of
+   TAB-delimited `dns\tcidr\tport_from\tport_to\tprotocol` members (device->model
+   via `product.path = device.product_path`; missing key = default DENY; each key
+   rewritten single-key DEL+SADD, stale keys UNLINKed). The Squid
+   `external_acl_type` helper is the Rust top-level package `squid-infoproxy`
+   (blocking rustls/ring RESP client; O(1) SMEMBERS on %SRC + %DST/%PORT match,
+   protocol advisory unless `--strict-proto`; run one instance per proxy type;
+   Squid config example in `squid-infoproxy/README.md` + the crate docstring). **NEXT (deploy-only): put the helper on the Squid hosts +
+   schedule the spool refresh.** Separately, the **Valkey spool** for the gateway
+   IPsec (`fleetipsec:site:<public_ip>`
    / `fleetipsec:psk:<public_ip>` from `gateway.ipsec` / `gateway.psk`) so a test
    device can actually connect. The DynDNS password would come from the source
    `WEBDNSPWID`/`WEBDNSPWPW` in production.
