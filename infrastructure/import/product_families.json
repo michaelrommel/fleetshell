@@ -1,0 +1,48 @@
+{
+ "_comment": "Name-keyed product.family mapping (family -> product names). Populated by load.py --stage families; reload-survivable. A family listed as ['*'] tags every product in that modality. Family strings MUST match the classification sheet's family column (Somaris 5/7/10/X, Numaris 4/X) so the dormant family assignments resolve. See docs/data_classification.md.",
+ "CT": {
+  "Somaris 5": [
+   "Balance",
+   "Confidence",
+   "Definition",
+   "Definition AS Eco",
+   "Definition Edge",
+   "DefinitionAS",
+   "DefinitionFlash",
+   "Drive",
+   "Edge Plus",
+   "Force",
+   "Emotion",
+   "Emotion16",
+   "Emotion6",
+   "Esprit",
+   "Perspective",
+   "Scope",
+   "Sensation10",
+   "Sensation16",
+   "Sensation4",
+   "Sensation40",
+   "Sensation64",
+   "SensationCardiac16",
+   "SensationCardiac64",
+   "SensationOpen",
+   "Spirit",
+   "Volume_Access",
+   "Volume_Zoom"
+  ],
+  "Somaris X": [
+   "SOMATOM_go",
+   "Somatom_onSite",
+   "impaCT"
+  ],
+  "Security_Appliance_CT": [
+   "Security_Appliance_CT"
+  ]
+ },
+ "MR": {
+  "Numaris 4/X": ["*"],
+  "Security_Appliance_MR": [
+   "Security_Appliance_MR"
+  ]
+ }
+}

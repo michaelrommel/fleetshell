@@ -3,13 +3,8 @@
  *
  * The port is runtime-configurable via the PUBLIC_CLIENT_API_PORT environment
  * variable so operators can adjust it per deployment without rebuilding the
- * portal image.
- *
- * Example — .env (dev) or ECS task definition (prod):
- *   PUBLIC_CLIENT_API_PORT=58596
- *
- * SvelteKit exposes PUBLIC_* variables to both SSR and browser code via
- * $env/dynamic/public, so the value is always current at runtime.
+ * portal image. SvelteKit exposes PUBLIC_* variables to both SSR and browser
+ * code via $env/dynamic/public, so the value is always current at runtime.
  */
 import { env } from '$env/dynamic/public';
 

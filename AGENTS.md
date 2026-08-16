@@ -19,6 +19,7 @@ and have enough context to proceed.
 5. [Component: fleetshell-gateway](#5-component-fleetshell-gateway)
 6. [Cross-cutting concerns](#6-cross-cutting-concerns)
 7. [Open work items](#7-open-work-items)
+8. [Master Data Management (MDM) rebuild](#8-master-data-management-mdm-rebuild)
 
 ---
 
@@ -27,7 +28,8 @@ and have enough context to proceed.
 ```
 fleetshell/
 ├── Cargo.toml                  # Cargo workspace (resolver = "2")
-│                               # members: fleetshell-client/src-tauri, fleetshell-gateway, test-guac
+│                               # members: fleetshell-client/src-tauri, fleetshell-gateway,
+│                               #          squid-infoproxy, test-guac
 ├── Cargo.lock
 ├── AGENTS.md                   # ← this file
 ├── TODO.md                     # Detailed task tracking
@@ -133,6 +135,14 @@ fleetshell/
 └── test-guac/                  # Smoke-test tool: connect to guacd or gateway
     ├── Cargo.toml              # rustls dependency for optional TLS in gateway mode
     └── src/main.rs             # Direct guacd mode + gateway mode (GATEWAY_TLS=true)
+
+└── squid-infoproxy/            # Rust Squid external_acl_type helper (Info Proxy authz)
+    ├── Cargo.toml              # rustls/ring + ipnet; no async runtime (blocking helper)
+    ├── README.md               # deployment + Squid config
+    └── src/
+        ├── main.rs             # CLI + stdin OK/ERR loop (fail-closed)
+        ├── valkey.rs           # minimal blocking RESP client (AUTH/SELECT/SMEMBERS), rediss
+        └── matcher.rs          # destination-rule matching (CIDR/DNS-suffix/port/proto)
 ```
 
 ---
@@ -867,3 +877,284 @@ JWT claim matches automatically without extra env vars.
 ### Simulated test devices (AWS VPC)
 
 - [ ] Windows VMs with RDP, VNC, HTTP, HTTPS (self-signed certs)
+
+---
+
+## 8. Master Data Management (MDM) rebuild
+
+A parallel effort replacing the Valkey key/value store as the system of record
+for device/gateway/customer relations and authorization. **New agents working on
+MDM: read `docs/mdm_status.md` first** (start-here handoff), then
+`docs/mdm_design.md`, `docs/authz_caching.md`, `docs/data_import.md`,
+`docs/portal_ui.md` (portal-dev UI: AppShell shell + section roadmap), and
+`docs/data_classification.md` (data-classification feature + import pipeline).
+
+### New components (not in §1's original layout)
+
+```
+fleetshell-portal/       # SvelteKit MDM portal (Aurora-backed; served at site root)
+                         #   custom server.js entry (WebSocket); CMD node server.js.
+                         #   The retired old portal lives in fleetshell-portal-old/.
+  src/lib/components/
+    AppShell.svelte           #   brand top-bar + icon-rail sidebar (Nucleus look)
+    Logo.svelte               #   inlined Siemens Healthineers wordmark (--logo-fg)
+    PagePlaceholder.svelte    #   stub card for not-yet-built sections
+    GroupTree.svelte          #   reusable expandable group tree (Groups + Grants tabs)
+    ScopePicker.svelte        #   chip multi-select over a search API (Grants scope builder)
+    ConfirmDialog.svelte      #   in-page styled confirm modal (replaces window.confirm)
+  src/lib/nav.ts              #   sidebar source of truth (PRIMARY_NAV / UTILITY_NAV)
+  src/lib/server/identity.ts  #   person(login_account)/persona(app_user) helpers
+  src/lib/server/password.ts  #   scrypt hash/verify (dev login; SAML/OAuth later)
+  src/lib/server/session.ts   #   signed cookie {accountId, active userId}
+  src/routes/login/           #   password login
+  src/routes/select-persona/  #   post-login persona picker + top-bar switcher target
+  src/routes/(app)/           #   auth-guarded shell group (account -> persona)
+    devices/ gateways/ products/ customers/ support/ settings/
+    administration/           #   admin-gated tabbed sub-nav
+      accounts/ personas/     #     built: login accounts + identities (paginated)
+      roles/                  #     built: role list + editable privilege matrix (CRUD x types)
+      groups/                 #     built: group TREE (GroupTree) + grants (read) + member mgmt
+      grants/                 #     built v1: group-centric grant builder (device + group scopes)
+  src/routes/api/administration/  # search APIs: groups, personas, regions, products, customers, sites
+  src/lib/server/db.ts        #   postgres.js pools: global + local Aurora
+  src/lib/server/authz.ts     #   resolveGroupIds (local) + listDevices/can (global)
+  src/lib/server/theme.ts     #   Nucleus/Gruvbox theme resolution (cookie/DB/admin)
+  src/app.css                 #   design tokens (data-theme)
+  ws-server.js / server.js    #   base-path-aware WebSocket + prod entry (node server.js)
+  theme-reference/*.png       #   Siemens Healthineers "Remote Service" look to match
+  theme-reference/logo.div    #   source of the Healthineers wordmark SVG
+  theme-reference/logo.div    #   source of the Healthineers wordmark SVG
+
+infrastructure/
+  make_aurora_global.sh        # Aurora Global DB (master data + authz), + reader + RDS Proxy
+  make_aurora_local.sh         # Standalone Aurora (user PII + group membership)
+  deploy_portal.sh             # ECS task-def migration (env+secrets) + update-service for the new portal
+  sql/
+    schema_global.sql          # master data + polymorphic authz model + region ltree
+    schema_local.sql           # login_account + app_user personas + group_membership
+    authz_resolve.sql          # reference authz functions (executable spec)
+    authz_fastpath.sql         # INDEX-USING authz_list_devices / authz_can (production)
+    migrate_region_access.sql  # region hierarchy + graded access_requirement
+    migrate_region_tree.sql    # region_id_seq for user-created sub-regions (Countries > Region Tree)
+    migrate_dtm.sql            # Data Transfer Matrix: data_class(kind/mrs_id), dtm_variant/matrix/deny, customer.dtm_variant
+    migrate_user_country.sql   # (LOCAL) app_user.country (ISO), imported from RDUSER.COUNTRYID
+    migrate_customer_site.sql  # customer/site address fields + contacts + resolve_site_membership()
+    migrate_theme_*.sql        # per-user theme + org default
+    migrate_identity_local.sql # person/persona split + region-prefixed text user_id
+    migrate_identity_primary.sql # account_persona.is_primary (default persona)
+    migrate_persona_rename.sql # account_identity -> account_persona (naming consistency)
+    migrate_authz_catalog.sql  # normalize privileges to CRUD x extensible types (+ device:connect)
+    migrate_data_classification.sql # data_class catalog + classification_set/rule/rule_class/assignment
+    seed_demo.sql / verify_demo.sql   # correctness proof (all green)
+  import/
+    load.py                    # anonymizing CSV importer (192k devices, ~1M grants; incl. single-system)
+                               #   + --stage families / --stage classification (name-keyed, reload-survivable)
+    classification_dedup.py    # Data_Classification*.xlsx -> classification.json (lossless support dedup + CIM)
+    classification_export.py   # DB -> classification.json round-trip (capture UI edits, then commit)
+    classification.json        # committed, name-keyed data-classification artifact (source of truth)
+    product_families.json      # committed family -> product-names mapping (populates product.family)
+    anonymize.py               # IdMap/LabelMap/fakers (destroyed after run)
+    build_group_hierarchy.py   # materialize the full group tree (path/parent_id) from groups.txt
+    seed_test_users.py         # curated broad->narrow test personas for the dev login
+    seed_login_accounts.mjs    # dev login accounts + persona role_label/is_admin
+    old_database/              # legacy CSV exports (gitignored; never commit)
+                               #   incl. groups.txt (owner-provided group hierarchy)
+
+docs/
+  mdm_status.md                # START HERE: current state + where to start next
+  data_classification.md       # data-classification feature (Rule Sets/Assignments) + import pipeline
+  file_subscriptions.md        # File Subscriptions: spool key layout + delivery-runtime design (handler fleet)
+  valkey_spool.md              # Device/Gateway spool: systems:by-ip + fleetipsec:* (aeroftp + ipsecnode)
+  mdm_design.md                # architecture: two planes, authz model, §5.1 hard rules
+  authz_caching.md             # perf: L0/L1 caches, §11 validated benchmark
+  data_import.md               # import + anonymization plan
+  portal_ui.md                 # portal-dev UI: AppShell (top bar + icon rail),
+                               #   routing, theming, section + Administration roadmap
+```
+
+### One-paragraph model
+
+Two-plane split: GLOBAL Aurora (master data + authz, replicated worldwide) holds
+`device / gateway / customer / customer_site / product / region` + the authz
+model (`privilege/role/grant/scope/scope_constraint`); LOCAL Aurora (per region)
+holds `login_account` (the human) + `app_user` persona PII + `account_persona`
+(N:M) + `group_membership`. Authorization is ABAC: a `grant` =
+(group, role, scope); scopes are attribute predicates over region/product ltree
+subtrees + customer/site, with a graded `access_requirement` (open/device/
+customer/site). Hot path: resolve user->groups locally, then evaluate
+groups->grants->scopes against globally-replicated master data. The list query
+is index-using SQL (GiST on ltree paths), no bitmaps.
+
+### Status: infra + schema + import + perf DONE; portal shell + Administration + Products (incl. Data Classification) + Devices + Gateways + Countries/Region Tree + Data Transfer Matrix + Customers/Sites + Services>File Subscriptions (incl. Valkey spool) + Services>Infoproxy (schema + import + UI + Valkey spool + Squid helper) + Device/Gateway Valkey spool (systems:by-ip + fleetipsec:*) DONE. Next: deploy the Squid helper + scheduled spool refresh; per-device app override (device_app).
+
+The portal-dev application chrome is built (`docs/portal_ui.md`): brand top-bar
+(Healthineers logo + "FleetShell Portal"; theme toggle, bell/news placeholder,
+name/role + persona switcher, logout) and an icon-rail sidebar (Devices,
+Gateways, Products, Customers/Sites, Administration; Support, Settings) matching
+the Nucleus look. Every page lives in the `(app)` route group behind the guard.
+
+Identity model: password login to a `login_account` (the human) -> a post-login
+Persona Selector picks one of its linked `app_user` personas (region-prefixed
+text `user_id`) -> top-bar switcher.
+
+**Administration is fully built** (all admin-gated by the interim persona
+`is_admin`): **Accounts** + **Personas** (paginated master-detail, non-unlinkable
+default persona); **Roles** (editable privilege matrix = fixed CRUD verbs x
+extensible resource types + `device:connect`); **Groups** (a real expandable
+tree via `GroupTree.svelte`; grants shown decoded as `Region | Product |
+Customer[/Site]`; member management); **Grants v1** (group-centric builder:
+role + resource-typed scope -- device dims region/product/customer/site OR group
+subtree -- decomposed into one grant per combination; `ScopePicker` +
+`ConfirmDialog` components). Data: single-system grants imported;
+`build_group_hierarchy.py` materializes the full group tree from `groups.txt`.
+
+Apply order after a reload: `migrate_identity_local.sql` +
+`migrate_identity_primary.sql` + `migrate_persona_rename.sql` (local) +
+`migrate_authz_catalog.sql` + `migrate_product_model.sql` +
+`migrate_device_identity.sql` + `migrate_gateway_enrich.sql` +
+`migrate_gateway_ipsec.sql` + `migrate_gateway_hostname.sql` (global; the last
+five run BEFORE `load.py`), `build_group_hierarchy.py --apply`, then
+`seed_login_accounts.mjs | psql` (accounts `super/super123`, `nora/nora123`).
+See `docs/mdm_status.md` "Re-running the data pipeline / full reload".
+
+**Primary sections built** (see `docs/portal_ui.md` + `docs/product_admin.md`):
+- **Products** (`/products`): modality>product>model tree (`kind` discriminator,
+  `family`, `product_model` satellite = partno/serial-range/host-flag,
+  `product_model_app` = the Connect-app defaults via `AppEditor.svelte`). Models
+  imported from `RDPRODUCTMODEL`.
+- **Devices** (`/devices`): Google-style search (`sn:`/`fl:`/`ip:`/`tid:`/`host:`/
+  `ord:`), admin scope toggle, keyset paging (~455ms; count URL-carried),
+  view/edit/create/delete, `EntityPicker` relations, partno, city, and a
+  **read-only inherited Applications** list (from the model's
+  `product_model_app`). Identity fields imported anonymized from
+  RDSERVICEDSYSTEM; `product_path` points at the model (via PRODUCTMODELID).
+- **Gateways** (`/gateways`): browser + detail over the RS-router / communication
+  interface, enriched from `RDRSROUTERDETAILVIEWV1`, attached-devices relation,
+  and the **IPsec/tunnel editor** (`IpsecEditor.svelte`; `public_ip`+`psk`+`ipsec`
+  jsonb = the legacy Valkey SiteRecord). `dns_name` repurposed -> nullable
+  `hostname` (DynDNS); `public_ip` synthesized.
+- **Services** (`/services`): tabbed **Infoproxy | E-Mail | File Subscriptions**
+  (`services/+layout.svelte`; `/services` redirects to the first tab). E-Mail is a
+  placeholder. **Infoproxy is BUILT** (see the RESUME HERE block below).
+  **File Subscriptions is BUILT**
+  (`services/subscriptions/`): two draggable `SplitPane` tabs -- **Subscriber
+  Servers** (delivery-target CRUD: name/ip_address/country/use-case/comment/
+  activated + delivery method ADLS|S3|SCP + root path / use-partno-folder /
+  container-or-sub-path + method-specific `auth` jsonb -- ADLS service-principal
+  or default, S3 access-key or assume-role, SCP user/pass; secrets PLAINTEXT in
+  the jsonb; detail lists attached subscriptions with remove + search-add via
+  `?/saveServerSubs`) and **Subscriptions** (matcher CRUD: name + optional
+  modality/product pickers (product scoped to modality) + PCRE `pattern` +
+  `negate`; detail attaches to servers via a tickable server grid via
+  `?/saveSubServers`). Both save-set actions rewrite one side's
+  `subscription_server` in a txn (no giant matrix -- 282x56 locked the browser). A
+  `Save to Valkey` spool-out button on both views is **WIRED** (`spoolValkey` ->
+  `src/lib/server/subscriptions.ts` `syncToValkey`, standalone mirror
+  `scripts/spool-subscriptions.mjs`): per device product it resolves the
+  applicable subscriptions (global + modality-wide + product) x ALL their
+  delivery targets into the product-keyed hash
+  `ftp_subscriptions:<MODALITY>:<PRODUCT>` for aeroftp (server objects carry
+  `activated`; deactivated servers are NOT skipped -- their jobs still queue
+  during downtime and deliver on reactivation). The delivery RUNTIME
+  (aeroftp -> Valkey list+pubsub -> handler fleet -> per-server job queues) is
+  designed in `docs/file_subscriptions.md` (next: a new top-level Rust package).
+  Schema
+  `migrate_file_subscriptions.sql` (`subscriber_server` / `subscription` /
+  `subscription_server`). Data imported by `import/import_subscriptions.py`
+  (gitignored xlsx -> 56 servers / 282 subs / 297 attachments; honors ANONYMIZE;
+  in `reload.sh`). New endpoint `/api/administration/product-picker` (product-UUID
+  type-ahead, optional `mod` filter); `EntityPicker` gained `extraParams`.
+- UI consistency: shared `.actions-bar`/`.act-*` (Delete left, Cancel, Save/
+  Create right; red delete via `ConfirmDialog`), `SplitPane` (draggable,
+  persisted), dark scrollbars, in-field search x + keep-focus. Section layout
+  wrappers (Products/Countries/Services/Admin) no longer cap at 80rem -- they fill
+  the viewport width like Customers.
+
+**Services > Infoproxy is now COMPLETE (schema + import + UI + Valkey spool +
+Squid helper).** RESUME HERE next session: DEPLOY the Squid helper
+(the `squid-infoproxy` Rust package) on the intranet/internet Squid hosts and
+schedule a spool refresh (`scripts/spool-infoproxy.mjs`), then the File
+Subscriptions Valkey spool + the gateway IPsec Valkey spool.
+**Services > Infoproxy** (proxy/Squid destination authorization) is fully built:
+schema + legacy import + UI + the runtime spool-out + helper.
+
+- **Schema DONE + LIVE** (`infrastructure/sql/migrate_infoproxy.sql`, folded into
+  `schema_global.sql`, in `reload.sh` after `migrate_file_subscriptions.sql`).
+  **Three tables:**
+  - `proxy_destination_rule_collection` (id, name, **proxy_type** intranet|internet,
+    description; UNIQUE(proxy_type,name)) -- a NAMED container of rules ("iPad Rule
+    Collection"). Purely administrative; **NOT** an authz group. `proxy_type`
+    picks which Squid (intranet vs internet) serves it.
+  - `proxy_destination_rule` (id, collection_id, target_cidr, target_dns,
+    target_port_from, target_port_to, protocol; CHECK cidr OR dns). A rule is
+    **ONLY an allowed target** -- no device/product scope. Always in a collection.
+  - `proxy_destination_binding` (id, collection_id, device_id|NULL, product_id|NULL)
+    -- the SCOPE. Applies a collection to a device (NULL=ANY) and/or product MODEL
+    (NULL=ANY; product.kind='model'). Reusable. Partial UNIQUE indexes prevent
+    duplicate device/product bindings + enforce a single ANY/ANY per collection.
+    Match: `(device_id IS NULL OR =D) AND (product_id IS NULL OR =D's model)`;
+    both NULL = global.
+- **Legacy data IMPORTED (`import/import_infoproxy.py`, in `reload.sh` after
+  `import_subscriptions.py`).** 16 collections / 391 rules / 2198 bindings
+  (2111 device-precise + 75 model + 8 global + intranet). Sources (gitignored
+  old_database/): `infoproxy_rules_intranet.txt` (intranet defs + assignment),
+  `infoproxy_rules_internet.txt` (internet collection defs), and the authoritative
+  **`table-export.html`** (internet assignment grid; supersedes the scrambled
+  `info_proxy_internet.txt` PDF). Per-device attribution: legacy Customer System ==
+  `RDSERVICEDSYSTEM.NAME`, resolved via **`sysname_device.map.json`** (NAME->device
+  UUID) which `load.py` stage_devices writes and, crucially, does NOT destroy with
+  the id maps (logged explicitly). Loose ANY/ANY inline rules -> synthetic
+  "Intranet/Internet Global (imported)" collections.
+- **UI BUILT (`services/infoproxy/+page.*`).** SplitPane: left = collection list
+  (single-line rows like admin>Roles: name + right-aligned `N url` chip + `N mdl` /
+  `N sys` counts or `ANY`), a search box + two proxy-type chips
+  (Internet/Intranet, both on by default) + orange `+ New`. Right = two sub-tabs:
+  **Destinations** (permitted-URL rules grid; replace-all `?/saveRules`) and
+  **Applies to** (three-tier scope: global `All systems` checkbox `?/toggleAny`;
+  **Product models** via `ScopePicker` over `/api/administration/models`,
+  replace-all `?/saveModels`; **Individual systems** searchable/incremental via
+  `/api/administration/proxy-binding` GET/POST/DELETE -- the GET does AND-of-terms
+  matching serial/IP/FL/hospital/**model name**, scales to the 2000+ device case).
+  Deep link `?product=<model>` filters to collections bound to that model OR ANY
+  (wired from the product-tree "View destinations" link). The `Save to Valkey`
+  spool-out button is **WIRED** (`spoolValkey` -> `src/lib/server/infoproxy.ts`
+  `syncToValkey`). `/api/administration/models` also returns `id`.
+- **Runtime BUILT: Squid `external_acl_type` helper + Valkey spool.** The spooler
+  (`src/lib/server/infoproxy.ts`, wired to `spoolValkey`; standalone mirror
+  `scripts/spool-infoproxy.mjs`) flattens binding->collection->rule OFFLINE into a
+  per-source-IP allow-list in Valkey (Squid sees only the source IP; device
+  modality/product/serial resolved at spool time via `device.ip_address -> device
+  -> model (product.path = device.product_path) -> matching bindings`). Key layout
+  `infoproxy:<proxy_type>:<source_ip>` = SET of TAB-delimited
+  `dns\tcidr\tport_from\tport_to\tprotocol` members; per proxy_type (intranet vs
+  internet = separate Squids); missing key = default DENY; each key rewritten
+  single-key DEL+SADD with stale-key UNLINK pruning. The Squid helper is
+  the Rust top-level package `squid-infoproxy` (rustls/ring RESP client; O(1) `%SRC` SMEMBERS + `%DST`/`%PORT`
+  match; `%PROTO` advisory unless `--strict-proto`; one instance per proxy type;
+  Squid config example in its docstring). Chosen over pre-generated squid.conf
+  fast ACLs (linear `http_access` scan blows up on the single-system binding
+  volume). ICAP is content adaptation, not the ACL mechanism. REMAINING
+  (deploy-only): install the helper on the Squid hosts + a scheduled spool
+  refresh. Later: importer refresh when a fuller legacy export lands.
+- Full detail in `docs/mdm_status.md` (WHERE TO START NEXT item 3) and the spec in
+  `docs/product_admin.md` sec 4.
+
+**Also open (see `docs/mdm_status.md` WHERE TO START NEXT):** (1) the
+device **per-device app override** (`device_app` table + `resolve_apps` +
+override editor -- the device
+Applications list is currently read-only/inherited); (2)
+single-system grant creation (now unblocked by the device browser). Later: slice C
+(group-membership `authz_can` replacing `is_admin`), L0/L1 Valkey caches (+
+re-benchmark), real SAML/OAuth. The container is BUILT (`fleetshell-portal/Dockerfile`
++ `scripts/build_portal.sh` -> ECR); it serves at the site root (BASE_PATH empty)
+and replaces the running portal container (no ALB change).
+NOTE: `product_model_app` is empty in the DB today -- define apps on a model and
+its devices inherit them. The **File Subscriptions Valkey spool** and the
+**Device/Gateway Valkey spool** (`systems:by-ip` + `fleetipsec:*`, write-through
+on save; see `docs/valkey_spool.md`) are BUILT.
+
+### Hard rules (do not break — see `docs/mdm_design.md` §5.1)
+
+NULL device attribute = does NOT match; graded `access_requirement` gating;
+region/product are ltree subtree scopes; grant inheritance is ancestor-or-self;
+grant-on-grant needs the "can't grant what you don't hold" subset guard.

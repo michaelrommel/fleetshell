@@ -1,13 +1,13 @@
 {
-	"name": "fleetshell-portal",
+	"name": "fleetshell-portal-dev",
 	"private": true,
-	"version": "0.1.0",
+	"version": "0.0.1",
 	"type": "module",
 	"scripts": {
 		"dev": "vite dev",
 		"build": "vite build",
 		"preview": "vite preview",
-		"start": "node build/index.js",
+		"start": "node server.js",
 		"prepare": "svelte-kit sync || echo ''",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json"
 	},
@@ -16,22 +16,22 @@
 		"@sveltejs/kit": "^2.63.0",
 		"@sveltejs/vite-plugin-svelte": "^7.1.2",
 		"@types/node": "^26.1.1",
+		"@types/ws": "^8.5.12",
 		"svelte": "^5.56.1",
 		"svelte-check": "^4.6.0",
 		"typescript": "^6.0.3",
 		"vite": "^8.0.16"
 	},
 	"dependencies": {
-		"@aws-sdk/client-s3": "^3.1100.0",
-		"@aws-sdk/s3-request-presigner": "^3.1100.0",
 		"@xterm/addon-fit": "^0.11.0",
 		"@xterm/addon-image": "^0.9.0",
 		"@xterm/addon-unicode-graphemes": "^0.4.0",
 		"@xterm/addon-unicode11": "^0.9.0",
 		"@xterm/addon-webgl": "^0.19.0",
 		"@xterm/xterm": "^6.0.0",
-		"fontfaceobserver": "^2.3.0",
 		"guacamole-common-js": "^1.5.0",
-		"redis": "^6.1.0"
+		"postgres": "^3.4.5",
+		"redis": "^6.2.1",
+		"ws": "^8.18.0"
 	}
 }

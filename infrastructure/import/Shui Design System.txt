@@ -1,0 +1,334 @@
+Shui Design System
+1.36.0-next.3
+MR
+Michael Rommel
+Search
+Welcome
+Foundations
+Content
+Design
+Components
+Patterns
+Color
+Overview
+Shui includes a set of colors meant to be used in different elements of the UI. For light and dark Themes the colors are different, and you can switch the Theme of this page to see the colors for each.
+Colors are divided in 5 sections:
+Base colors are used in containers, panes, access bar and main content area.
+UI colors are used on text and icons and provide good contrast when used over any background. Typography colors serves as a semantic layer for typography.
+Functional colors are used for indicating status (success, warning, error).
+Active tints are used for indicating active states.
+Support colors are used for additional highlight.
+Base colors
+Light Theme
+Sample	Token	RGB	HEX	Usage examples
+--base-0	255, 255, 255	#FFFFFF	Access Bar
+--base-1	235, 235, 235	#EBEBEB	Page Background
+--base-2	247, 247, 247	#F7F7F7	Pane, Secondary Navigation
+--base-3	255, 255, 255	#FFFFFF	Main Content Area, Accordion, Modal
+--base-4	255, 255, 255	#FFFFFF	Notification, Popover
+Dark Theme
+Sample	Token	RGB	HEX	Usage examples
+--base-0	8, 8, 8	#080808	Access Bar
+--base-1	20, 20, 20	#141414	Page Background
+--base-2	28, 28, 28	#1C1C1C	Pane, Secondary Navigation
+--base-3	38, 38, 38	#262626	Main Content Area, Accordion, Modal
+--base-4	60, 60, 60	#3C3C3C	Notification, Popover
+Please note: Base and UI colors were updated in version 1.27.0 to improve contrast and readability. The previous color values are still available and can be applied using the light-classic and dark-classic themes. For reference, the classic theme values are included in the accordion below.
+Classic base colors
+UI colors
+Light Theme
+Sample	Token	RGB	HEX	Usage examples
+--ui-0	0, 153, 153	#009999	Badges, Thumbnail (Focus)
+--ui-1	0, 0, 0	#000000	Text, UI Components
+--ui-2	236, 102, 2	#EC6602	Primary Button (Hover)
+--ui-3	207, 75, 0	#CF4B00	Primary Button (Idle)
+--ui-4	216, 88, 8	#D85808	Primary Button (On Press)
+--ui-5	102, 102, 102	#666666	Slider Handle
+--ui-6	200, 200, 200	#C8C8C8	Slider Handle (Disabled)
+--ui-7	255, 255, 255	#FFFFFF	Spinner Overlay
+Dark Theme
+Sample	Token	RGB	HEX	Usage examples
+--ui-0	0, 153, 153	#009999	Badges, Thumbnail (Focus)
+--ui-1	255, 255, 255	#FFFFFF	Text, UI Components
+--ui-2	236, 102, 2	#EC6602	Primary Button (Hover)
+--ui-3	207, 75, 0	#CF4B00	Primary Button (Idle)
+--ui-4	171, 70, 6	#AB4606	Primary Button (On Press)
+--ui-5	153, 153, 153	#999999	Slider Handle
+--ui-6	60, 60, 60	#3C3C3C	Slider Handle (Disabled)
+--ui-7	0, 0, 0	#000000	Spinner Overlay
+Please note: UI colors were updated in version 1.27.0 to improve contrast and readability. The previous color values are still available and can be applied using the light-classic and dark-classic themes. For reference, the classic theme values are included in the accordion below.
+Classic UI colors
+Typography colors
+Light Theme
+Sample	Token	RGB	HEX	Usage examples
+--color-text-active	0, 0, 0, 0.96	#000000	Active Labels
+--color-text-stong	0, 0, 0, 0.9	#000000	Titles, Headlines
+--color-text-moderate	0, 0, 0, 0.8	#000000	Body text
+--color-text-subtle	0, 0, 0, 0.6	#000000	Secondary text
+--color-text-disabled	0, 0, 0, 0.3	#000000	Disabled text
+--color-text-error	170, 40, 31	#000000	Error message
+Dark Theme
+Sample	Token	RGB	HEX	Usage examples
+--color-text-active	255, 255, 255, 0.96	#000000	Active Labels
+--color-text-stong	255, 255, 255, 0.9	#000000	Titles, Headlines
+--color-text-moderate	255, 255, 255, 0.8	#000000	Body text
+--color-text-subtle	255, 255, 255, 0.6	#000000	Secondary text
+--color-text-disabled	255, 255, 255, 0.3	#000000	Disabled text
+--color-text-error	252, 164, 156	#000000	Error message
+Functional colors
+Sample	Token	RGB	HEX	Usage examples
+--functional-red	229, 54, 51	#E53633	Error Status
+--functional-yellow	251, 191, 40	#FBBF28	Warning Status
+--functional-green	39, 155, 68	#279B44	Success Status
+Please note: Functional colors were updated in version 1.28.2 to improve visibility and aesthetics. The previous color values are still available and can be applied using the light-classic and dark-classic themes. For reference, the classic theme values are included in the accordion below.
+Classic functional colors
+Functional colors tints
+Light Theme
+Sample	Token	RGBA	HEX	Usage examples
+--tint-error-1000	170, 40, 31, 1	#AA281F	–
+--tint-error-150	170, 40, 31, 0.07	#AA281F12	Background Idle
+--tint-error-200	170, 40, 31, 0.11	#AA281F1C	Background Focused
+--tint-error-250	170, 40, 31, 0.14	#AA281F24	Background Hover
+--tint-warning-150	160, 113, 21, 0.10	#A071151A	Background Idle
+--tint-warning-200	160, 113, 21, 0.14	#A0711524	Background Focused
+--tint-warning-250	160, 113, 21, 0.19	#A0711530	Background Hover
+--tint-success-1000	34, 133, 59, 1	#22853B	–
+--tint-success-150	34, 133, 59, 0.08	#22853B14	Background Idle
+--tint-success-200	34, 133, 59, 0.13	#22853B21	Background Focused
+--tint-success-250	34, 133, 59, 0.17	#22853B2B	Background Hover
+Dark Theme
+Sample	Token	RGBA	HEX	Usage examples
+--tint-error-1000	255, 184, 173, 1	#FFB8AD	–
+--tint-error-150	255, 184, 173, 0.11	#FFB8AD1C	Background Idle
+--tint-error-200	255, 184, 173, 0.14	#FFB8AD24	Background Focused
+--tint-error-250	255, 184, 173, 0.16	#FFB8AD29	Background Hover
+--tint-warning-150	253, 213, 112, 0.10	#FDD5701A	Background Idle
+--tint-warning-200	253, 213, 112, 0.12	#FDD5701F	Background Focused
+--tint-warning-250	253, 213, 112, 0.15	#FDD57026	Background Hover
+--tint-success-1000	173, 217, 184, 1	#ADD9B8	–
+--tint-success-150	173, 217, 184, 0.11	#ADD9B81C	Background Idle
+--tint-success-200	173, 217, 184, 0.14	#ADD9B824	Background Focused
+--tint-success-250	173, 217, 184, 0.16	#ADD9B829	Background Hover
+Please note: Error and success tint values were updated in version 1.34.0 to apply updated global red (error) and green (success) color specifications. New --tint-error-1000 and --tint-success-1000 tokens were also added. Classic theme values remain unchanged.
+Palette colors
+Orange
+Sample	Token	RGB	HEX
+palette.$orange-100	255, 240, 228	#FFF0E4
+palette.$orange-200	254, 214, 185	#FED6B9
+palette.$orange-300	251, 188, 141	#FBBC8D
+palette.$orange-400	249, 159, 93	#F99F5D
+palette.$orange-500	244, 131, 47	#F4832F
+palette.$orange-600	236, 102, 2	#EC6602
+palette.$orange-700	211, 90, 0	#D35A00
+palette.$orange-800	179, 77, 0	#B34D00
+palette.$orange-900	150, 65, 0	#964100
+palette.$orange-1000	122, 53, 0	#7A3500
+palette.$orange-1100	97, 42, 0	#612A00
+palette.$orange-1200	70, 30, 0	#461E00
+Yellow
+Sample	Token	RGB	HEX
+palette.$yellow-100	255, 247, 228	#FFF7E4
+palette.$yellow-200	253, 230, 173	#FDE6AD
+palette.$yellow-300	252, 210, 104	#FCD268
+palette.$yellow-400	251, 191, 40	#FBBF28
+palette.$yellow-500	231, 174, 35	#E7AE23
+palette.$yellow-600	206, 152, 23	#CE9817
+palette.$yellow-700	176, 131, 23	#B08317
+palette.$yellow-800	150, 111, 20	#966F14
+palette.$yellow-900	125, 92, 16	#7D5C10
+palette.$yellow-1000	101, 74, 14	#654A0E
+palette.$yellow-1100	79, 56, 10	#4F380A
+palette.$yellow-1200	54, 38, 7	#362607
+Blue
+Sample	Token	RGB	HEX
+palette.$blue-100	233, 243, 251	#E9F3FB
+palette.$blue-200	201, 224, 242	#C9E0F2
+palette.$blue-300	169, 206, 235	#A9CEEB
+palette.$blue-400	136, 188, 227	#88BCE3
+palette.$blue-500	104, 169, 219	#68A9DB
+palette.$blue-600	66, 150, 215	#4296D7
+palette.$blue-700	38, 131, 201	#2683C9
+palette.$blue-800	2, 108, 188	#026CBC
+palette.$blue-900	2, 92, 160	#025CA0
+palette.$blue-1000	1, 75, 130	#014B82
+palette.$blue-1100	1, 59, 102	#013B66
+palette.$blue-1200	1, 42, 74	#012A4A
+Gray
+Sample	Token	RGB	HEX
+palette.$gray-100	243, 243, 243	#F3F3F3
+palette.$gray-200	224, 224, 224	#E0E0E0
+palette.$gray-300	200, 200, 200	#C8C8C8
+palette.$gray-400	182, 182, 182	#B6B6B6
+palette.$gray-500	163, 163, 163	#A3A3A3
+palette.$gray-600	144, 144, 144	#909090
+palette.$gray-700	126, 126, 126	#7E7E7E
+palette.$gray-800	102, 102, 102	#666666
+palette.$gray-900	90, 90, 90	#5A5A5A
+palette.$gray-1000	71, 71, 71	#474747
+palette.$gray-1100	60, 60, 60	#3C3C3C
+palette.$gray-1200	41, 41, 41	#292929
+Green
+Sample	Token	RGB	HEX
+palette.$green-100	233, 246, 236	#E9F6EC
+palette.$green-200	197, 232, 205	#C5E8CD
+palette.$green-300	163, 220, 177	#A3DCB1
+palette.$green-400	126, 205, 146	#7ECD92
+palette.$green-500	91, 190, 116	#5BBE74
+palette.$green-600	67, 173, 93	#43AD5D
+palette.$green-700	39, 155, 68	#279B44
+palette.$green-800	34, 133, 59	#22853B
+palette.$green-900	28, 111, 48	#1C6F30
+palette.$green-1000	22, 88, 39	#165827
+palette.$green-1100	17, 69, 30	#11451E
+palette.$green-1200	12, 47, 21	#0C2F15
+Petrol
+Sample	Token	RGB	HEX
+palette.$petrol-100	232, 247, 247	#E8F7F7
+palette.$petrol-200	195, 233, 233	#C3E9E9
+palette.$petrol-300	154, 218, 218	#9ADADA
+palette.$petrol-400	114, 203, 203	#72CBCB
+palette.$petrol-500	68, 187, 187	#44BBBB
+palette.$petrol-600	39, 170, 170	#27AAAA
+palette.$petrol-700	0, 153, 153	#009999
+palette.$petrol-800	0, 130, 130	#008282
+palette.$petrol-900	0, 108, 108	#006C6C
+palette.$petrol-1000	0, 86, 86	#005656
+palette.$petrol-1100	0, 67, 67	#004343
+palette.$petrol-1200	0, 46, 46	#002E2E
+Red
+Sample	Token	RGB	HEX
+palette.$red-100	255, 238, 234	#FFEEEA
+palette.$red-200	255, 214, 207	#FFD6CF
+palette.$red-300	255, 184, 173	#FFB8AD
+palette.$red-400	255, 155, 143	#FF9B8F
+palette.$red-500	255, 121, 108	#FF796C
+palette.$red-600	245, 88, 78	#F5584E
+palette.$red-700	229, 54, 51	#E53633
+palette.$red-800	203, 39, 32	#CB2720
+palette.$red-900	170, 40, 31	#AA281F
+palette.$red-1000	138, 35, 27	#8A231B
+palette.$red-1100	104, 30, 24	#681E18
+palette.$red-1200	75, 24, 19	#4B1813
+Aira
+Sample	Token	RGB	HEX
+palette.$aira-100	74, 255, 229	#4AFFE5
+palette.$aira-200	36, 249, 219	#24F9DB
+palette.$aira-300	54, 231, 206	#36E7CE
+palette.$aira-400	61, 195, 176	#3DC3B0
+palette.$aira-500	46, 184, 170	#2EB8AA
+palette.$aira-600	23, 169, 161	#17A9A1
+palette.$aira-700	0, 153, 153	#009999
+palette.$aira-800	0, 130, 130	#008282
+palette.$aira-900	0, 108, 108	#006C6C
+Active tints
+Light Theme
+Sample	Token	Color	Opacity
+--color-tint	20, 47, 74	–
+--tint-1000	--color-tint	100%
+--tint-250	--color-tint	22%
+--tint-200	--color-tint	18%
+--tint-150	--color-tint	14%
+--tint-100	--color-tint	10%
+--tint-50	--color-tint	4%
+Dark Theme
+Sample	Token	Color	Opacity
+--color-tint	135, 145, 158	–
+--tint-1000	--color-tint	100%
+--tint-250	--color-tint	60%
+--tint-200	--color-tint	50%
+--tint-150	--color-tint	40%
+--tint-100	--color-tint	28%
+--tint-50	--color-tint	12%
+Support colors
+Sample	Token	RGB	HEX	Color Name
+--support-1	0, 121, 105	#007969	Teal
+--support-2	143, 26, 255	#8F1AFF	Purple
+--support-3	0, 136, 0	#008800	Green
+--support-4	154, 83, 35	#9A5323	Brown
+--support-5	0, 106, 221	#006ADD	Blue
+--support-6	178, 27, 92	#B21B5C	Magenta
+Tint
+Sample	Token	RGB	HEX	Color name
+--support-1-tint	61, 195, 176	#3DC3B0	Light Teal
+--support-2-tint	221, 111, 255	#DD6FFF	Light Purple
+--support-3-tint	17, 217, 0	#11D900	Light Green
+--support-4-tint	241, 158, 106	#F19E6A	Light Brown
+--support-5-tint	108, 174, 255	#6CAEFF	Light Blue
+--support-6-tint	240, 93, 143	#F05D8F	Light Magenta
+Shade
+Sample	Token	RGB	HEX	Color name
+--support-1-shade	0, 79, 65	#004F41	Dark Teal
+--support-2-shade	76, 0, 211	#4C00D3	Dark Purple
+--support-3-shade	0, 98, 0	#006200	Dark Green
+--support-4-shade	105, 41, 0	#692900	Dark Brown
+--support-5-shade	0, 61, 166	#003DA6	Dark Blue
+--support-6-shade	127, 0, 52	#7F0034	Dark Magenta
+For more details about how to use the support colors, please visit the Data Visualization – Color page.
+Opacity
+Please note: A new opacity scale was introduced with version 1.27.0 to provide more intuitive naming. The token names in the new scale more closely resemble the actual opacity values, making them easier to read and understand. Additionally, the new scale allows for more granular styling control. Currently, most components still use the old opacity values, now referred to as the "Legacy Opacity Scale", which is why both scales are displayed for reference.
+
+Sample	Token	Light	Dark	Light Classic	Dark Classic
+--opacity-1000	100%	100%	100%	100%
+--opacity-950	96%	96%	96%	96%
+--opacity-900	90%	90%	90%	90%
+--opacity-800	80%	80%	80%	80%
+--opacity-700	70%	70%	70%	70%
+--opacity-600	60%	60%	60%	60%
+--opacity-500	50%	50%	50%	50%
+--opacity-400	40%	40%	40%	40%
+--opacity-300	30%	30%	30%	30%
+--opacity-200	20%	20%	20%	20%
+--opacity-150	15%	16%	10%	10%
+--opacity-100	12%	12%	10%	10%
+--opacity-75	10%	10%	10%	10%
+--opacity-50	6%	8%	5%	5%
+Legacy opacity scale
+Sample	Token	Light	Dark	Light Classic	Dark Classic
+--opacity-1	100%	100%	100%	100%
+--opacity-2	90%	90%	90%	90%
+--opacity-3	60%	60%	60%	60%
+--opacity-4	40%	40%	40%	40%
+--opacity-5	20%	20%	20%	20%
+--opacity-6	12%	12%	10%	10%
+--opacity-7	6%	8%	5%	5%
+Usage
+Light vs dark theme
+The choice to use light or dark themes should not be arbitrary, or because of aesthetic preferences, this choice should be informed by the purpose of the application and by its context/environment of use.
+A mix of both schemes on the same page is not supported, and switching between the two themes is not recommended unless there is a strong use case or significant improvement to the user experience of the application.
+When to use a light theme?
+A light theme should be considered when the application is being used in brighter environments and is not being used for prolonged periods of time. It is also the preferred theme when the user is primarily engaged in reading large quantities of text, for example, in wikis or help manuals.
+When to use a dark theme?
+A dark theme is the preferred theme when the user needs to work with an application for long durations. The dark background is less straining to a user’s eyes as compared to the light theme. Also, if the application is used in a dark environment, then the dark theme will be more usable for extended periods of usage.
+Contrast is another consideration - when applications require content such as radiology images to be the key focus, then a dark theme is highly recommended, as it allows the images to stand out against the dark interface.
+DICOM color calibration
+DICOM monitors support calibration in accordance with the DICOM standard for precise diagnostics. Because of this specific greyscale calibration, the contrast of some colors can be high, which makes the orange colors of Shui not as intended. Therefore, by setting the dicom property to your page, the orange colors will be updated to the values below.
+Please note that these colors are only meant to be used in products that are used in DICOM compliant monitors.
+Sample	Token	RGB	HEX
+--ui-2	228, 120, 20	#E47814
+--ui-3	208, 105, 24	#D06918
+--ui-4	163, 82, 18	#A35212
+Overview
+Base colors
+UI colors
+Typography colors
+Functional colors
+Functional colors tints
+Palette colors
+Orange
+Yellow
+Blue
+Gray
+Green
+Petrol
+Red
+Aira
+Active tints
+Support colors
+Tint
+Shade
+Opacity
+Legacy opacity scale
+Usage
+Light vs dark theme
+DICOM color calibration
+© Siemens Healthineers AG, 2018Privacy Policy

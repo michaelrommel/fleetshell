@@ -1,0 +1,22 @@
+                                                        QUERY PLAN                                                        
+--------------------------------------------------------------------------------------------------------------------------
+ Result  (cost=116.99..117.25 rows=1 width=1) (actual time=23.033..23.036 rows=1 loops=1)
+   Buffers: shared hit=5795
+   InitPlan 1 (returns $0)
+     ->  Limit  (cost=0.00..116.95 rows=1 width=16) (actual time=0.017..0.018 rows=1 loops=1)
+           Buffers: shared hit=1
+           ->  Seq Scan on principal_group  (cost=0.00..116.95 rows=1 width=16) (actual time=0.016..0.016 rows=1 loops=1)
+                 Filter: (label = 'RSC'::text)
+                 Rows Removed by Filter: 2
+                 Buffers: shared hit=1
+   InitPlan 2 (returns $1)
+     ->  Limit  (cost=0.00..0.04 rows=1 width=16) (actual time=0.016..0.017 rows=1 loops=1)
+           Buffers: shared hit=1
+           ->  Seq Scan on device  (cost=0.00..7004.53 rows=192253 width=16) (actual time=0.016..0.016 rows=1 loops=1)
+                 Buffers: shared hit=1
+ Planning:
+   Buffers: shared hit=212
+ Planning Time: 5.612 ms
+ Execution Time: 25.310 ms
+(18 rows)
+

@@ -1,0 +1,18 @@
+                                                          QUERY PLAN                                                           
+-------------------------------------------------------------------------------------------------------------------------------
+ Function Scan on authz_list_devices  (cost=117.20..127.20 rows=1000 width=328) (actual time=360.314..360.321 rows=50 loops=1)
+   Buffers: shared hit=268032, temp read=5730 written=5730
+   I/O Timings: temp read=6.814 write=24.134
+   InitPlan 1 (returns $0)
+     ->  Limit  (cost=0.00..116.95 rows=1 width=16) (actual time=0.017..0.017 rows=1 loops=1)
+           Buffers: shared hit=2
+           ->  Seq Scan on principal_group  (cost=0.00..116.95 rows=1 width=16) (actual time=0.016..0.016 rows=1 loops=1)
+                 Filter: (label = 'BU_MR'::text)
+                 Rows Removed by Filter: 105
+                 Buffers: shared hit=2
+ Planning:
+   Buffers: shared hit=91
+ Planning Time: 0.616 ms
+ Execution Time: 360.383 ms
+(14 rows)
+

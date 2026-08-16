@@ -1,0 +1,19 @@
+# Docker build context = repo root (see scripts/build_portal.sh + build_gateway.sh).
+# Keep this SURGICAL: the gateway build needs target/ and Cargo.*, so do NOT add
+# blanket rules like `target` or `**/node_modules` that would break it.
+
+# Portal build artefacts + secrets (rebuilt inside the image; never ship .env).
+fleetshell-portal/node_modules
+fleetshell-portal/.svelte-kit
+fleetshell-portal/build
+fleetshell-portal/.env
+fleetshell-portal/.env.*
+!fleetshell-portal/.env.example
+
+# The retired portal is not part of any build context.
+fleetshell-portal-old
+
+# Heavy / irrelevant to any image.
+.git
+infrastructure/import/.venv
+infrastructure/import/old_database

@@ -6,10 +6,13 @@ const config = {
 	preprocess: vitePreprocess(),
 
 	kit: {
-		adapter: adapter({
-			// Output directory for the Node server bundle.
-			out: 'build',
-		}),
+		adapter: adapter({ out: 'build' }),
+
+		// Served at the site root. Override with BASE_PATH (e.g. '/dev') only if the
+		// app must live under a sub-path behind a prefix-preserving proxy.
+		paths: {
+			base: process.env.BASE_PATH ?? '',
+		},
 	},
 };
 
