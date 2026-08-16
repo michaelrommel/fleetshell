@@ -13,6 +13,12 @@ pub struct AppConfig {
     /// Base UI font size in pixels.  All component sizes scale from this value.
     pub font_size: u8,
 
+    /// UI colour theme.  One of `"nucleus"` (Siemens Healthineers look) or
+    /// `"gruvbox"`.  Applied to `<html data-theme="...">` on startup by the
+    /// SvelteKit layout.  Unknown values fall back to the CSS `:root` default.
+    #[serde(default = "default_theme")]
+    pub theme: String,
+
     /// Full path to the TigerVNC viewer executable.
     /// Empty string = search the well-known names from PATH.
     #[serde(default)]
@@ -69,10 +75,13 @@ fn default_portal_base_url() -> String {
 
 fn default_idle_timeout() -> u32 { 300 }
 
+fn default_theme() -> String { "nucleus".to_string() }
+
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
             font_size:       15,
+            theme:           default_theme(),
             vnc_viewer:      String::new(),
             portal_base_url:         default_portal_base_url(),
             idle_timeout:            default_idle_timeout(),

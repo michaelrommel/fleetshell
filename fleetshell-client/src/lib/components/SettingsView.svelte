@@ -4,6 +4,7 @@
 
 	interface AppConfig {
 		font_size:               number;
+		theme:                   string;
 		vnc_viewer:              string;
 		portal_base_url:         string;
 		idle_timeout:            number;
@@ -17,8 +18,14 @@
 	const FONT_DEFAULT = 15;
 	const FONT_STEP    =  1;
 
+	const THEMES = [
+		{ value: 'nucleus', label: 'Healthineers' },
+		{ value: 'gruvbox', label: 'Gruvbox' },
+	] as const;
+
 	let cfg: AppConfig = $state({
 		font_size:               FONT_DEFAULT,
+		theme:                   'nucleus',
 		vnc_viewer:              '',
 		portal_base_url:         'https://portal.fleetshell.com',
 		idle_timeout:            300,
@@ -29,6 +36,7 @@
 
 	// Per-field save-state indicators so they don't interfere with each other.
 	let fontSaveState:           'idle' | 'saving' | 'saved' | 'error' = $state('idle');
+	let themeSaveState:          'idle' | 'saving' | 'saved' | 'error' = $state('idle');
 	let vncSaveState:            'idle' | 'saving' | 'saved' | 'error' = $state('idle');
 	let portalUrlSaveState:      'idle' | 'saving' | 'saved' | 'error' = $state('idle');
 	let idleTimeoutSaveState:    'idle' | 'saving' | 'saved' | 'error' = $state('idle');
@@ -100,9 +108,10 @@
 
 	// ── Shared save ──────────────────────────────────────────────────────────
 
-	async function saveConfig(indicator: 'font' | 'vnc' | 'portal' | 'idle-timeout' | 'skip-tls-verify' | 'disable-tls') {
+	async function saveConfig(indicator: 'font' | 'theme' | 'vnc' | 'portal' | 'idle-timeout' | 'skip-tls-verify' | 'disable-tls') {
 		const setState =
 			indicator === 'font'            ? (s: typeof fontSaveState)          => { fontSaveState          = s; } :
+			indicator === 'theme'           ? (s: typeof themeSaveState)         => { themeSaveState         = s; } :
 			indicator === 'vnc'             ? (s: typeof vncSaveState)           => { vncSaveState           = s; } :
 			indicator === 'idle-timeout'    ? (s: typeof idleTimeoutSaveState)   => { idleTimeoutSaveState   = s; } :
 			indicator === 'skip-tls-verify' ? (s: typeof skipTlsVerifySaveState) => { skipTlsVerifySaveState = s; } :
@@ -121,6 +130,15 @@
 	}
 
 	function resetFont() { applyFont(FONT_DEFAULT); }
+
+	// -- Theme --------------------------------------------------------------
+
+	function applyTheme(value: string) {
+		const theme = THEMES.some((t) => t.value === value) ? value : 'nucleus';
+		cfg = { ...cfg, theme };
+		document.documentElement.dataset.theme = theme;
+		saveConfig('theme');
+	}
 </script>
 
 <div class="settings-panel">
@@ -164,7 +182,29 @@
 		</div>
 	</div>
 
-	<!-- ── Applications ───────────────────────────────────────────────────── -->
+	<div class="setting-row">
+		<label for="theme-select" class="setting-label">
+			Theme
+			<span class="setting-hint">Colour palette for the UI</span>
+		</label>
+
+		<div class="size-control">
+			<select
+				id="theme-select"
+				class="theme-select"
+				value={cfg.theme}
+				onchange={(e) => applyTheme(e.currentTarget.value)}
+				aria-label="UI colour theme"
+			>
+				{#each THEMES as t}
+					<option value={t.value}>{t.label}</option>
+				{/each}
+			</select>
+			{@render SaveIndicator({ state: themeSaveState })}
+		</div>
+	</div>
+
+	<!-- Applications -->
 	<h2 class="section-title">Applications</h2>
 
 	<div class="setting-row">
@@ -342,8 +382,8 @@
 		font-size: 0.85rem;
 		text-transform: uppercase;
 		letter-spacing: 0.1em;
-		color: var(--fg4);
-		border-bottom: 1px solid var(--bg2);
+		color: var(--text-muted);
+		border-bottom: 1px solid var(--surface-2);
 		padding-bottom: 6px;
 		margin: 8px 0 4px;
 		font-weight: normal;
@@ -361,7 +401,7 @@
 		display: flex;
 		flex-direction: column;
 		gap: 3px;
-		color: var(--fg2);
+		color: var(--text-2);
 		font-size: 1rem;
 		min-width: 120px;
 		padding-top: 4px;
@@ -369,7 +409,7 @@
 
 	.setting-hint {
 		font-size: 0.85rem;
-		color: var(--fg4);
+		color: var(--text-muted);
 		line-height: 1.4;
 	}
 
@@ -383,15 +423,15 @@
 
 	.size-slider {
 		width: 180px;
-		accent-color: var(--yellow);
+		accent-color: var(--accent);
 		cursor: pointer;
 	}
 
 	.size-number {
 		width: 64px;
-		background: var(--bg1);
-		color: var(--fg);
-		border: 1px solid var(--bg3);
+		background: var(--surface);
+		color: var(--text);
+		border: 1px solid var(--surface-3);
 		border-radius: 3px;
 		padding: 3px 6px;
 		font-family: inherit;
@@ -402,14 +442,14 @@
 	}
 	.size-number::-webkit-outer-spin-button,
 	.size-number::-webkit-inner-spin-button { -webkit-appearance: none; }
-	.size-number:focus { outline: 1px solid var(--yellow); border-color: var(--yellow); }
+	.size-number:focus { outline: 1px solid var(--accent); border-color: var(--accent); }
 
 	/* Wider variant for idle timeout (larger numbers) */
 	.idle-number {
 		width: 80px;
-		background: var(--bg1);
-		color: var(--fg);
-		border: 1px solid var(--bg3);
+		background: var(--surface);
+		color: var(--text);
+		border: 1px solid var(--surface-3);
 		border-radius: 3px;
 		padding: 3px 6px;
 		font-family: inherit;
@@ -420,9 +460,22 @@
 	}
 	.idle-number::-webkit-outer-spin-button,
 	.idle-number::-webkit-inner-spin-button { -webkit-appearance: none; }
-	.idle-number:focus { outline: 1px solid var(--yellow); border-color: var(--yellow); }
+	.idle-number:focus { outline: 1px solid var(--accent); border-color: var(--accent); }
 
-	.size-unit { color: var(--fg4); font-size: 0.85rem; }
+	.size-unit { color: var(--text-muted); font-size: 0.85rem; }
+
+	/* Theme selector */
+	.theme-select {
+		background: var(--surface);
+		color: var(--text);
+		border: 1px solid var(--surface-3);
+		border-radius: 3px;
+		padding: 3px 8px;
+		font-family: inherit;
+		font-size: 1rem;
+		cursor: pointer;
+	}
+	.theme-select:focus { outline: 1px solid var(--accent); border-color: var(--accent); }
 
 	/* ── Path / text controls ── */
 	.path-control {
@@ -435,20 +488,20 @@
 	.path-input {
 		flex: 1;
 		max-width: 520px;
-		background: var(--bg1);
-		color: var(--fg);
-		border: 1px solid var(--bg3);
+		background: var(--surface);
+		color: var(--text);
+		border: 1px solid var(--surface-3);
 		border-radius: 3px;
 		padding: 4px 8px;
 		font-family: inherit;
 		font-size: 0.9rem;
 	}
-	.path-input::placeholder        { color: var(--bg4); }
-	.path-input:focus:not([readonly]) { outline: 1px solid var(--yellow); border-color: var(--yellow); }
+	.path-input::placeholder        { color: var(--surface-4); }
+	.path-input:focus:not([readonly]) { outline: 1px solid var(--accent); border-color: var(--accent); }
 
 	/* Readonly variant — dimmed, no focus ring */
 	.id-field {
-		color: var(--fg4);
+		color: var(--text-muted);
 		cursor: default;
 		font-family: monospace;
 		font-size: 0.85rem;
@@ -456,9 +509,9 @@
 
 	/* ── Shared secondary button ── */
 	.btn-secondary {
-		background: var(--bg2);
-		color: var(--fg3);
-		border: 1px solid var(--bg3);
+		background: var(--surface-2);
+		color: var(--text-3);
+		border: 1px solid var(--surface-3);
 		border-radius: 3px;
 		padding: 3px 12px;
 		cursor: pointer;
@@ -466,18 +519,18 @@
 		font-size: 0.85rem;
 		transition: background 0.1s;
 	}
-	.btn-secondary:hover { background: var(--bg3); color: var(--fg); }
+	.btn-secondary:hover { background: var(--surface-3); color: var(--text); }
 
 	/* ── TLS skip checkbox ── */
 	.tls-checkbox {
 		width: 18px;
 		height: 18px;
 		cursor: pointer;
-		accent-color: var(--orange);
+		accent-color: var(--accent);
 	}
 
 	.warn-text {
-		color: var(--orange);
+		color: var(--accent);
 		font-weight: bold;
 	}
 
@@ -488,7 +541,7 @@
 		color: transparent;
 		transition: color 0.15s;
 	}
-	.save-indicator.saving { color: var(--fg4);  }
-	.save-indicator.saved  { color: var(--green); }
-	.save-indicator.error  { color: var(--red);   }
+	.save-indicator.saving { color: var(--text-muted);  }
+	.save-indicator.saved  { color: var(--success); }
+	.save-indicator.error  { color: var(--danger);   }
 </style>

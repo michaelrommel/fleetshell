@@ -1,41 +1,88 @@
-/* ── Gruvbox Dark palette ──────────────────────────────────────────────────── */
-:root {
-  --bg-hard:  #1d2021;
-  --bg:       #282828;
-  --bg-soft:  #32302f;
-  --bg1:      #3c3836;
-  --bg2:      #504945;
-  --bg3:      #665c54;
-  --bg4:      #7c6f64;
+/* app.css -- design tokens + base.
+ *
+ * Every component uses var(--token), never a raw hex, so switching themes is
+ * just flipping <html data-theme="...">. Default (:root) = Nucleus (Siemens
+ * Healthineers Remote Service look). [data-theme="gruvbox"] overrides for the
+ * alternative. The theme is chosen in Settings and persisted to config.toml;
+ * +layout.svelte applies it on startup. The tokens are semantic (surface /
+ * text / accent / status) so the two palettes stay in lockstep with the
+ * portal's token vocabulary.
+ */
 
-  --fg:       #ebdbb2;
-  --fg2:      #d5c4a1;
-  --fg3:      #bdae93;
-  --fg4:      #a89984;
+:root,
+[data-theme='nucleus'] {
+	/* Surfaces (dark -> raised ramp) */
+	--bg-header:   #0d0d0d;
+	--bg-app:      #1c1c1c;
+	--surface:     #242424;
+	--surface-2:   #2f2f2f;
+	--surface-3:   #3a3a3a;
+	--surface-4:   #4a4a4a;
+	--border:      rgba(255, 255, 255, 0.09);
 
-  --red:      #fb4934;
-  --green:    #b8bb26;
-  --yellow:   #fabd2f;
-  --blue:     #83a598;
-  --purple:   #d3869b;
-  --aqua:     #8ec07c;
-  --orange:   #fe8019;
-  --gray:     #928374;
+	/* Text (strong -> muted ramp) */
+	--text:        #efefef;
+	--text-2:      #d8d8d8;
+	--text-3:      #bcbcbc;
+	--text-muted:  #a0a0a0;
+
+	/* Accent (Siemens Healthineers orange) */
+	--accent:       #ec6602;
+	--accent-hover: #ff7a1a;
+
+	/* Status hues */
+	--success:  #43ac4a;
+	--danger:   #e5484d;
+	--warning:  #e0a000;
+	--info:     #5aa0d0;
+	--info-alt: #45b0a0;
+	--muted-fg: #7d7d7d;
+
+	--radius: 6px;
 }
 
-/* ── Reset ────────────────────────────────────────────────────────────────── */
+[data-theme='gruvbox'] {
+	/* Surfaces */
+	--bg-header:   #1d2021;
+	--bg-app:      #282828;
+	--surface:     #3c3836;
+	--surface-2:   #504945;
+	--surface-3:   #665c54;
+	--surface-4:   #7c6f64;
+	--border:      #504945;
+
+	/* Text */
+	--text:        #ebdbb2;
+	--text-2:      #d5c4a1;
+	--text-3:      #bdae93;
+	--text-muted:  #a89984;
+
+	/* Accent */
+	--accent:       #fe8019;
+	--accent-hover: #fabd2f;
+
+	/* Status hues */
+	--success:  #b8bb26;
+	--danger:   #fb4934;
+	--warning:  #fabd2f;
+	--info:     #83a598;
+	--info-alt: #8ec07c;
+	--muted-fg: #928374;
+}
+
+/* Reset */
 *, *::before, *::after {
   box-sizing: border-box;
   margin: 0;
   padding: 0;
 }
 
-/* ── Base ─────────────────────────────────────────────────────────────────── */
+/* Base */
 html, body {
   height: 100%;
   overflow: hidden;
-  background: var(--bg);
-  color: var(--fg);
+  background: var(--bg-app);
+  color: var(--text);
   font-family: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', ui-monospace,
                'Courier New', monospace;
   /* --font-size is set by JS from the persisted config (default 15px). */
@@ -44,11 +91,11 @@ html, body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* ── Scrollbar ────────────────────────────────────────────────────────────── */
+/* Scrollbar */
 ::-webkit-scrollbar            { width: 8px; height: 8px; }
-::-webkit-scrollbar-track      { background: var(--bg1); }
-::-webkit-scrollbar-thumb      { background: var(--bg3); border-radius: 4px; }
-::-webkit-scrollbar-thumb:hover{ background: var(--bg4); }
+::-webkit-scrollbar-track      { background: var(--surface); }
+::-webkit-scrollbar-thumb      { background: var(--surface-3); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover{ background: var(--surface-4); }
 
-/* ── Selections ───────────────────────────────────────────────────────────── */
-::selection { background: var(--bg3); color: var(--fg); }
+/* Selections */
+::selection { background: var(--surface-3); color: var(--text); }

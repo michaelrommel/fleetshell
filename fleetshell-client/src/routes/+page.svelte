@@ -65,20 +65,20 @@
     flex-direction: column;
     height: 100%;
     overflow: hidden;
-    background: var(--bg);
+    background: var(--bg-app);
   }
 
   /* ── Tab bar ── */
   .tab-bar {
     display: flex;
-    background: var(--bg-hard);
-    border-bottom: 2px solid var(--bg2);
+    background: var(--bg-header);
+    border-bottom: 2px solid var(--surface-2);
     flex-shrink: 0;
   }
 
   .tab-btn {
     background: transparent;
-    color: var(--fg4);
+    color: var(--text-muted);
     border: none;
     border-bottom: 2px solid transparent;
     margin-bottom: -2px;
@@ -90,8 +90,8 @@
     transition: color 0.12s, border-color 0.12s, background 0.12s;
   }
 
-  .tab-btn:hover       { color: var(--fg2); background: var(--bg1); }
-  .tab-btn.active      { color: var(--yellow); border-bottom-color: var(--yellow); background: var(--bg); }
+  .tab-btn:hover       { color: var(--text-2); background: var(--surface); }
+  .tab-btn.active      { color: var(--accent); border-bottom-color: var(--accent); background: var(--bg-app); }
 
   /* ── Panel containers ── */
   .tab-content {

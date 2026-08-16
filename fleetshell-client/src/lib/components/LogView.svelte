@@ -140,21 +140,21 @@
     align-items: center;
     gap: 12px;
     padding: 6px 10px;
-    background: var(--bg1);
-    border-bottom: 1px solid var(--bg2);
+    background: var(--surface);
+    border-bottom: 1px solid var(--surface-2);
     flex-shrink: 0;
   }
 
   .log-count {
     font-size: 0.85rem;
-    color: var(--fg4);
+    color: var(--text-muted);
     margin-right: auto;
   }
 
   .btn-clear {
-    background: var(--bg2);
-    color: var(--fg3);
-    border: 1px solid var(--bg3);
+    background: var(--surface-2);
+    color: var(--text-3);
+    border: 1px solid var(--surface-3);
     border-radius: 3px;
     padding: 2px 10px;
     cursor: pointer;
@@ -162,18 +162,18 @@
     font-family: inherit;
     transition: background 0.1s;
   }
-  .btn-clear:hover { background: var(--bg3); color: var(--fg); }
+  .btn-clear:hover { background: var(--surface-3); color: var(--text); }
 
   .autoscroll-toggle {
     display: flex;
     align-items: center;
     gap: 5px;
     font-size: 0.85rem;
-    color: var(--fg4);
+    color: var(--text-muted);
     cursor: pointer;
     user-select: none;
   }
-  .autoscroll-toggle input { cursor: pointer; accent-color: var(--aqua); }
+  .autoscroll-toggle input { cursor: pointer; accent-color: var(--info-alt); }
 
   /* ── Log body ── */
   .log-body {
@@ -181,7 +181,7 @@
     overflow-y: auto;
     overflow-x: auto;
     padding: 6px 8px;
-    background: var(--bg-hard);
+    background: var(--bg-header);
   }
 
   .log-line {
@@ -191,9 +191,9 @@
   }
 
   /* ── Level colours ── */
-  .lvl-error { color: var(--red);    }
-  .lvl-warn  { color: var(--yellow); }
-  .lvl-info  { color: var(--fg2);    }
-  .lvl-debug { color: var(--blue);   }
-  .lvl-trace { color: var(--gray);   }
+  .lvl-error { color: var(--danger);    }
+  .lvl-warn  { color: var(--accent); }
+  .lvl-info  { color: var(--text-2);    }
+  .lvl-debug { color: var(--info);   }
+  .lvl-trace { color: var(--muted-fg);   }
 </style>

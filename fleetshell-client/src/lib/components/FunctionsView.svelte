@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { listen }             from '@tauri-apps/api/event';
+  import Logo                   from '$lib/components/Logo.svelte';
 
   let { servicekey = null }: { servicekey: string | null } = $props();
 
@@ -84,8 +85,8 @@
 
   /** Fill colour for the foreground pie segment. */
   function pieColor(slot: Slot): string {
-    if (slot.status === 'active')    return 'var(--green)';
-    if (slot.status === 'countdown') return slot.progress <= 0.05 ? 'var(--red)' : 'var(--aqua)';
+    if (slot.status === 'active')    return 'var(--success)';
+    if (slot.status === 'countdown') return slot.progress <= 0.05 ? 'var(--danger)' : 'var(--info-alt)';
     return 'transparent';
   }
 
@@ -146,6 +147,8 @@
 <div class="functions-panel">
 
   <!-- ── Slot grid ──────────────────────────────────────────────────────────── -->
+  <div class="fn-scroll">
+
   <section class="slot-section">
     <h2 class="slot-title">Connection Slots</h2>
     <div class="slot-grid">
@@ -200,10 +203,25 @@
     {/if}
   </div>
 
+  </div><!-- /.fn-scroll -->
+
+  <footer class="logo-footer">
+    <Logo />
+  </footer>
+
 </div>
 
 <style>
   .functions-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* Stretchable content area: holds the slots + service key and scrolls when
+     content exceeds the viewport. The logo footer below stays pinned. */
+  .fn-scroll {
     flex: 1;
     display: flex;
     flex-direction: column;
@@ -212,9 +230,25 @@
     gap: 0;
   }
 
+  /* Fixed small footer, pinned to the bottom of the viewport; logo centered
+     in the same column as the connection dots. */
+  .logo-footer {
+    flex-shrink: 0;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 12px 32px;
+    border-top: 1px solid var(--surface-2);
+    --logo-fg: var(--text-muted);
+  }
+
+  .logo-footer :global(.logo svg) {
+    height: 36px;
+  }
+
   /* ── Slot section ── */
   .slot-section {
-    border-bottom: 1px solid var(--bg2);
+    border-bottom: 1px solid var(--surface-2);
     padding-bottom: 20px;
     margin-bottom: 24px;
   }
@@ -223,7 +257,7 @@
     font-size: 0.8rem;
     text-transform: uppercase;
     letter-spacing: 0.1em;
-    color: var(--fg4);
+    color: var(--text-muted);
     font-weight: normal;
     margin: 0 0 14px;
   }
@@ -247,7 +281,7 @@
   /* Number shown before the disc */
   .slot-num {
     font-size: 1em;
-    color: var(--bg4);
+    color: var(--surface-4);
     width: 2ch;               /* exactly two-character width — lines up 2-digit numbers */
     text-align: right;
     line-height: 1;
@@ -257,14 +291,14 @@
   }
 
   .slot-num-live {
-    color: var(--fg1);
+    color: var(--text);
     font-weight: 600;
   }
 
   /* Port-remap marker — sits between the number and the disc when the local
      listen port had to be reassigned to an ephemeral one. */
   .slot-remap {
-    color: var(--orange);
+    color: var(--accent);
     font-size: 0.85em;
     line-height: 1;
     flex-shrink: 0;
@@ -280,7 +314,7 @@
 
   /* Background disc — muted ring to show slot outline even when free */
   .disc-bg {
-    fill: var(--bg2);
+    fill: var(--surface-2);
   }
 
   /* ── Service key area ── */
@@ -292,8 +326,8 @@
     display: flex;
     flex-direction: column;
     gap: 10px;
-    background: var(--bg1);
-    border: 1px solid var(--bg3);
+    background: var(--surface);
+    border: 1px solid var(--surface-3);
     border-radius: 5px;
     padding: 20px 24px;
     min-width: 420px;
@@ -304,15 +338,15 @@
     font-size: 0.85rem;
     text-transform: uppercase;
     letter-spacing: 0.08em;
-    color: var(--fg4);
+    color: var(--text-muted);
   }
 
   .sk-value {
     font-family: inherit;
     font-size: 1rem;
-    color: var(--aqua);
-    background: var(--bg-hard);
-    border: 1px solid var(--bg2);
+    color: var(--info-alt);
+    background: var(--bg-header);
+    border: 1px solid var(--surface-2);
     border-radius: 3px;
     padding: 10px 12px;
     word-break: break-all;
@@ -321,9 +355,9 @@
 
   .sk-copy-btn {
     align-self: flex-start;
-    background: var(--bg2);
-    color: var(--fg2);
-    border: 1px solid var(--bg3);
+    background: var(--surface-2);
+    color: var(--text-2);
+    border: 1px solid var(--surface-3);
     border-radius: 3px;
     padding: 5px 16px;
     cursor: pointer;
@@ -333,12 +367,12 @@
     min-width: 140px;
   }
 
-  .sk-copy-btn:hover { background: var(--bg3); color: var(--fg); }
+  .sk-copy-btn:hover { background: var(--surface-3); color: var(--text); }
 
   .sk-copy-btn.copied {
-    background: var(--bg1);
-    color: var(--green);
-    border-color: var(--green);
+    background: var(--surface);
+    color: var(--success);
+    border-color: var(--success);
     cursor: default;
   }
 
@@ -347,17 +381,17 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
-    color: var(--bg4);
+    color: var(--surface-4);
     margin-top: 8px;
   }
 
   .hint {
     font-size: 0.85rem;
-    color: var(--bg3);
+    color: var(--surface-3);
   }
 
   code {
-    color: var(--orange);
+    color: var(--accent);
     font-family: inherit;
   }
 </style>
