@@ -305,6 +305,50 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_classification_assign_family
 CREATE UNIQUE INDEX IF NOT EXISTS ux_classification_assign_modality
     ON classification_assignment(set_id) WHERE product_id IS NULL AND family IS NULL;
 
+-- File Subscriptions (see docs + migrate_file_subscriptions.sql). Subscriber
+-- servers = delivery targets (secrets plaintext in `auth` jsonb); subscriptions
+-- = file matchers; subscription_server = the N:M attach matrix.
+CREATE TABLE IF NOT EXISTS subscriber_server (
+    id                uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    name              text NOT NULL,
+    ip_address        text,
+    country           text,
+    use_case          text NOT NULL DEFAULT 'internal'
+                      CHECK (use_case IN ('compliance','internal')),
+    comment           text,
+    activated         boolean NOT NULL DEFAULT false,
+    delivery_method   text NOT NULL
+                      CHECK (delivery_method IN ('adls','s3','scp')),
+    root_path         text,
+    use_partno_folder boolean NOT NULL DEFAULT false,
+    container_path    text,
+    auth              jsonb NOT NULL DEFAULT '{}'::jsonb,
+    created_at        timestamptz NOT NULL DEFAULT now(),
+    updated_at        timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (name)
+);
+
+CREATE TABLE IF NOT EXISTS subscription (
+    id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    name        text NOT NULL,
+    modality_id uuid REFERENCES product(id) ON DELETE SET NULL,
+    product_id  uuid REFERENCES product(id) ON DELETE SET NULL,
+    pattern     text NOT NULL,
+    negate      boolean NOT NULL DEFAULT false,
+    created_at  timestamptz NOT NULL DEFAULT now(),
+    updated_at  timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (name)
+);
+CREATE INDEX IF NOT EXISTS ix_subscription_modality ON subscription(modality_id);
+CREATE INDEX IF NOT EXISTS ix_subscription_product  ON subscription(product_id);
+
+CREATE TABLE IF NOT EXISTS subscription_server (
+    subscription_id uuid NOT NULL REFERENCES subscription(id) ON DELETE CASCADE,
+    server_id       uuid NOT NULL REFERENCES subscriber_server(id) ON DELETE CASCADE,
+    PRIMARY KEY (subscription_id, server_id)
+);
+CREATE INDEX IF NOT EXISTS ix_subscription_server_server ON subscription_server(server_id);
+
 -- Devices: scope dimensions promoted to indexed columns; long tail in jsonb.
 CREATE TABLE IF NOT EXISTS device (
     id                 uuid PRIMARY KEY DEFAULT gen_random_uuid(),

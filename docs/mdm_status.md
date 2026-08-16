@@ -259,6 +259,46 @@ authorization (no per-member execute/delegate re-check; the only surviving
 - **Services** primary nav added (Infoproxy / E-Mail Relay / File Transfer) --
   placeholder page; the product-model page deep-links to
   `/services/infoproxy?product=<id>`.
+- **Services now tabbed + File Subscriptions BUILT**
+  (`services/+layout.svelte`: Infoproxy | E-Mail | File Subscriptions; `/services`
+  redirects to the first tab). Infoproxy / E-Mail stay placeholders.
+  **`services/subscriptions/`** has two inner tabs (a full 282x56 attach matrix
+  locked the browser, so attachments are edited bidirectionally from each side):
+  **Subscriber Servers**
+  (delivery-target CRUD -- name/ip_address/country/use-case/comment/activated +
+  delivery method ADLS|S3|SCP + root path / use-partno-folder / container-or-sub-path
+  + a method-specific `auth` jsonb: ADLS service-principal or default, S3 access-key
+  or assume-role, SCP user/pass; **secrets PLAINTEXT** in the jsonb, matching the
+  gateway-PSK precedent; the detail lists **attached subscriptions** with remove +
+  search-add, saved together via `?/saveServerSubs`), and **Subscriptions**
+  (matcher CRUD -- name + optional modality/product pickers (product picker scoped
+  to the chosen modality) + PCRE `pattern` + `negate`; the detail attaches the
+  subscription to servers via a tickable **server grid**, saved via
+  `?/saveSubServers`). Both save-set actions rewrite that side's
+  `subscription_server` rows in one transaction (like the Site membership editor).
+  Schema `migrate_file_subscriptions.sql` (`subscriber_server` /
+  `subscription` / `subscription_server`; folded into `schema_global.sql` +
+  `reload.sh`, applied live). New endpoint `/api/administration/product-picker`
+  (product-UUID type-ahead, optional `mod` filter). A **"Save to Valkey"**
+  spool-out button is present on both views (beside the sub-tabs) but **NOT WIRED
+  UP** yet -- its `spoolValkey` action just returns a "coming soon" notice.
+  Deferred: the Valkey/aeroftp spool of resolved
+  subscriptions (wire up `spoolValkey` -> resolve each subscription's matched
+  files x attached servers and write the aeroftp keys; define the key layout),
+  and Secrets-Manager hardening of the plaintext credentials.
+- **File subscriptions imported** (`import/import_subscriptions.py`): loads the
+  legacy denormalized overview (`old_database/subscription_overview_2026-05-05.xlsx`,
+  gitignored) into the three tables -- **56 servers, 282 subscriptions, 297
+  attachments** (14 subs on >1 server). Modality/product resolved by NAME (all
+  resolve), country -> ISO, negate from the `negated` column. Legacy fields absent
+  from the source default to delivery=`scp`, use_case=`compliance`, activated=true;
+  the legacy IP goes in a dedicated `subscriber_server.ip_address` (the connect
+  host) and the `annotation` free-text (consistent per server) in
+  `subscriber_server.comment`, honoring the same `ANONYMIZE` switch as `load.py`
+  (placeholder in dev, raw for the production take-over). Idempotent (upsert by
+  unique name); wired into `reload.sh`
+  after the group-hierarchy step (a `product` TRUNCATE CASCADE empties subscription
+  + subscription_server, so it re-resolves the FKs on every reload).
 - **Performance**: devices scope paging ~455ms (was 4-7s) via
   `authz_visible_device_ids`; exact count only on filter change (URL-carry
   approach A, `/devices/count`).

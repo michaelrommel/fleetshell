@@ -35,10 +35,10 @@
 
 [data-theme='gruvbox'] {
 	--bg-header: #1d2021;
-	--bg-app: #282828;
-	--surface: #32302f;
-	--surface-2: #3c3836;
-	--surface-active: #45403d;
+	--bg-app: #151819;
+	--surface: #1d2021;
+	--surface-2: #32302f;
+	--surface-active: #3c3836;
 	--border: #504945;
 	--divider: #3c3836;
 	--text: #ebdbb2;

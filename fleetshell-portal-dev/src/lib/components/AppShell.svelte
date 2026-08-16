@@ -141,10 +141,15 @@
 				</div>
 			{/if}
 			<button class="icon-btn" onclick={toggleTheme} title="Toggle theme" aria-label="Toggle theme">
-				<!-- half-filled contrast circle -->
-				<svg viewBox="0 0 24 24" class="glyph">
-					<circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2" />
-					<path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor" stroke="none" />
+				<!-- broad flat brush, held vertically: thick handle on top, wide bristle block at bottom -->
+				<svg viewBox="0 0 24 24" class="glyph" fill="none" stroke="currentColor"
+				     stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<!-- handle (thicker + taller) -->
+					<path d="M12 2v9" stroke-width="3.5" />
+					<!-- ferrule (metal band) -->
+					<path d="M6 11h12v3H6z" />
+					<!-- bristle block, flaring wider toward the bottom -->
+					<path d="M6.5 14h11l2.5 8H4z" />
 				</svg>
 			</button>
 

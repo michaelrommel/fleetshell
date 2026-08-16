@@ -6,8 +6,9 @@
 	let { children }: { children: Snippet } = $props();
 
 	const tabs = [
-		{ href: '/countries/region-tree',           label: 'Region Tree' },
-		{ href: '/countries/data-transfer-matrix',  label: 'Data Transfer Matrix' },
+		{ href: '/services/infoproxy',     label: 'Infoproxy' },
+		{ href: '/services/email',         label: 'E-Mail' },
+		{ href: '/services/subscriptions', label: 'File Subscriptions' },
 	];
 
 	function active(href: string): boolean {
@@ -16,13 +17,13 @@
 	}
 </script>
 
-<div class="countries">
+<div class="services">
 	<div class="page-head">
-		<h1>Countries</h1>
-		<p class="sub">Region hierarchy and cross-border data transfer authorization.</p>
+		<h1>Services</h1>
+		<p class="sub">Infoproxy, E-Mail relay and file subscription management.</p>
 	</div>
 
-	<nav class="tabs" aria-label="Countries sections">
+	<nav class="tabs" aria-label="Services sections">
 		{#each tabs as t (t.href)}
 			<a href="{base}{t.href}" class:active={active(t.href)}
 			   aria-current={active(t.href) ? 'page' : undefined}>{t.label}</a>
@@ -35,7 +36,7 @@
 </div>
 
 <style>
-	.countries { width: 100%; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+	.services { width: 100%; flex: 1; min-height: 0; display: flex; flex-direction: column; }
 	.page-head { margin-bottom: 1rem; }
 	.tab-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 	h1 { font-size: 1.3rem; margin: 0 0 0.2rem; }

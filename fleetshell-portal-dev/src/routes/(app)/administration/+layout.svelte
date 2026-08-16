@@ -38,7 +38,7 @@
 </div>
 
 <style>
-	.admin { max-width: 80rem; width: 100%; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+	.admin { width: 100%; flex: 1; min-height: 0; display: flex; flex-direction: column; }
 	.page-head { margin-bottom: 1rem; }
 	.tab-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 	h1 { font-size: 1.3rem; margin: 0 0 0.2rem; }

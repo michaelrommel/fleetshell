@@ -11,10 +11,11 @@
 	type Item = Record<string, string>;
 	let {
 		api, name, idField, labelField,
-		value = null, label = null, disabled = false, placeholder = 'search...',
+		value = null, label = null, disabled = false, placeholder = 'search...', extraParams = {},
 	}: {
 		api: string; name: string; idField: string; labelField: string;
 		value?: string | null; label?: string | null; disabled?: boolean; placeholder?: string;
+		extraParams?: Record<string, string>;
 	} = $props();
 
 	// Seeded ONCE from props; the host remounts via {#key} when the underlying
@@ -29,7 +30,9 @@
 
 	async function search() {
 		if (query.trim().length < 2) { results = []; return; }
-		const res = await fetch(`${base}${api}?q=${encodeURIComponent(query.trim())}`);
+		const params = new URLSearchParams({ q: query.trim() });
+		for (const [k, v] of Object.entries(extraParams)) if (v) params.set(k, v);
+		const res = await fetch(`${base}${api}?${params}`);
 		results = res.ok ? (await res.json()).items : [];
 	}
 	function pick(it: Item) {

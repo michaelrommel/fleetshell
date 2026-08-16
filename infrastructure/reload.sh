@@ -26,6 +26,7 @@ psql "$GLOBAL_WRITER_URL" -f sql/migrate_data_classification.sql
 psql "$GLOBAL_WRITER_URL" -f sql/migrate_region_tree.sql
 psql "$GLOBAL_WRITER_URL" -f sql/migrate_dtm.sql
 psql "$GLOBAL_WRITER_URL" -f sql/migrate_customer_site.sql
+psql "$GLOBAL_WRITER_URL" -f sql/migrate_file_subscriptions.sql
 psql "$GLOBAL_WRITER_URL" -f sql/migrate_authz_catalog.sql
 
 step "Local schema migrations"
@@ -50,6 +51,12 @@ psql "$GLOBAL_WRITER_URL" -c "UPDATE device d SET customer_id = s.customer_id FR
 
 step "Materialize group hierarchy"
 python build_group_hierarchy.py && python build_group_hierarchy.py --apply
+
+step "Import file subscriptions (servers + subscriptions + attach matrix)"
+# Re-resolves modality/product FKs by NAME; a `product` TRUNCATE CASCADE above
+# emptied subscription + subscription_server, so this rebuilds them. Honors
+# ANONYMIZE like load.py. Reads the gitignored xlsx from old_database/.
+IMPORT_GLOBAL_DSN="$IMPORT_GLOBAL_DSN" ANONYMIZE="${ANONYMIZE:-1}" python import_subscriptions.py
 
 step "Seed test users + login accounts"
 python seed_test_users.py
