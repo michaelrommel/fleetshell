@@ -42,6 +42,13 @@ RUN npm ci --omit=dev --ignore-scripts
 COPY --from=builder --chown=fleetshell:fleetshell /build/build ./build
 COPY --from=builder --chown=fleetshell:fleetshell /build/server.js /build/ws-server.js ./
 
+# FleetShell client installer served by the Support-page download endpoint
+# (/support/apps/fleetshell-client.exe). The matching NSIS installer must exist
+# in ./dist -- build it with `scripts/build_windows-x64.sh --installer`. The
+# version is a LITERAL so scripts/bump.sh (minor) + scripts/bump_patch.sh bump it
+# across Cargo.toml, tauri.conf.json and this Dockerfile together.
+COPY --chown=fleetshell:fleetshell dist/fleetshell-client_0.14.0_x64-setup.exe ./
+
 USER fleetshell
 
 # -- Runtime configuration (override at deploy time) --------------------------
@@ -62,7 +69,9 @@ USER fleetshell
 ENV PORT=3000 \
     HOST=0.0.0.0 \
     BASE_PATH="" \
-    NODE_ENV=production
+    NODE_ENV=production \
+    DOWNLOAD_FLEETSHELL_CLIENT=/fleetshell-portal/fleetshell-client_0.14.0_x64-setup.exe \
+    PUBLIC_GITHUB_RELEASE_URL=https://github.com/michaelrommel/fleetshell/releases/download/v0.14.0-beta/fleetshell-client_0.14.0_x64-setup.exe
 
 EXPOSE 3000
 

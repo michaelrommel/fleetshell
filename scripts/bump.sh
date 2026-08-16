@@ -26,6 +26,9 @@ FILES=(
 )
 
 for FILE in "${FILES[@]}"; do
+    if ! grep -qF "${CURRENT_VERSION}" "$FILE"; then
+        echo "WARNING: '${CURRENT_VERSION}' not found in $FILE -- nothing bumped there" >&2
+    fi
     sed -i "s/${CURRENT_VERSION}/${NEW_VERSION}/g" "$FILE"
     echo "Updated $FILE"
 done
