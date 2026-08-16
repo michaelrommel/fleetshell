@@ -21,6 +21,9 @@ fleetshell-client/src-tauri/gen/
 
 # Docs
 fleetshell-gateway/docs/
+fleetshell-portal/private/
+docs/AGENTS.md
+docs/AGENTS.pdf
 
 # bulk import (never commit real/anonymized data or run maps)
 infrastructure/import/staging/
