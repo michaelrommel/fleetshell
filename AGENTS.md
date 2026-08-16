@@ -961,6 +961,7 @@ docs/
   mdm_status.md                # START HERE: current state + where to start next
   data_classification.md       # data-classification feature (Rule Sets/Assignments) + import pipeline
   file_subscriptions.md        # File Subscriptions: spool key layout + delivery-runtime design (handler fleet)
+  valkey_spool.md              # Device/Gateway spool: systems:by-ip + fleetipsec:* (aeroftp + ipsecnode)
   mdm_design.md                # architecture: two planes, authz model, §5.1 hard rules
   authz_caching.md             # perf: L0/L1 caches, §11 validated benchmark
   data_import.md               # import + anonymization plan
@@ -981,7 +982,7 @@ customer/site). Hot path: resolve user->groups locally, then evaluate
 groups->grants->scopes against globally-replicated master data. The list query
 is index-using SQL (GiST on ltree paths), no bitmaps.
 
-### Status: infra + schema + import + perf DONE; portal shell + Administration + Products (incl. Data Classification) + Devices + Gateways + Countries/Region Tree + Data Transfer Matrix + Customers/Sites + Services>File Subscriptions (incl. Valkey spool) + Services>Infoproxy (schema + import + UI + Valkey spool + Squid helper) DONE. Next: deploy the Squid helper + scheduled spool refresh; gateway IPsec Valkey spool.
+### Status: infra + schema + import + perf DONE; portal shell + Administration + Products (incl. Data Classification) + Devices + Gateways + Countries/Region Tree + Data Transfer Matrix + Customers/Sites + Services>File Subscriptions (incl. Valkey spool) + Services>Infoproxy (schema + import + UI + Valkey spool + Squid helper) + Device/Gateway Valkey spool (systems:by-ip + fleetipsec:*) DONE. Next: deploy the Squid helper + scheduled spool refresh; per-device app override (device_app).
 
 The portal-dev application chrome is built (`docs/portal_ui.md`): brand top-bar
 (Healthineers logo + "FleetShell Portal"; theme toggle, bell/news placeholder,
@@ -1138,15 +1139,14 @@ schema + legacy import + UI + the runtime spool-out + helper.
 **Also open (see `docs/mdm_status.md` WHERE TO START NEXT):** (1) the
 device **per-device app override** (`device_app` table + `resolve_apps` +
 override editor -- the device
-Applications list is currently read-only/inherited); (2) the **Valkey spool** of
-`gateway.ipsec`/`psk` to `fleetipsec:*` so a test device can connect; (3)
+Applications list is currently read-only/inherited); (2)
 single-system grant creation (now unblocked by the device browser). Later: slice C
 (group-membership `authz_can` replacing `is_admin`), L0/L1 Valkey caches (+
 re-benchmark), real SAML/OAuth, and the Dockerfile + ECS/ALB `/dev/*` deploy.
 NOTE: `product_model_app` is empty in the DB today -- define apps on a model and
-its devices inherit them. The **File Subscriptions Valkey spool** is now BUILT
-(`src/lib/server/subscriptions.ts` + `scripts/spool-subscriptions.mjs`;
-product-keyed hash `ftp_subscriptions:<MODALITY>:<PRODUCT>` for aeroftp).
+its devices inherit them. The **File Subscriptions Valkey spool** and the
+**Device/Gateway Valkey spool** (`systems:by-ip` + `fleetipsec:*`, write-through
+on save; see `docs/valkey_spool.md`) are BUILT.
 
 ### Hard rules (do not break — see `docs/mdm_design.md` §5.1)
 

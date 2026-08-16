@@ -5,6 +5,7 @@
 	import { enhance } from '$app/forms';
 	import SplitPane from '$lib/components/SplitPane.svelte';
 	import EntityPicker from '$lib/components/EntityPicker.svelte';
+	import ContractsChips from '$lib/components/ContractsChips.svelte';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import { CLIENT_API_BASE } from '$lib/client-api';
 	import { toastEnhance } from '$lib/toast.svelte';
@@ -91,7 +92,7 @@
 	const selectedCount = $derived(portRows.filter((r) => r.selected).length);
 	const needsCreds = $derived(portRows.some((r) => r.selected && (r.guac || (r.application === 'ssh' && !r.e2ecrypt))));
 	// No Tunnel Gateway on the device -> connections cannot be signed; block them.
-	const hasTunnelGw = $derived(!!(d?.tunnel_gateway && String(d.tunnel_gateway).trim()));
+	const hasTunnelGw = $derived(!!(d?.gateway_tunnel && String(d.gateway_tunnel).trim()));
 
 	function appSummary(a: PortRow): string {
 		const bits = [a.application.toUpperCase(), a.ports || '?'];
@@ -575,10 +576,32 @@
 				<option value="customer">customer</option><option value="site">site</option>
 			</select>
 		</label>
-		<label>Contact<input name="contact" value={x?.contact ?? ''} disabled={!edit} /></label>
+		<label>NAT mode
+			<select name="nat_mode" value={x?.nat_mode ?? 'customer'} disabled={!edit}>
+				<option value="customer">customer (customer NATs)</option>
+				<option value="platform">platform (we NAT via ip_real)</option>
+			</select>
+		</label>
 		<label>Hospital<input name="hospital_name" value={x?.hospital_name ?? ''} disabled={!edit} /></label>
 		<label>City<input name="city" value={x?.city ?? ''} disabled={!edit} /></label>
 	</div>
+	<label class="full">Contact<input name="contact" value={x?.contact ?? ''} disabled={!edit} /></label>
+	{#key x?.id ?? 'new'}
+		<ContractsChips internalUse={x?.internal_use} dpa={x?.dpa} dmy={x?.dmy} disabled={!edit} />
+	{/key}
+
+	<h4>Notifications</h4>
+	<div class="checks">
+		<label class="chk"><input type="checkbox" name="notify_on_access" checked={!!x?.notify_on_access} disabled={!edit} /> Notify on access</label>
+		<label class="chk"><input type="checkbox" name="notify_on_disconnect" checked={!!x?.notify_on_disconnect} disabled={!edit} /> Notify on disconnect</label>
+		<label class="chk"><input type="checkbox" name="notification_info_active" checked={!!x?.notification_info_active} disabled={!edit} /> Notification info active</label>
+		<label class="chk"><input type="checkbox" name="notify_pseudonymized" checked={!!x?.notify_pseudonymized} disabled={!edit} /> Anonymize (send ID, not username)</label>
+	</div>
+	<label class="full">Notification address<input name="notification_address" type="email" value={x?.notification_address ?? ''} disabled={!edit} placeholder="ops@example.com" /></label>
+
+	<h4>Operator messages</h4>
+	<label class="full">Display before connect<textarea name="display_before_connect" rows="2" disabled={!edit} placeholder="Shown to the operator before a session starts">{x?.display_before_connect ?? ''}</textarea></label>
+	<label class="full">Additional info (annotations)<textarea name="additional_info" rows="2" disabled={!edit}>{x?.additional_info ?? ''}</textarea></label>
 
 	<h4>Relations</h4>
 	<div class="rel-cols">
@@ -604,7 +627,8 @@
 			<span class="rval" class:unset={!x?.site_name}>{x?.site_name ?? 'not assigned'}</span>
 			<span class="rel-note">Derived from site membership · manage in <a href={`${base}/customers`}>Customers / Sites</a></span>
 			<span class="rlabel">Tunnel Gateway</span>
-			<input class="rinput" name="tunnel_gateway" value={x?.tunnel_gateway ?? ''} disabled={!edit} placeholder="atlanta-01" autocomplete="off" spellcheck="false" />
+			<span class="rval" class:unset={!x?.gateway_tunnel}>{x?.gateway_tunnel ?? 'set on the IPsec gateway'}</span>
+			<span class="rel-note">The Connect gateway is a property of the IPsec gateway (one per region){#if x?.gateway_id}, edited on <a href={`${base}/gateways?sel=${x.gateway_id}`}>{x?.gateway_name ?? 'this gateway'}</a>.{:else}. Assign an IPsec gateway above, then set it in <a href={`${base}/gateways`}>Gateways</a>.{/if}</span>
 		</div>
 	</div>
 {/snippet}
@@ -672,12 +696,18 @@
 	input, select { background: var(--bg-app); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.4rem 0.55rem; font: inherit; font-size: 0.84rem; }
 	input:focus-visible, select:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
 	input:disabled, select:disabled { color: var(--text-muted); opacity: 0.85; }
+	textarea { background: var(--bg-app); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.4rem 0.55rem; font: inherit; font-size: 0.84rem; resize: vertical; }
+	textarea:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+	textarea:disabled { color: var(--text-muted); opacity: 0.85; }
+	.checks { display: grid; grid-template-columns: 1fr 1fr; gap: 0.4rem 0.9rem; margin: 0.2rem 0 0.6rem; }
+	label.chk { flex-direction: row; align-items: center; gap: 0.45rem; color: var(--text); font-size: 0.82rem; }
+	label.chk input { flex: none; width: auto; }
+	label.full { margin-top: 0.6rem; }
 
 	.rel-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem 1.4rem; align-items: start; }
 	.rel { display: grid; grid-template-columns: 7rem 1fr; gap: 0.5rem 0.8rem; align-items: start; align-content: start; }
 	.rlabel { align-self: center; font-size: 0.76rem; color: var(--text-muted); }
 	.rval { align-self: center; font-size: 0.84rem; color: var(--text); padding: 0.4rem 0; }
-	.rinput { align-self: center; width: 100%; }
 	.rval.unset { color: var(--text-subtle); font-style: italic; }
 	.rel-note { grid-column: 1 / -1; font-size: 0.72rem; color: var(--text-subtle); }
 	.rel-note a { color: var(--accent); }

@@ -158,9 +158,18 @@ CREATE TABLE IF NOT EXISTS gateway (
     -- src/lib/server/gateways.ts (SiteRecord). Not imported from the legacy CSV.
     public_ip         text,                -- external tunnel endpoint IP (Valkey key)
     psk               text,                -- IPsec pre-shared key
-    ipsec             jsonb                -- SiteRecord: { ike_version, ike_identity, static_ip,
+    ipsec             jsonb,               -- SiteRecord: { ike_version, ike_identity, static_ip,
                                            --   dyndns_password, ike_enc[], ike_auth[], ike_dh[],
                                            --   esp_enc[], esp_auth[], esp_pfs[], remote_ts[] }
+    -- Connect JWT `gateway` claim: the regional fleetshell-gateway LB address
+    -- (one per AWS region; a device resolves it via this gateway). See
+    -- docs/valkey_spool.md.
+    tunnel_gateway    text,
+    -- Customer-view IPs for the three backend roles -> fleetipsec:nat backend_nat
+    -- {access_server,sd_server,em_server}; real IPs live in ipsecnode.toml.
+    backend_access_ip text,
+    backend_sd_ip     text,
+    backend_em_ip     text
 );
 CREATE INDEX IF NOT EXISTS ix_gateway_publicip_trgm ON gateway USING gin (public_ip gin_trgm_ops);
 CREATE INDEX IF NOT EXISTS ix_gateway_name_trgm     ON gateway USING gin (name gin_trgm_ops);
@@ -416,9 +425,19 @@ CREATE TABLE IF NOT EXISTS device (
     ip_real            text,              -- REALIPADDRESS (secondary)
     contact            text,              -- CONTACT (PII; anonymized)
     city               text,              -- CITY (anonymized; shared map with gateway city)
-    -- Tunnel Gateway NAME encoded in the connection JWT (gw claim); not sourced
-    -- from the legacy export -- authored per device. Empty = connections blocked.
-    tunnel_gateway     text,
+    -- NAT ownership for the fleetipsec:nat spool: 'customer' = customer already
+    -- NATs (internal_ip = global_ip = ip_address); 'platform' = we NAT
+    -- (internal_ip = ip_real). See docs/valkey_spool.md.
+    nat_mode           text NOT NULL DEFAULT 'customer'
+                       CHECK (nat_mode IN ('customer','platform')),
+    -- contract flags spooled into systems:by-ip `contracts` (comma-joined):
+    --   internal_use = 'STD'|'NIU'|NULL, plus independent dpa / dmy toggles.
+    internal_use       text CHECK (internal_use IN ('STD','NIU')),
+    dpa                boolean NOT NULL DEFAULT false,
+    dmy                boolean NOT NULL DEFAULT false,
+    -- Tunnel Gateway NAME (JWT gw claim) now lives on the gateway
+    -- (gateway.tunnel_gateway); a device resolves it via its IPsec gateway.
+    -- See docs/valkey_spool.md.
     -- operational/config state codes (RDSERVICEDSYSTEM CONFIGURATIONSTATE /
     -- OPERATIONALSTATE); raw legacy enum codes, label map lives in the UI.
     config_state        smallint,         -- CONFIGURATIONSTATE (55 = Complete, ...)

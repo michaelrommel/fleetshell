@@ -28,6 +28,7 @@ psql "$GLOBAL_WRITER_URL" -f sql/migrate_dtm.sql
 psql "$GLOBAL_WRITER_URL" -f sql/migrate_customer_site.sql
 psql "$GLOBAL_WRITER_URL" -f sql/migrate_file_subscriptions.sql
 psql "$GLOBAL_WRITER_URL" -f sql/migrate_infoproxy.sql
+psql "$GLOBAL_WRITER_URL" -f sql/migrate_device_gateway_spool.sql
 psql "$GLOBAL_WRITER_URL" -f sql/migrate_authz_catalog.sql
 
 step "Local schema migrations"

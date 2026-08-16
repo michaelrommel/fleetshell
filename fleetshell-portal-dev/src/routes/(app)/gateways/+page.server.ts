@@ -3,6 +3,7 @@ import { fail, error, redirect } from '@sveltejs/kit';
 import { base } from '$app/paths';
 import { globalDb } from '$lib/server/db';
 import { getPersona } from '$lib/server/identity';
+import { spoolGatewayOnSave, deleteGatewayKeys } from '$lib/server/gateway_spool';
 
 const PAGE_SIZE = 50;
 const DEVICE_PREVIEW = 50;
@@ -99,7 +100,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 		[detail] = await globalDb<Record<string, unknown>[]>`
 			SELECT id::text AS id, hostname, region, hospital, name, city, gateway_model, connection_type,
 			       operational_state, static_ip, nat_type, admin_ip, admin_ip2, country,
-			       public_ip, psk, ipsec
+			       public_ip, psk, ipsec, tunnel_gateway, backend_access_ip, backend_sd_ip, backend_em_ip
 			FROM gateway WHERE id = ${sel}`;
 		if (detail) {
 			[{ deviceTotal }] = await globalDb<{ deviceTotal: number }[]>`
@@ -138,17 +139,27 @@ function fields(d: FormData) {
 		admin_ip: orNull(d.get('admin_ip')),
 		admin_ip2: orNull(d.get('admin_ip2')),
 		country: orNull(d.get('country')),
+		tunnel_gateway: orNull(d.get('tunnel_gateway')),
+		backend_access_ip: orNull(d.get('backend_access_ip')),
+		backend_sd_ip: orNull(d.get('backend_sd_ip')),
+		backend_em_ip: orNull(d.get('backend_em_ip')),
 	};
 }
 
-// Parse the IPsec fields from the form (public_ip, psk, ipsec JSON blob).
-function ipsecFields(d: FormData): { public_ip: string | null; psk: string | null; ipsec: string | null } | { error: string } {
+// Parse the IPsec fields from the form (public_ip, psk, ipsec object). The ipsec
+// value is the PARSED OBJECT, not a string: postgres.js serializes an object into
+// jsonb correctly, whereas a pre-stringified JSON string gets double-encoded
+// (stored as a jsonb string), which then breaks the fleetipsec:site spool.
+function ipsecFields(d: FormData): { public_ip: string | null; psk: string | null; ipsec: object | null } | { error: string } {
 	const public_ip = orNull(d.get('public_ip'));
 	const psk = orNull(d.get('psk'));
 	const raw = String(d.get('ipsec') ?? '').trim();
-	let ipsec: string | null = null;
+	let ipsec: object | null = null;
 	if (raw) {
-		try { JSON.parse(raw); ipsec = raw; } catch { return { error: 'Bad IPsec data.' }; }
+		try {
+			const parsed = JSON.parse(raw);
+			if (parsed && typeof parsed === 'object') ipsec = parsed;
+		} catch { return { error: 'Bad IPsec data.' }; }
 	}
 	return { public_ip, psk, ipsec };
 }
@@ -162,14 +173,23 @@ export const actions: Actions = {
 		if (!id || !f.region) return fail(400, { error: 'Region is required.' });
 		const sec = ipsecFields(d);
 		if ('error' in sec) return fail(400, sec);
+		const [prev] = await globalDb<{ public_ip: string | null }[]>`
+			SELECT public_ip FROM gateway WHERE id = ${id}`;
 		await globalDb`
 			UPDATE gateway SET hostname = ${f.hostname}, region = ${f.region}, hospital = ${f.hospital},
 				name = ${f.name}, city = ${f.city}, gateway_model = ${f.gateway_model},
 				connection_type = ${f.connection_type}, operational_state = ${f.operational_state},
 				nat_type = ${f.nat_type},
 				admin_ip = ${f.admin_ip}, admin_ip2 = ${f.admin_ip2}, country = ${f.country},
-				public_ip = ${sec.public_ip}, psk = ${sec.psk}, ipsec = ${sec.ipsec}::jsonb
+				tunnel_gateway = ${f.tunnel_gateway},
+				backend_access_ip = ${f.backend_access_ip}, backend_sd_ip = ${f.backend_sd_ip}, backend_em_ip = ${f.backend_em_ip},
+				public_ip = ${sec.public_ip}, psk = ${sec.psk}, ipsec = ${sec.ipsec === null ? null : globalDb.json(sec.ipsec as Parameters<typeof globalDb.json>[0])}
 			WHERE id = ${id}`;
+		try {
+			await spoolGatewayOnSave(id, prev?.public_ip ?? null);
+		} catch (e) {
+			console.error('[spool] gateway update:', (e as Error).message);
+		}
 		throw redirect(303, `${base}/gateways?sel=${encodeURIComponent(id)}`);
 	},
 
@@ -182,11 +202,18 @@ export const actions: Actions = {
 		if ('error' in sec) return fail(400, sec);
 		const [row] = await globalDb<{ id: string }[]>`
 			INSERT INTO gateway (hostname, region, hospital, name, city, gateway_model, connection_type,
-				operational_state, nat_type, admin_ip, admin_ip2, country, public_ip, psk, ipsec)
+				operational_state, nat_type, admin_ip, admin_ip2, country, public_ip, psk, ipsec,
+				tunnel_gateway, backend_access_ip, backend_sd_ip, backend_em_ip)
 			VALUES (${f.hostname}, ${f.region}, ${f.hospital}, ${f.name}, ${f.city}, ${f.gateway_model},
 				${f.connection_type}, ${f.operational_state}, ${f.nat_type},
-				${f.admin_ip}, ${f.admin_ip2}, ${f.country}, ${sec.public_ip}, ${sec.psk}, ${sec.ipsec}::jsonb)
+				${f.admin_ip}, ${f.admin_ip2}, ${f.country}, ${sec.public_ip}, ${sec.psk}, ${sec.ipsec === null ? null : globalDb.json(sec.ipsec as Parameters<typeof globalDb.json>[0])},
+				${f.tunnel_gateway}, ${f.backend_access_ip}, ${f.backend_sd_ip}, ${f.backend_em_ip})
 			RETURNING id::text AS id`;
+		try {
+			await spoolGatewayOnSave(row.id, null);
+		} catch (e) {
+			console.error('[spool] gateway create:', (e as Error).message);
+		}
 		throw redirect(303, `${base}/gateways?sel=${encodeURIComponent(row.id)}`);
 	},
 
@@ -197,7 +224,13 @@ export const actions: Actions = {
 		if (!id) return fail(400, { error: 'Gateway id required.' });
 		const [{ n }] = await globalDb<{ n: number }[]>`SELECT count(*)::int AS n FROM device WHERE gateway_id = ${id}`;
 		if (n > 0) return fail(400, { error: `${n} device(s) use this interface; reassign them first.` });
+		const [g] = await globalDb<{ public_ip: string | null }[]>`SELECT public_ip FROM gateway WHERE id = ${id}`;
 		await globalDb`DELETE FROM gateway WHERE id = ${id}`;
+		try {
+			if (g?.public_ip) await deleteGatewayKeys(g.public_ip);
+		} catch (e) {
+			console.error('[spool] gateway delete:', (e as Error).message);
+		}
 		throw redirect(303, `${base}/gateways`);
 	},
 };

@@ -47,16 +47,18 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		if (!allowed) error(403, 'Not authorized to connect to this device');
 	}
 
-	// Resolve target + tunnel gateway from the device record (authoritative).
-	// The JWT `gw` claim is the device's Tunnel Gateway name.
+	// Resolve target + tunnel gateway. The JWT `gw` claim is the regional
+	// fleetshell-gateway address, which now lives on the device's IPsec gateway
+	// (gateway.tunnel_gateway), not on the device.
 	const [dev] = await globalDb<{ target: string | null; gateway: string | null }[]>`
 		SELECT COALESCE(d.ip_real, d.ip_address)   AS target,
-		       NULLIF(d.tunnel_gateway, '')        AS gateway
+		       NULLIF(gw.tunnel_gateway, '')       AS gateway
 		FROM device d
+		LEFT JOIN gateway gw ON gw.id = d.gateway_id
 		WHERE d.id = ${deviceId}`;
 	if (!dev) error(404, 'Device not found');
 	if (!dev.target) error(409, 'Device has no IP address configured');
-	if (!dev.gateway) error(409, 'Device has no tunnel gateway configured');
+	if (!dev.gateway) error(409, 'Device has no tunnel gateway configured (set it on its IPsec gateway)');
 
 	const secret = env.JWT_SECRET ?? 'change-me-in-production';
 	const token = issueTunnelToken(locals.userId, dev.target, ports, dev.gateway, secret, undefined, record);

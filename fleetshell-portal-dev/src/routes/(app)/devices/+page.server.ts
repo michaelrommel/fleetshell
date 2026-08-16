@@ -5,6 +5,8 @@ import { globalDb } from '$lib/server/db';
 import { getPersona } from '$lib/server/identity';
 import { resolveGroupIds } from '$lib/server/authz';
 import { buildDeviceWhere } from '$lib/server/deviceQuery';
+import { spoolDeviceOnSave, deleteDeviceKey } from '$lib/server/device_spool';
+import { spoolGateway } from '$lib/server/gateway_spool';
 
 const PAGE_SIZE = 50;
 
@@ -102,14 +104,17 @@ async function loadDetail(sel: string | null) {
 	const [d] = await globalDb<Record<string, unknown>[]>`
 		SELECT d.id::text AS id, d.serial, d.functional_location, d.technical_ident, d.host_hw_id,
 		       d.order_number, d.ip_address, d.ip_real, d.contact, d.city, d.hospital_name, d.software_version,
-		       d.access_requirement, d.country_iso, d.tunnel_gateway,
+		       d.access_requirement, d.country_iso, d.nat_mode, d.internal_use, d.dpa, d.dmy,
+		       d.notify_on_access, d.notify_on_disconnect, d.notification_info_active, d.notify_pseudonymized,
+		       d.notification_address, d.display_before_connect, d.additional_info,
 		       d.product_path::text AS product_path, d.region_path::text AS region_path,
 		       d.customer_id::text AS customer_id, d.site_id::text AS site_id, d.gateway_id::text AS gateway_id,
 		       m.name AS model_name, pm.partno::text AS model_partno,
 		       (SELECT pr.name FROM product pr WHERE pr.path = subpath(d.product_path, 0, nlevel(d.product_path) - 1)) AS product_name,
 		       (SELECT md.name FROM product md WHERE md.path = subltree(d.product_path, 0, 2)) AS modality_name,
 		       reg.name AS region_name, cu.name AS customer_name, si.name AS site_name,
-		       gw.hostname AS gateway_dns, COALESCE(gw.name, gw.hostname) AS gateway_name, gw.hospital AS gateway_label
+		       gw.hostname AS gateway_dns, COALESCE(gw.name, gw.hostname) AS gateway_name, gw.hospital AS gateway_label,
+		       gw.tunnel_gateway AS gateway_tunnel
 		FROM device d
 		LEFT JOIN product m        ON m.path = d.product_path
 		LEFT JOIN product_model pm ON pm.product_id = m.id
@@ -138,6 +143,7 @@ function orNull(v: FormDataEntryValue | null): string | null {
 }
 
 function editFields(d: FormData) {
+	const internalUse = String(d.get('internal_use') ?? '');
 	return {
 		serial: orNull(d.get('serial')),
 		functional_location: orNull(d.get('functional_location')),
@@ -155,7 +161,17 @@ function editFields(d: FormData) {
 		product_path: orNull(d.get('product_path')),
 		region_path: orNull(d.get('region_path')),
 		gateway_id: orNull(d.get('gateway_id')),
-		tunnel_gateway: orNull(d.get('tunnel_gateway')),
+		nat_mode: String(d.get('nat_mode')) === 'platform' ? 'platform' : 'customer',
+		internal_use: internalUse === 'STD' || internalUse === 'NIU' ? internalUse : null,
+		dpa: d.get('dpa') === 'on',
+		dmy: d.get('dmy') === 'on',
+		notify_on_access: d.get('notify_on_access') === 'on',
+		notify_on_disconnect: d.get('notify_on_disconnect') === 'on',
+		notification_info_active: d.get('notification_info_active') === 'on',
+		notify_pseudonymized: d.get('notify_pseudonymized') === 'on',
+		notification_address: orNull(d.get('notification_address')),
+		display_before_connect: orNull(d.get('display_before_connect')),
+		additional_info: orNull(d.get('additional_info')),
 	};
 }
 
@@ -166,6 +182,10 @@ export const actions: Actions = {
 		const id = String(d.get('id') ?? '');
 		if (!id) return fail(400, { error: 'Device id required.' });
 		const f = editFields(d);
+		// Capture the pre-save IP + gateway so the spool can drop a stale key and
+		// re-spool the old gateway when the device moved.
+		const [prev] = await globalDb<{ ip: string | null; gateway_id: string | null }[]>`
+			SELECT ip_address AS ip, gateway_id::text AS gateway_id FROM device WHERE id = ${id}`;
 		// modality + country_iso are denormalized; recompute from the picks.
 		await globalDb`
 			UPDATE device SET
@@ -178,8 +198,19 @@ export const actions: Actions = {
 				modality = (SELECT md.name FROM product md WHERE md.path = subltree(${f.product_path}::ltree, 0, 2)),
 				region_path = ${f.region_path}::ltree,
 				country_iso = (SELECT iso FROM region WHERE path = ${f.region_path}::ltree),
-				gateway_id = ${f.gateway_id}::uuid, tunnel_gateway = ${f.tunnel_gateway}, updated_at = now()
+				gateway_id = ${f.gateway_id}::uuid,
+				nat_mode = ${f.nat_mode}, internal_use = ${f.internal_use}, dpa = ${f.dpa}, dmy = ${f.dmy},
+				notify_on_access = ${f.notify_on_access}, notify_on_disconnect = ${f.notify_on_disconnect},
+				notification_info_active = ${f.notification_info_active}, notify_pseudonymized = ${f.notify_pseudonymized},
+				notification_address = ${f.notification_address}, display_before_connect = ${f.display_before_connect},
+				additional_info = ${f.additional_info},
+				updated_at = now()
 			WHERE id = ${id}`;
+		try {
+			await spoolDeviceOnSave(id, { ip: prev?.ip ?? null, gatewayId: prev?.gateway_id ?? null });
+		} catch (e) {
+			console.error('[spool] device update:', (e as Error).message);
+		}
 		const tab = String(d.get('tab') ?? '').trim();
 		const tabQ = tab ? `&tab=${encodeURIComponent(tab)}` : '';
 		throw redirect(303, `${base}/devices?sel=${encodeURIComponent(id)}${tabQ}`);
@@ -192,15 +223,24 @@ export const actions: Actions = {
 		const [row] = await globalDb<{ id: string }[]>`
 			INSERT INTO device (serial, functional_location, technical_ident, host_hw_id, order_number,
 				ip_address, ip_real, contact, hospital_name, city, software_version, access_requirement,
-				product_path, modality, region_path, country_iso, gateway_id, tunnel_gateway)
+				product_path, modality, region_path, country_iso, gateway_id, nat_mode, internal_use, dpa, dmy,
+				notify_on_access, notify_on_disconnect, notification_info_active, notify_pseudonymized,
+				notification_address, display_before_connect, additional_info)
 			VALUES (${f.serial}, ${f.functional_location}, ${f.technical_ident}, ${f.host_hw_id}, ${f.order_number},
 				${f.ip_address}, ${f.ip_real}, ${f.contact}, ${f.hospital_name}, ${f.city}, ${f.software_version}, ${f.access_requirement},
 				${f.product_path}::ltree,
 				(SELECT md.name FROM product md WHERE md.path = subltree(${f.product_path}::ltree, 0, 2)),
 				${f.region_path}::ltree,
 				(SELECT iso FROM region WHERE path = ${f.region_path}::ltree),
-				${f.gateway_id}::uuid, ${f.tunnel_gateway})
+				${f.gateway_id}::uuid, ${f.nat_mode}, ${f.internal_use}, ${f.dpa}, ${f.dmy},
+				${f.notify_on_access}, ${f.notify_on_disconnect}, ${f.notification_info_active}, ${f.notify_pseudonymized},
+				${f.notification_address}, ${f.display_before_connect}, ${f.additional_info})
 			RETURNING id::text AS id`;
+		try {
+			await spoolDeviceOnSave(row.id);
+		} catch (e) {
+			console.error('[spool] device create:', (e as Error).message);
+		}
 		throw redirect(303, `${base}/devices?sel=${encodeURIComponent(row.id)}`);
 	},
 
@@ -213,7 +253,15 @@ export const actions: Actions = {
 		const [{ n }] = await globalDb<{ n: number }[]>`
 			SELECT count(*)::int AS n FROM authz_scope_device WHERE device_id = ${id}`;
 		if (n > 0) return fail(400, { error: `Referenced by ${n} single-system grant(s); revoke those first.` });
+		const [g] = await globalDb<{ ip: string | null; gateway_id: string | null }[]>`
+			SELECT ip_address AS ip, gateway_id::text AS gateway_id FROM device WHERE id = ${id}`;
 		await globalDb`DELETE FROM device WHERE id = ${id}`;   // customer_site_member_static cascades
+		try {
+			if (g?.ip) await deleteDeviceKey(g.ip);
+			if (g?.gateway_id) await spoolGateway(g.gateway_id);
+		} catch (e) {
+			console.error('[spool] device delete:', (e as Error).message);
+		}
 		throw redirect(303, `${base}/devices`);
 	},
 };

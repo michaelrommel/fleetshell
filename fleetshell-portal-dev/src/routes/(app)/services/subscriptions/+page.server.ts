@@ -166,7 +166,9 @@ export const actions: Actions = {
 			root_path: orNull(d.get('root_path')),
 			use_partno_folder: d.get('use_partno_folder') === 'on',
 			container_path: orNull(d.get('container_path')),
-			auth: JSON.stringify(auth),
+			// Pass the OBJECT (not a pre-stringified JSON string) so postgres.js
+			// serializes it into jsonb correctly instead of double-encoding it.
+			auth,
 		};
 
 		let newId = id;
@@ -178,7 +180,7 @@ export const actions: Actions = {
 						comment = ${fields.comment}, activated = ${fields.activated},
 						delivery_method = ${fields.delivery_method}, root_path = ${fields.root_path},
 						use_partno_folder = ${fields.use_partno_folder}, container_path = ${fields.container_path},
-						auth = ${fields.auth}::jsonb, updated_at = now()
+						auth = ${globalDb.json(fields.auth)}, updated_at = now()
 					WHERE id = ${id}`;
 			} else {
 				[{ id: newId }] = await globalDb<{ id: string }[]>`
@@ -187,7 +189,7 @@ export const actions: Actions = {
 						 root_path, use_partno_folder, container_path, auth)
 					VALUES (${fields.name}, ${fields.ip_address}, ${fields.country}, ${fields.use_case}, ${fields.comment},
 						${fields.activated}, ${fields.delivery_method}, ${fields.root_path},
-						${fields.use_partno_folder}, ${fields.container_path}, ${fields.auth}::jsonb)
+						${fields.use_partno_folder}, ${fields.container_path}, ${globalDb.json(fields.auth)})
 					RETURNING id::text AS id`;
 			}
 		} catch {

@@ -169,6 +169,14 @@
 		<label>NAT type<input name="nat_type" value={x?.nat_type ?? ''} disabled={!edit} /></label>
 		<label>Admin IP<input name="admin_ip" value={x?.admin_ip ?? ''} disabled={!edit} /></label>
 		<label>Admin IP 2<input name="admin_ip2" value={x?.admin_ip2 ?? ''} disabled={!edit} /></label>
+		<label>Tunnel Gateway (Connect)<input name="tunnel_gateway" value={x?.tunnel_gateway ?? ''} disabled={!edit} placeholder="atlanta-01" /></label>
+	</div>
+
+	<h4>Backend NAT (customer-view IPs)</h4>
+	<div class="grid2">
+		<label>Access server<input name="backend_access_ip" value={x?.backend_access_ip ?? ''} disabled={!edit} placeholder="10.67.250.250" /></label>
+		<label>SD server<input name="backend_sd_ip" value={x?.backend_sd_ip ?? ''} disabled={!edit} placeholder="10.67.250.251" /></label>
+		<label>EM server<input name="backend_em_ip" value={x?.backend_em_ip ?? ''} disabled={!edit} placeholder="10.67.250.252" /></label>
 	</div>
 {/snippet}
 

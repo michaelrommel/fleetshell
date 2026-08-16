@@ -405,11 +405,13 @@ authorization (no per-member execute/delegate re-check; the only surviving
    (blocking rustls/ring RESP client; O(1) SMEMBERS on %SRC + %DST/%PORT match,
    protocol advisory unless `--strict-proto`; run one instance per proxy type;
    Squid config example in `squid-infoproxy/README.md` + the crate docstring). **NEXT (deploy-only): put the helper on the Squid hosts +
-   schedule the spool refresh.** Separately, the **Valkey spool** for the gateway
-   IPsec (`fleetipsec:site:<public_ip>`
-   / `fleetipsec:psk:<public_ip>` from `gateway.ipsec` / `gateway.psk`) so a test
-   device can actually connect. The DynDNS password would come from the source
-   `WEBDNSPWID`/`WEBDNSPWPW` in production.
+   schedule the spool refresh.** The **device + gateway Valkey spool** is now
+   BUILT (see `docs/valkey_spool.md`): write-through on device/gateway save into
+   `systems:by-ip:<ip>` (aeroftp: modality/product/partno/serial/country/dtm/
+   contracts) and `fleetipsec:{psk,site,nat}:<public_ip>` (ipsecnode: crypto +
+   NAT with per-device `nat_mode`). Verified against ipsecnode (arrays OK,
+   customer_id unused, backend_nat optional). The DynDNS password would come from
+   the source `WEBDNSPWID`/`WEBDNSPWPW` in production.
 4. **Single-system grant creation** in the Grants tab -- now unblocked by the
    real device browser (device serials/FL exist).
 
