@@ -330,8 +330,26 @@ authorization (no per-member execute/delegate re-check; the only surviving
    migration, `resolve_apps` (device rows override else the model's
    `product_model_app`), and an override editor (reuse `AppEditor`) with
    revert-to-model. The device page currently shows the inherited list read-only.
-3. **Services > Infoproxy** (proxy destination authz, filterable by product
-   model) + **Valkey spool** for the gateway IPsec (`fleetipsec:site:<public_ip>`
+3. **Services > Infoproxy** (proxy/Squid destination authz, filterable by product
+   model). **Schema DONE** (`migrate_infoproxy.sql`, folded into `schema_global.sql`
+   + `reload.sh`, applied live). **Model (3 tables):**
+   `proxy_destination_rule_collection` (named container -- "iPad Rule Collection";
+   NOT an authz group), `proxy_destination_rule` (ONE allowed target =
+   cidr/dns + port range + protocol; belongs to a collection; no scope on the
+   rule), `proxy_destination_binding` (the scope: applies a collection to
+   device|ANY and/or product-model|ANY; reusable). Rules always live in a
+   collection. Empty ruleset for now (no legacy export yet -- import later).
+   **Runtime decision: Squid `external_acl_type` helper + Valkey.** A spooler
+   flattens binding->collection->rule OFFLINE into a per-source-IP allow-list in
+   Valkey (Squid only sees the source IP; device modality/product/serial resolved
+   at spool time via device.ip -> device -> model -> matching bindings). The helper
+   does an O(1) `%SRC` lookup + dst/port/proto match; Squid caches the verdict. This
+   scales to the single-system-binding volume where pre-generated squid.conf fast
+   ACLs would not (linear http_access scan). NOT built: the helper, the spool key
+   layout, and the **UI** (`services/infoproxy/+page.*`: central filterable rules
+   table -- `?product=<model>` shows collections bound to that model OR ANY --
+   + collection/rule/binding CRUD; wire the product-model deep-link landing). Then
+   the **Valkey spool** for the gateway IPsec (`fleetipsec:site:<public_ip>`
    / `fleetipsec:psk:<public_ip>` from `gateway.ipsec` / `gateway.psk`) so a test
    device can actually connect. The DynDNS password would come from the source
    `WEBDNSPWID`/`WEBDNSPWPW` in production.

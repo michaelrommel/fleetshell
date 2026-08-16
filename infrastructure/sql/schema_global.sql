@@ -349,6 +349,38 @@ CREATE TABLE IF NOT EXISTS subscription_server (
 );
 CREATE INDEX IF NOT EXISTS ix_subscription_server_server ON subscription_server(server_id);
 
+-- Infoproxy (see docs/product_admin.md sec 4 + migrate_infoproxy.sql). Proxy
+-- (Squid) destination authorization: a NAMED collection holds allowed-target
+-- rules; bindings apply a collection to a device|ANY and/or product-model|ANY.
+-- Flattened per-source-IP into Valkey at spool time for a Squid external_acl.
+CREATE TABLE IF NOT EXISTS proxy_destination_rule_collection (
+    id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    name        text NOT NULL UNIQUE,
+    description text
+);
+
+CREATE TABLE IF NOT EXISTS proxy_destination_rule (
+    id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    collection_id    uuid NOT NULL REFERENCES proxy_destination_rule_collection(id) ON DELETE CASCADE,
+    target_cidr      cidr,
+    target_dns       text,
+    target_port_from int,
+    target_port_to   int,
+    protocol         text NOT NULL,
+    CHECK (target_cidr IS NOT NULL OR target_dns IS NOT NULL)
+);
+CREATE INDEX IF NOT EXISTS ix_proxy_rule_collection ON proxy_destination_rule(collection_id);
+
+CREATE TABLE IF NOT EXISTS proxy_destination_binding (
+    id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    collection_id uuid NOT NULL REFERENCES proxy_destination_rule_collection(id) ON DELETE CASCADE,
+    device_id     uuid REFERENCES device(id)  ON DELETE CASCADE,   -- NULL = ANY device
+    product_id    uuid REFERENCES product(id) ON DELETE CASCADE    -- NULL = ANY model; else kind='model'
+);
+CREATE INDEX IF NOT EXISTS ix_proxy_binding_collection ON proxy_destination_binding(collection_id);
+CREATE INDEX IF NOT EXISTS ix_proxy_binding_product    ON proxy_destination_binding(product_id);
+CREATE INDEX IF NOT EXISTS ix_proxy_binding_device     ON proxy_destination_binding(device_id);
+
 -- Devices: scope dimensions promoted to indexed columns; long tail in jsonb.
 CREATE TABLE IF NOT EXISTS device (
     id                 uuid PRIMARY KEY DEFAULT gen_random_uuid(),

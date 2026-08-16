@@ -971,7 +971,7 @@ customer/site). Hot path: resolve user->groups locally, then evaluate
 groups->grants->scopes against globally-replicated master data. The list query
 is index-using SQL (GiST on ltree paths), no bitmaps.
 
-### Status: infra + schema + import + perf DONE; portal shell + Administration + Products (incl. Data Classification) + Devices + Gateways DONE. Next: Data Transfer Matrix.
+### Status: infra + schema + import + perf DONE; portal shell + Administration + Products (incl. Data Classification) + Devices + Gateways + Countries/Region Tree + Data Transfer Matrix + Customers/Sites + Services>File Subscriptions DONE; Services>Infoproxy schema DONE. Next: Infoproxy UI + spool.
 
 The portal-dev application chrome is built (`docs/portal_ui.md`): brand top-bar
 (Healthineers logo + "FleetShell Portal"; theme toggle, bell/news placeholder,
@@ -1019,22 +1019,83 @@ See `docs/mdm_status.md` "Re-running the data pipeline / full reload".
   and the **IPsec/tunnel editor** (`IpsecEditor.svelte`; `public_ip`+`psk`+`ipsec`
   jsonb = the legacy Valkey SiteRecord). `dns_name` repurposed -> nullable
   `hostname` (DynDNS); `public_ip` synthesized.
-- **Services** nav placeholder (Infoproxy / E-Mail Relay / File Transfer).
+- **Services** (`/services`): tabbed **Infoproxy | E-Mail | File Subscriptions**
+  (`services/+layout.svelte`; `/services` redirects to the first tab). Infoproxy
+  and E-Mail are placeholders. **File Subscriptions is BUILT**
+  (`services/subscriptions/`): two draggable `SplitPane` tabs -- **Subscriber
+  Servers** (delivery-target CRUD: name/ip_address/country/use-case/comment/
+  activated + delivery method ADLS|S3|SCP + root path / use-partno-folder /
+  container-or-sub-path + method-specific `auth` jsonb -- ADLS service-principal
+  or default, S3 access-key or assume-role, SCP user/pass; secrets PLAINTEXT in
+  the jsonb; detail lists attached subscriptions with remove + search-add via
+  `?/saveServerSubs`) and **Subscriptions** (matcher CRUD: name + optional
+  modality/product pickers (product scoped to modality) + PCRE `pattern` +
+  `negate`; detail attaches to servers via a tickable server grid via
+  `?/saveSubServers`). Both save-set actions rewrite one side's
+  `subscription_server` in a txn (no giant matrix -- 282x56 locked the browser). A
+  `Save to Valkey` spool-out button exists on both views but is UNWIRED
+  (`spoolValkey` returns a "coming soon" notice). Schema
+  `migrate_file_subscriptions.sql` (`subscriber_server` / `subscription` /
+  `subscription_server`). Data imported by `import/import_subscriptions.py`
+  (gitignored xlsx -> 56 servers / 282 subs / 297 attachments; honors ANONYMIZE;
+  in `reload.sh`). New endpoint `/api/administration/product-picker` (product-UUID
+  type-ahead, optional `mod` filter); `EntityPicker` gained `extraParams`.
 - UI consistency: shared `.actions-bar`/`.act-*` (Delete left, Cancel, Save/
   Create right; red delete via `ConfirmDialog`), `SplitPane` (draggable,
-  persisted), dark scrollbars, in-field search x + keep-focus.
+  persisted), dark scrollbars, in-field search x + keep-focus. Section layout
+  wrappers (Products/Countries/Services/Admin) no longer cap at 80rem -- they fill
+  the viewport width like Customers.
 
-**RESUME HERE (see `docs/mdm_status.md` WHERE TO START NEXT):** the **Data
-Transfer Matrix** and the **Customers/Sites** page are now BUILT. Then: (1) the
+**RESUME HERE -- Infoproxy UI (next session, ~3h break).** Today we settled
+**Services > Infoproxy** (proxy/Squid destination authorization) and built its
+**schema only**. State + plan:
+
+- **Schema DONE + LIVE** (`infrastructure/sql/migrate_infoproxy.sql`, folded into
+  `schema_global.sql`, in `reload.sh` after `migrate_file_subscriptions.sql`).
+  **Three tables** (empty -- no legacy export yet, import later):
+  - `proxy_destination_rule_collection` (id, name UNIQUE, description) -- a NAMED
+    container of rules ("iPad Rule Collection"). Purely administrative; **NOT** an
+    authz group. Do not conflate with the authz subsystem (authz only governs who
+    may edit these, product-based).
+  - `proxy_destination_rule` (id, collection_id, target_cidr, target_dns,
+    target_port_from, target_port_to, protocol; CHECK cidr OR dns). A rule is
+    **ONLY an allowed target** -- no device/product scope on it. Always lives in a
+    collection.
+  - `proxy_destination_binding` (id, collection_id, device_id|NULL, product_id|NULL)
+    -- the SCOPE. Applies a collection to a device (NULL=ANY) and/or product MODEL
+    (NULL=ANY; product.kind='model'). Reusable: one collection binds many times.
+    Match: `(device_id IS NULL OR =D) AND (product_id IS NULL OR =D's model)`;
+    both NULL = global.
+- **Runtime decided (not built): Squid `external_acl_type` helper + Valkey.** A
+  spooler flattens binding->collection->rule OFFLINE into a per-source-IP
+  allow-list in Valkey (Squid sees only the source IP; resolve device
+  modality/product/serial at spool time via `device.ip_address -> device -> model
+  -> matching bindings`). Helper does an O(1) `%SRC` lookup + matches
+  `%DST/%PORT/%PROTO`; Squid caches the verdict. Chosen over pre-generated
+  squid.conf fast ACLs (linear `http_access` scan blows up on the single-system
+  binding volume). ICAP is content adaptation, not the ACL mechanism.
+- **TO BUILD next:** (1) `services/infoproxy/+page.*` -- collection list +
+  rules editor + bindings editor (reuse `EntityPicker` for device, product-picker
+  scoped to `kind='model'`); a central filterable rules table where
+  `?product=<model>` shows collections bound to that model OR ANY (legacy
+  model-dialog semantics); wire the product-tree deep-link
+  (`View destinations for this model ->` at `products/tree/+page.svelte`). (2) The
+  Valkey key layout + spooler + the Squid helper. (3) Importer when the legacy
+  ~2226-rule export lands. All writes admin-gated / `authz_can(persona,verb,product)`.
+- Full detail in `docs/mdm_status.md` (WHERE TO START NEXT item 3) and the spec in
+  `docs/product_admin.md` sec 4.
+
+**Also open (see `docs/mdm_status.md` WHERE TO START NEXT):** (1) the
 device **per-device app override** (`device_app` table + `resolve_apps` +
 override editor -- the device
-Applications list is currently read-only/inherited); (3) **Services > Infoproxy**
-+ the **Valkey spool** of `gateway.ipsec`/`psk` to `fleetipsec:*` so a test
-device can connect; (4) single-system grant creation (now unblocked by the
-device browser). Later: slice C (group-membership `authz_can` replacing
-`is_admin`), L0/L1 Valkey caches (+ re-benchmark), real SAML/OAuth, and the
-Dockerfile + ECS/ALB `/dev/*` deploy. NOTE: `product_model_app` is empty in the
-DB today -- define apps on a model and its devices inherit them.
+Applications list is currently read-only/inherited); (2) the **File Subscriptions
+Valkey spool** (wire `spoolValkey`); (3) the **Valkey spool** of
+`gateway.ipsec`/`psk` to `fleetipsec:*` so a test device can connect; (4)
+single-system grant creation (now unblocked by the device browser). Later: slice C
+(group-membership `authz_can` replacing `is_admin`), L0/L1 Valkey caches (+
+re-benchmark), real SAML/OAuth, and the Dockerfile + ECS/ALB `/dev/*` deploy.
+NOTE: `product_model_app` is empty in the DB today -- define apps on a model and
+its devices inherit them.
 
 ### Hard rules (do not break — see `docs/mdm_design.md` §5.1)
 
