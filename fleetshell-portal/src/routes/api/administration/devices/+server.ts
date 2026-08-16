@@ -1,60 +1,25 @@
-/**
- * GET /api/administration/devices?q=<query>
- *
- * Searches Valkey for device entries matching the query.
- *
- * If the query looks like an IP address, a direct hGetAll on
- * systems:by-ip:<q> is attempted first.  Otherwise (or additionally),
- * SCAN is used to find all systems:by-ip:* keys whose field values contain
- * the query string (case-insensitive).  Safe for admin use where the
- * device count is in the low hundreds.
- *
- * Returns: { devices: Array<{ ip: string; fields: Record<string, string> }> }
- */
-import { json, error }       from '@sveltejs/kit';
-import { getRedisClient }    from '$lib/server/redis';
+import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
+import { getPersona } from '$lib/server/identity';
+import { globalDb } from '$lib/server/db';
 
-export const GET: RequestHandler = async ({ request, locals, url }) => {
-	if (!locals.user) error(401, 'Unauthorized');
-
+// Admin-gated type-ahead for devices (customer-site "customer systems" picker).
+// Matches on serial / IP / functional location / hospital.
+export const GET: RequestHandler = async ({ url, locals }) => {
+	if (!locals.userId) throw error(401, 'unauthenticated');
+	const persona = await getPersona(locals.userId);
+	if (!persona?.is_admin) throw error(403, 'forbidden');
 	const q = (url.searchParams.get('q') ?? '').trim();
-	if (!q) return json({ devices: [] });
-
-	const redis   = await getRedisClient();
-	const results: { ip: string; fields: Record<string, string> }[] = [];
-	const seen    = new Set<string>();
-
-	// ── 1. Direct IP lookup ───────────────────────────────────────────────────
-	const isIpLike = /^[\d.]+$/.test(q);
-	if (isIpLike) {
-		const hash = await redis.hGetAll(`systems:by-ip:${q}`);
-		if (Object.keys(hash).length > 0) {
-			seen.add(q);
-			results.push({ ip: q, fields: hash });
-		}
-	}
-
-	// ── 2. SCAN for pattern matches across all device keys ────────────────────
-	// redis v6 scanIterator yields string[] batches (one page per iteration),
-	// not individual strings — iterate the inner array.
-	const lq = q.toLowerCase();
-	for await (const batch of redis.scanIterator({ MATCH: 'systems:by-ip:*', COUNT: 100 })) {
-		for (const key of batch) {
-			const ip = (key as string).replace('systems:by-ip:', '');
-			if (seen.has(ip)) continue;
-
-			const hash = await redis.hGetAll(key as string);
-			const matches =
-				ip.includes(lq) ||
-				Object.values(hash).some(v => v.toLowerCase().includes(lq));
-
-			if (matches) {
-				seen.add(ip);
-				results.push({ ip, fields: hash });
-			}
-		}
-	}
-
-	return json({ devices: results });
+	if (q.length < 2) return json({ items: [] });
+	const like = '%' + q + '%';
+	const items = await globalDb<{ id: string; serial: string; ip: string; model: string; product: string }[]>`
+		SELECT d.id::text AS id, COALESCE(d.serial, '') AS serial, COALESCE(d.ip_address, '') AS ip,
+		       COALESCE((SELECT name FROM product WHERE path = d.product_path), '') AS model,
+		       COALESCE((SELECT name FROM product WHERE nlevel(d.product_path) >= 2
+		                 AND path = subpath(d.product_path, 0, nlevel(d.product_path) - 1)), '') AS product
+		FROM device d
+		WHERE d.serial ILIKE ${like} OR d.ip_address ILIKE ${like}
+		   OR d.functional_location ILIKE ${like} OR d.hospital_name ILIKE ${like}
+		ORDER BY d.serial NULLS LAST LIMIT 25`;
+	return json({ items });
 };

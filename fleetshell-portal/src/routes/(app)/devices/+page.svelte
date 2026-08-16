@@ -1,366 +1,235 @@
 <script lang="ts">
-	import type { PageData }     from './$types';
-	import { CLIENT_API_BASE }   from '$lib/client-api';
-	import { onMount }           from 'svelte';
+	import { base } from '$app/paths';
+	import { page as pageState } from '$app/state';
+	import { goto } from '$app/navigation';
+	import { enhance } from '$app/forms';
+	import SplitPane from '$lib/components/SplitPane.svelte';
+	import EntityPicker from '$lib/components/EntityPicker.svelte';
+	import ContractsChips from '$lib/components/ContractsChips.svelte';
+	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
+	import { CLIENT_API_BASE } from '$lib/client-api';
+	import { toastEnhance } from '$lib/toast.svelte';
 
-	let { data }: { data: PageData } = $props();
+	let { data, form } = $props();
+	let confirmDelete = $state(false);
 
-	// ── Types (mirror $lib/server/devices) ──────────────────────────────────────
-	type Application = 'http' | 'https' | 'expert-i' | 'rdp' | 'vnc' | 'ssh';
-
-	interface AppProfile {
-		name: string; ports: string; application: Application;
-		guac: boolean; e2ecrypt: boolean; sni: string; path: string;
-		width: number; height: number; dpi: number; drive: boolean; record: boolean;
-	}
-	/** Working row: an AppProfile plus a view-mode "connect this" flag. */
-	interface PortRow extends AppProfile { selected: boolean; }
-
-	interface DeviceConfig { target: string; gateway: string; servicekey: string; apps: AppProfile[]; }
-	interface DeviceSummary { ip: string; fields: Record<string, string>; app_count: number; }
-	interface DeviceDetail  { ip: string; exists: boolean; fields: Record<string, string>; config: DeviceConfig; }
-
-	// ── Mode ────────────────────────────────────────────────────────────────────
-	type Mode = 'list' | 'view' | 'edit';
-	let mode = $state<Mode>('list');
-
-	// ── Search / list ───────────────────────────────────────────────────────────
-	let query       = $state(data.initialQuery ?? '');
-	let searching   = $state(false);
-	let devices     = $state<DeviceSummary[]>([]);
-	let searchError = $state('');
-
-	// ── Detail ──────────────────────────────────────────────────────────────────
-	let detail    = $state<DeviceDetail | null>(null);
-	let loading    = $state(false);
-	let loadError  = $state('');
-
-	// ── Connection working set (shared by view + connect) ───────────────────────
-	let target     = $state('');
-	let gateway    = $state('');
-	let servicekey = $state('');
-	let username   = $state('');
-	let password   = $state('');
-	let portRows   = $state<PortRow[]>([]);
-
-	// ── Edit / create ───────────────────────────────────────────────────────────
-	let isCreate  = $state(false);
-	let createIp  = $state('');
-	let saving    = $state(false);
-	let saveError = $state('');
-
-	// ── Helpers: app profile <-> port row ────────────────────────────────────────
-	function blankRow(): PortRow {
-		return {
-			name: '', ports: '', application: 'https', guac: false, e2ecrypt: false,
-			sni: '', path: '/', width: 1920, height: 1080, dpi: 96,
-			drive: false, record: false, selected: false,
-		};
-	}
-	function appToRow(a: AppProfile): PortRow { return { ...a, selected: false }; }
-	function rowToApp(r: PortRow): AppProfile {
-		const { selected, ...app } = r;
-		return app;
+	// local search box seeded from the URL; submitted via the form (stage 1).
+	// Count (approach A): carried in the URL while paging (data.total is a number);
+	// when the filter changes (data.total === null) the client fetches it once.
+	let fetchedCount = $state<number | null>(null);
+	let countLoading = $state(false);
+	const effectiveTotal = $derived(data.total ?? fetchedCount);
+	$effect(() => {
+		const qq = data.q, mm = data.mode;
+		if (data.total !== null) { fetchedCount = null; countLoading = false; return; }
+		countLoading = true; fetchedCount = null;
+		const p = new URLSearchParams({ q: qq });
+		if (mm === 'all') p.set('mode', 'all');
+		fetch(`${base}/devices/count?${p}`)
+			.then((r) => (r.ok ? r.json() : { total: null }))
+			.then((j) => { fetchedCount = j.total ?? null; countLoading = false; })
+			.catch(() => { countLoading = false; });
+	});
+	function pageLink(dir: 'prev' | 'next'): string {
+		const ch: Record<string, string | null> = dir === 'next'
+			? { after: data.nextCursor, before: null, page: String(data.page + 1) }
+			: { before: data.prevCursor, after: null, page: String(Math.max(1, data.page - 1)) };
+		if (effectiveTotal !== null) ch.n = String(effectiveTotal);
+		return withParams(ch);
 	}
 
-	// ── Search ────────────────────────────────────────────────────────────────────
-	async function search(): Promise<void> {
-		searching   = true;
-		searchError = '';
-		loadError   = '';
-		try {
-			const res  = await fetch(`/api/devices?q=${encodeURIComponent(query.trim())}`);
-			if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
-			const body = await res.json();
-			devices    = body.devices ?? [];
-			if (devices.length === 0) searchError = 'No devices found.';
-		} catch (e) {
-			searchError = String(e);
-		} finally {
-			searching = false;
-		}
+	function withParams(changes: Record<string, string | null>): string {
+		const u = new URLSearchParams(pageState.url.searchParams);
+		for (const [k, v] of Object.entries(changes)) v === null ? u.delete(k) : u.set(k, v);
+		return `${base}/devices?${u}`;
+	}
+	const selHref = (id: string) => withParams({ sel: id, new: null });
+	const newHref = $derived(withParams({ new: '1', sel: null }));
+	const cancelHref = $derived(withParams({ new: null, sel: null }));
+
+	// Detail-panel tabs (Connect is the daily driver, so it is the default).
+	const TABS = ['connect', 'files', 'manage'] as const;
+	const tab = $derived.by(() => {
+		const t = pageState.url.searchParams.get('tab');
+		return (TABS as readonly string[]).includes(t ?? '') ? (t as string) : 'connect';
+	});
+	const tabHref = (t: string) => withParams({ tab: t });
+	function setMode(m: string) { return withParams({ mode: m, after: null, before: null, page: null, sel: null }); }
+	let searchInput: HTMLInputElement;
+	function doSearch() {
+		goto(withParams({ q: searchInput.value.trim() || null, after: null, before: null, page: null, n: null }), { keepFocus: true, noScroll: true });
+	}
+	function clearSearch() {
+		searchInput.value = ''; searchInput.focus();
+		goto(withParams({ q: null, after: null, before: null, page: null, n: null }), { keepFocus: true, noScroll: true });
 	}
 
-	onMount(() => { if (query.trim()) search(); });
+	const canEdit = $derived(data.isAdmin);
+	const d = $derived(data.detail as Record<string, string | null> | null);
+	type App = { name: string; application: string; ports: string; guac: boolean; e2ecrypt: boolean; sni: string; path: string; drive: boolean; record: boolean; width?: number; height?: number; dpi?: number };
+	const apps = $derived((data.detail?.apps ?? []) as App[]);
 
-	// ── Load detail (view) ───────────────────────────────────────────────────────
-	async function view(ip: string): Promise<void> {
-		loading   = true;
-		loadError = '';
+	// ---- Connect workflow -----------------------------------------------------
+	// Selectable copy of the inherited apps; target + gateway are resolved
+	// server-side by /api/tunnel/sign (never dictated by the browser).
+	type PortRow = App & { selected: boolean };
+	let portRows = $state<PortRow[]>([]);
+	let username = $state('');
+	let password = $state('');
+	let lastDeviceId = '';
+	$effect(() => {
+		const id = d?.id ?? '';
+		if (id === lastDeviceId) return;
+		lastDeviceId = id;
+		portRows = apps.map((a) => ({ ...a, selected: false }));
+		username = '';
+		password = '';
 		resetConnect();
-		try {
-			const res  = await fetch(`/api/devices/${encodeURIComponent(ip)}`);
-			if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
-			const body = await res.json();
-			detail     = body.device as DeviceDetail;
-			loadConfigIntoState(detail.config);
-			mode       = 'view';
-		} catch (e) {
-			loadError = String(e);
-		} finally {
-			loading = false;
-		}
-	}
+	});
 
-	function loadConfigIntoState(cfg: DeviceConfig): void {
-		target     = cfg.target;
-		gateway    = cfg.gateway;
-		servicekey = cfg.servicekey;
-		portRows   = cfg.apps.map(appToRow);
-	}
+	const guacApplicable = (r: PortRow) => ['rdp', 'vnc', 'ssh'].includes(r.application);
+	const selectedRows = () => portRows.filter((r) => r.selected);
+	const selectedCount = $derived(portRows.filter((r) => r.selected).length);
+	const needsCreds = $derived(portRows.some((r) => r.selected && (r.guac || (r.application === 'ssh' && !r.e2ecrypt))));
+	// No Tunnel Gateway on the device -> connections cannot be signed; block them.
+	const hasTunnelGw = $derived(!!(d?.gateway_tunnel && String(d.gateway_tunnel).trim()));
 
-	// ── Enter edit / create ───────────────────────────────────────────────────────
-	function startEdit(): void {
-		if (!detail) return;
-		isCreate  = false;
-		saveError = '';
-		// portRows/target/gateway/servicekey already reflect the loaded config.
-		if (portRows.length === 0) portRows = [blankRow()];
-		mode = 'edit';
+	function appSummary(a: PortRow): string {
+		const bits = [a.application.toUpperCase(), a.ports || '?'];
+		if (a.guac) bits.push('guac');
+		if (a.e2ecrypt) bits.push('e2e');
+		if (a.record) bits.push('rec');
+		if (a.drive) bits.push('drive');
+		return bits.join(' \u00b7 ');
 	}
-
-	function startCreate(): void {
-		isCreate   = true;
-		saveError  = '';
-		createIp   = '';
-		target     = '';
-		gateway    = 'gateway.fleetshell.com';
-		servicekey = '';
-		portRows   = [blankRow()];
-		detail     = null;
-		resetConnect();
-		mode = 'edit';
-	}
-
-	// ── Save (upsert app_config) ───────────────────────────────────────────────────
-	async function save(): Promise<void> {
-		saveError = '';
-		const ip = (isCreate ? createIp : detail?.ip ?? '').trim();
-		if (!/^(\d{1,3}\.){3}\d{1,3}$/.test(ip)) { saveError = 'Enter a valid IPv4 device address.'; return; }
-
-		const config: DeviceConfig = {
-			target: target.trim() || ip,
-			gateway: gateway.trim(),
-			servicekey: servicekey.trim(),
-			apps: portRows.map(rowToApp),
-		};
-
-		saving = true;
-		try {
-			const res = await fetch(`/api/devices/${encodeURIComponent(ip)}`, {
-				method:  'PUT',
-				headers: { 'Content-Type': 'application/json' },
-				body:    JSON.stringify({ config, create: isCreate }),
-			});
-			if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
-			await view(ip);      // reload detail into view mode
-			await search();      // refresh list in the background
-		} catch (e) {
-			saveError = String(e);
-		} finally {
-			saving = false;
-		}
-	}
-
-	function cancelEdit(): void {
-		if (isCreate) { mode = 'list'; detail = null; }
-		else if (detail) view(detail.ip);
-		else mode = 'list';
-	}
-
-	function backToList(): void { mode = 'list'; detail = null; resetConnect(); }
-
-	// ── Port-row editor helpers ────────────────────────────────────────────────────
-	function addRow(): void { portRows = [...portRows, blankRow()]; }
-	function removeRow(i: number): void {
-		if (portRows.length > 1) portRows = portRows.filter((_, idx) => idx !== i);
-	}
-	function guacApplicable(row: PortRow): boolean {
-		return row.application === 'rdp' || row.application === 'vnc' || row.application === 'ssh';
-	}
-	function sniEffective(row: PortRow): boolean {
-		if (row.guac) return false;
-		return (row.application === 'http' || row.application === 'https' || row.application === 'expert-i') && !row.e2ecrypt;
-	}
-	function showGuacParams(row: PortRow): boolean { return row.guac && guacApplicable(row); }
-	function showPathParam(row: PortRow): boolean {
-		return row.application === 'http' || row.application === 'https' || row.application === 'expert-i';
-	}
-	function onAppChange(row: PortRow): void {
-		if (guacApplicable(row)) {
-			if (!row.guac && row.application !== 'ssh') row.e2ecrypt = true;
-		} else {
-			row.guac = false; row.e2ecrypt = false;
-		}
-		if (row.application !== 'rdp') row.drive = false;
-		if (!guacApplicable(row))      row.record = false;
-	}
-
-	// ══ CONNECT FLOW (preserved from the original page) ═════════════════════════
 
 	type ConnectState = 'idle' | 'signing' | 'connecting' | 'launching' | 'done' | 'error';
 	let connectState = $state<ConnectState>('idle');
-	let connectMsg   = $state('');
-	let connectUrls    = $state<string[]>([]);
+	let connectMsg = $state('');
+	let connectUrls = $state<string[]>([]);
 	let connectedToken = $state<string | null>(null);
-	let connectedBindIp = $state<string>('');
-	let connectedRows  = $state<PortRow[]>([]);
-	// Local-port reassignments reported by the client: { requested, actual, reason }.
-	interface PortRemap { requested: number; actual: number; reason: string; }
+	let connectedBindIp = $state('');
+	let connectedRows = $state<PortRow[]>([]);
+	let connectedTarget = $state('');
+	let connectedGateway = $state('');
+	type PortRemap = { requested: number; actual: number; reason?: string };
 	let connectRemaps = $state<PortRemap[]>([]);
-	// Resolve the actual local port for a requested port, honouring any remap.
-	function actualPort(requested: number): number {
-		return connectRemaps.find(r => r.requested === requested)?.actual ?? requested;
-	}
-	// Inverse of actualPort: map an actual (possibly remapped) port back to the
-	// port the user requested, so it can be matched against a row's `ports` spec.
-	function requestedPort(actual: number): number {
-		return connectRemaps.find(r => r.actual === actual)?.requested ?? actual;
-	}
-	let probeState = $state<'idle' | 'checking' | 'unreachable'>('idle');
-	let probeMsg   = $state('');
-	let probeBtn   = $state<ResultButton | null>(null);
-
-	let resultBanner: HTMLElement | undefined = $state();
-	$effect(() => {
-		if (connectState === 'done' || connectState === 'error') {
-			resultBanner?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-		}
-	});
-
 	const busy = $derived(connectState === 'signing' || connectState === 'connecting');
 
-	/** Rows the user has ticked for connection. */
-	function selectedRows(): PortRow[] { return portRows.filter(r => r.selected); }
-	const selectedCount = $derived(portRows.filter(r => r.selected).length);
+	type ProbeState = 'idle' | 'checking' | 'unreachable';
+	let probeState = $state<ProbeState>('idle');
+	let probeMsg = $state('');
 
-	function tunnelBody(token: string): string {
-		const rows    = selectedRows();
-		const guacRow = rows.find(r => r.guac && guacApplicable(r));
-		const sshRow  = rows.find(r => r.application === 'ssh' && !r.guac);
-		const dimRow  = guacRow ?? sshRow;
-		return JSON.stringify({
-			target,
-			token,
-			gateway,
-			servicekey : servicekey || undefined,
-			username   : username   || undefined,
-			password   : password   || undefined,
-			width         : dimRow?.width  ?? undefined,
-			height        : dimRow?.height ?? undefined,
-			dpi           : dimRow?.dpi    ?? undefined,
-			enable_drive  : (guacRow?.drive && guacRow?.application === 'rdp') || undefined,
-			enable_record : guacRow?.record || undefined,
-			port_rows  : rows.map(r => ({
-				ports      : r.ports,
-				application: r.application,
-				guac       : r.guac       || undefined,
-				e2ecrypt   : (!r.guac && r.e2ecrypt) ? true : undefined,
-				sni        : r.sni        || undefined,
-				path       : (r.path && r.path !== '/') ? r.path : undefined,
-			})),
-		});
-	}
+	const actualPort = (requested: number) => connectRemaps.find((r) => r.requested === requested)?.actual ?? requested;
+	const requestedPort = (actual: number) => connectRemaps.find((r) => r.actual === actual)?.requested ?? actual;
+	const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
-	const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
-
-	interface ResultButton {
-		label: string; kind: 'url' | 'guac' | 'launch';
-		url: string; app: string;
-		// `port` is the LOCAL loopback port (what mstsc/vncviewer connects to and
-		// what the URL embeds); it may be a remapped ephemeral port.
-		// `targetPort` is the ORIGINAL device/service port - the only port the
-		// gateway ever sees (probe + signed JWT).  Never send `port` to the gateway.
-		port: number; targetPort: number; record?: boolean;
-	}
 	function firstPort(spec: string): number {
-		const part = spec.split(',')[0].trim();
-		const n    = parseInt(part.split('-')[0]);
+		const n = parseInt((spec.split(',')[0] ?? '').trim().split('-')[0]);
 		return isNaN(n) ? 0 : n;
 	}
 	function portFromUrl(url: string): number {
 		try {
 			const u = new URL(url);
 			if (u.port) return parseInt(u.port);
-			// The URL parser strips the scheme's DEFAULT port (443 for https,
-			// 80 for http), so `u.port` is empty for e.g. `https://host:443/`.
-			// Infer it from the protocol so row matching still works.
-			if (u.protocol === 'https:') return 443;
-			if (u.protocol === 'http:')  return 80;
+			return u.protocol === 'https:' ? 443 : 80;
+		} catch {
 			return 0;
-		} catch { return 0; }
+		}
 	}
 	function rowForPort(port: number, rows: PortRow[]): PortRow | undefined {
-		return rows.find(r => {
-			for (const part of r.ports.split(',')) {
-				const t = part.trim();
+		return rows.find((r) =>
+			r.ports.split(',').some((t) => {
+				t = t.trim();
 				if (t.includes('-')) {
-					const [s, e] = t.split('-').map(Number);
-					if (port >= s && port <= e) return true;
-				} else if (parseInt(t) === port) return true;
-			}
-			return false;
-		});
+					const [lo, hi] = t.split('-').map((n) => parseInt(n));
+					return port >= lo && port <= hi;
+				}
+				return parseInt(t) === port;
+			}),
+		);
 	}
 
-	const resultButtons = $derived<ResultButton[]>((() => {
+	interface ResultButton {
+		label: string;
+		kind: 'url' | 'guac' | 'launch';
+		url: string;
+		app: string;
+		port: number;
+		targetPort: number;
+		record?: boolean;
+	}
+
+	const resultButtons = $derived.by<ResultButton[]>(() => {
 		if (connectState !== 'done') return [];
 		const buttons: ResultButton[] = [];
-
 		for (const url of connectUrls) {
 			if (url.startsWith('wss://') || url.startsWith('ws://')) {
-				const isSshWs = url.includes('/ssh-ws');
-				if (isSshWs) {
-					const row = connectedRows.find(r => r.application === 'ssh' && !r.guac);
-					if (!row?.selected) continue;
+				if (url.includes('/ssh-ws')) {
+					const row = connectedRows.find((r) => r.application === 'ssh' && !r.guac);
+					if (!row) continue;
 					const tp = firstPort(row.ports);
 					buttons.push({ label: 'Open SSH Session', kind: 'guac', url, app: 'ssh', port: tp, targetPort: tp });
 				} else {
-					const row = connectedRows.find(r => r.guac && guacApplicable(r));
-					if (!row?.selected) continue;
+					const row = connectedRows.find((r) => r.guac && guacApplicable(r));
+					if (!row) continue;
 					const tp = firstPort(row.ports);
-					buttons.push({
-						label: `Open ${row.application.toUpperCase()} Session`,
-						kind: 'guac', url, app: row.application, port: tp, targetPort: tp, record: row.record,
-					});
+					buttons.push({ label: `Open ${row.application.toUpperCase()} Session`, kind: 'guac', url, app: row.application, port: tp, targetPort: tp, record: row.record });
 				}
 			} else {
 				const port = portFromUrl(url);
-				// The URL carries the ACTUAL (possibly remapped) local port; map it
-				// back to the requested port so we can find the originating row,
-				// whose `ports` spec still lists the requested port.
 				const reqPort = requestedPort(port);
-				const row  = rowForPort(reqPort, connectedRows);
-				if (!row?.selected) continue;
-				const label = port !== reqPort
-					? `${row.application.toUpperCase()} :${port} (was :${reqPort})`
-					: `${row.application.toUpperCase()} :${port}`;
+				const row = rowForPort(reqPort, connectedRows);
+				if (!row) continue;
+				const label = port !== reqPort ? `${row.application.toUpperCase()} :${port} (was :${reqPort})` : `${row.application.toUpperCase()} :${port}`;
 				buttons.push({ label, kind: 'url', url, app: row.application, port, targetPort: reqPort });
 			}
 		}
-
-		const hasSshWs = connectUrls.some(u => u.includes('/ssh-ws'));
+		const hasSshWs = connectUrls.some((u) => u.includes('/ssh-ws'));
 		for (const row of connectedRows) {
-			if (!row.selected) continue;
 			if (row.guac || !guacApplicable(row)) continue;
 			if (row.application === 'ssh' && hasSshWs) continue;
 			const reqPort = firstPort(row.ports);
 			if (!reqPort) continue;
 			const port = actualPort(reqPort);
-			const remapped = port !== reqPort;
-			const label = remapped
-				? `Open ${row.application.toUpperCase()} :${port} (was :${reqPort})`
-				: `Open ${row.application.toUpperCase()} :${port}`;
+			const label = port !== reqPort ? `Open ${row.application.toUpperCase()} :${port} (was :${reqPort})` : `Open ${row.application.toUpperCase()} :${port}`;
 			buttons.push({ label, kind: 'launch', url: '', app: row.application, port, targetPort: reqPort });
 		}
 		return buttons;
-	})());
+	});
+
+	function tunnelBody(token: string): string {
+		const rows = selectedRows();
+		const guacRow = rows.find((r) => r.guac && guacApplicable(r));
+		const sshRow = rows.find((r) => r.application === 'ssh' && !r.guac);
+		const dimRow = guacRow ?? sshRow;
+		return JSON.stringify({
+			target: connectedTarget,
+			token,
+			gateway: connectedGateway,
+			username: username || undefined,
+			password: password || undefined,
+			width: dimRow?.width ?? undefined,
+			height: dimRow?.height ?? undefined,
+			dpi: dimRow?.dpi ?? undefined,
+			enable_drive: (guacRow?.drive && guacRow?.application === 'rdp') || undefined,
+			enable_record: guacRow?.record || undefined,
+			port_rows: rows.map((r) => ({
+				ports: r.ports,
+				application: r.application,
+				guac: r.guac || undefined,
+				e2ecrypt: !r.guac && r.e2ecrypt ? true : undefined,
+				sni: r.sni || undefined,
+				path: r.path && r.path !== '/' ? r.path : undefined,
+			})),
+		});
+	}
 
 	async function executeItem(btn: ResultButton): Promise<void> {
 		if (btn.kind === 'guac') {
 			const proto = btn.url.includes('/ssh-ws') ? '&proto=ssh' : '';
-			const rec   = (!btn.url.includes('/ssh-ws') && btn.record) ? '&record=1' : '';
-			window.open(`/session?ws=${encodeURIComponent(btn.url)}${proto}${rec}`, '_blank');
+			const rec = !btn.url.includes('/ssh-ws') && btn.record ? '&record=1' : '';
+			window.open(`${base}/session?ws=${encodeURIComponent(btn.url)}${proto}${rec}`, '_blank');
 		} else if (btn.kind === 'launch') {
 			try {
 				await fetch(`${CLIENT_API_BASE}/api/launch`, {
@@ -373,32 +242,35 @@
 		}
 	}
 
+	let probeBtnLabel = $state<string | null>(null);
 	async function openItem(btn: ResultButton): Promise<void> {
 		if (!connectedToken) { await executeItem(btn); return; }
-		probeState = 'checking'; probeMsg = ''; probeBtn = btn;
+		probeState = 'checking'; probeMsg = ''; probeBtnLabel = btn.label;
 		try {
 			const res = await fetch(`${CLIENT_API_BASE}/api/probe`, {
 				method: 'POST', headers: { 'Content-Type': 'application/json' },
-				// Probe the ORIGINAL device port - the gateway authorises against the
-				// signed JWT, which only ever covers the target port, never the local
-				// (possibly remapped) loopback port.
-				body: JSON.stringify({ target, port: btn.targetPort, gateway, token: connectedToken }),
+				body: JSON.stringify({ target: connectedTarget, port: btn.targetPort, gateway: connectedGateway, token: connectedToken }),
 				signal: AbortSignal.timeout(7_000),
 			});
-			if (!res.ok) { await executeItem(btn); probeState = 'idle'; probeBtn = null; return; }
+			if (!res.ok) { await executeItem(btn); probeState = 'idle'; probeBtnLabel = null; return; }
 			const data = await res.json();
-			if (data.reachable) { await executeItem(btn); probeState = 'idle'; probeBtn = null; }
+			if (data.reachable) { await executeItem(btn); probeState = 'idle'; probeBtnLabel = null; }
 			else { probeMsg = data.message ?? 'Target device did not respond.'; probeState = 'unreachable'; }
 		} catch {
-			await executeItem(btn); probeState = 'idle'; probeBtn = null;
+			await executeItem(btn); probeState = 'idle'; probeBtnLabel = null;
 		}
 	}
 
 	async function onConnect(e: Event): Promise<void> {
 		e.preventDefault();
+		if (!hasTunnelGw) {
+			connectState = 'error';
+			connectMsg = 'This device has no Tunnel Gateway configured.';
+			return;
+		}
 		if (selectedRows().length === 0) {
 			connectState = 'error';
-			connectMsg   = 'Select at least one application to connect.';
+			connectMsg = 'Select at least one application to connect.';
 			return;
 		}
 		await doConnect();
@@ -406,26 +278,26 @@
 
 	async function doConnect(): Promise<void> {
 		connectState = 'signing';
-		connectMsg   = '';
-		connectUrls  = [];
-
-		const rows     = selectedRows();
-		const allPorts = rows.map(r => r.ports).filter(Boolean).join(',');
+		connectMsg = '';
+		connectUrls = [];
+		const rows = selectedRows();
+		const allPorts = rows.map((r) => r.ports).filter(Boolean).join(',');
+		const record = rows.find((r) => r.guac && guacApplicable(r))?.record ?? false;
 
 		let token: string;
 		try {
-			const res = await fetch('/api/tunnel/sign', {
+			const res = await fetch(`${base}/api/tunnel/sign`, {
 				method: 'POST', headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					target, ports: allPorts, gateway,
-					record: rows.find(r => r.guac && guacApplicable(r))?.record ?? false,
-				}),
+				body: JSON.stringify({ deviceId: d?.id, ports: allPorts, record }),
 			});
 			if (!res.ok) {
-				if (res.status === 401) { window.location.href = '/login'; return; }
+				if (res.status === 401) { window.location.href = `${base}/login`; return; }
 				throw new Error(`Sign failed (${res.status}): ${await res.text()}`);
 			}
-			({ token } = await res.json());
+			const signed = await res.json();
+			token = signed.token;
+			connectedTarget = signed.target;
+			connectedGateway = signed.gateway;
 		} catch (err) {
 			connectState = 'error'; connectMsg = String(err); return;
 		}
@@ -438,16 +310,16 @@
 			});
 			if (!res.ok) throw new Error(`Client returned ${res.status}: ${await res.text()}`);
 			const body = await res.json();
-			connectUrls     = Array.isArray(body.urls) ? body.urls : [];
+			connectUrls = Array.isArray(body.urls) ? body.urls : [];
 			connectedBindIp = body.bind_ip ?? '';
-			connectedRows   = rows.map(r => ({ ...r }));
-			connectedToken  = token;
-			connectRemaps   = Array.isArray(body.remaps) ? body.remaps : [];
-			probeState      = 'idle';
-			const portList  = (body.ports ?? []).join(', ');
+			connectedRows = rows.map((r) => ({ ...r }));
+			connectedToken = token;
+			connectRemaps = Array.isArray(body.remaps) ? body.remaps : [];
+			probeState = 'idle';
+			const portList = (body.ports ?? []).join(', ');
 			connectMsg = connectedBindIp
-				? `Tunnel open via ${gateway} \u00b7 slot ${connectedBindIp} \u00b7 port(s): ${portList}`
-				: `Tunnel open via ${gateway} \u00b7 port(s): ${portList}`;
+				? `Tunnel open via ${connectedGateway} \u00b7 slot ${connectedBindIp} \u00b7 port(s): ${portList}`
+				: `Tunnel open via ${connectedGateway} \u00b7 port(s): ${portList}`;
 			connectState = 'done';
 		} catch (err) {
 			if (err instanceof TypeError) { await launchViaDeepLink(token); }
@@ -458,8 +330,8 @@
 	function resetConnect(): void {
 		connectState = 'idle'; connectMsg = ''; connectUrls = [];
 		connectedToken = null; connectedBindIp = ''; connectedRows = [];
-		connectRemaps = [];
-		probeState = 'idle'; probeMsg = ''; probeBtn = null;
+		connectedTarget = ''; connectedGateway = ''; connectRemaps = [];
+		probeState = 'idle'; probeMsg = ''; probeBtnLabel = null;
 	}
 
 	async function launchViaDeepLink(token: string): Promise<void> {
@@ -467,11 +339,10 @@
 		const envelope = {
 			type: 'tunnel',
 			payload: {
-				target, token, gateway,
-				servicekey: servicekey || undefined,
+				target: connectedTarget, token, gateway: connectedGateway,
 				username: username || undefined,
 				password: password || undefined,
-				port_rows: rows.map(r => ({
+				port_rows: rows.map((r) => ({
 					ports: r.ports, application: r.application,
 					guac: r.guac || undefined, e2ecrypt: r.e2ecrypt || undefined, sni: r.sni || undefined,
 				})),
@@ -479,7 +350,6 @@
 		};
 		const encoded = btoa(JSON.stringify(envelope)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
 		window.location.href = `fleetshell://${encoded}`;
-
 		const deadline = Date.now() + 5_000;
 		while (Date.now() < deadline) {
 			await sleep(750);
@@ -490,550 +360,386 @@
 				});
 				if (res.ok) {
 					const body = await res.json();
-					connectUrls    = Array.isArray(body.urls) ? body.urls : [];
-					connectedRows  = rows.map(r => ({ ...r }));
+					connectUrls = Array.isArray(body.urls) ? body.urls : [];
+					connectedRows = rows.map((r) => ({ ...r }));
 					connectedBindIp = body.bind_ip ?? '';
-					connectRemaps  = Array.isArray(body.remaps) ? body.remaps : [];
-					connectMsg     = `Gateway tunnel open on port(s): ${(body.ports ?? []).join(', ')}`;
-					connectState   = 'done';
+					connectRemaps = Array.isArray(body.remaps) ? body.remaps : [];
+					connectMsg = `Gateway tunnel open on port(s): ${(body.ports ?? []).join(', ')}`;
+					connectState = 'done';
 					connectedToken = token;
-					probeState     = 'idle';
+					probeState = 'idle';
 					return;
 				}
 				connectState = 'error';
-				connectMsg   = `Client returned ${res.status}: ${await res.text()}`;
+				connectMsg = `Client returned ${res.status}: ${await res.text()}`;
 				return;
 			} catch { /* keep polling */ }
 		}
 		connectState = 'launching';
 	}
-
-	// ── Display helpers ───────────────────────────────────────────────────────────
-	const PRIMARY_FIELDS = ['serial', 'product', 'partno', 'country'];
-	function appSummary(a: PortRow): string {
-		const bits = [a.application.toUpperCase(), a.ports || '?'];
-		if (a.guac)     bits.push('guac');
-		if (a.e2ecrypt) bits.push('e2e');
-		if (a.record)   bits.push('rec');
-		if (a.drive)    bits.push('drive');
-		return bits.join(' \u00b7 ');
-	}
 </script>
 
-<svelte:head><title>Devices — FleetShell Portal</title></svelte:head>
+<SplitPane storageKey="devices" defaultLeft={52} overlay overlayActive={!!(data.sel || data.isNew)} closeHref={cancelHref}>
+	{#snippet left()}
+		<div class="col-head">
+			<h2>Devices <span class="count">{data.total}</span></h2>
+			<div class="head-actions">
+				{#if data.isAdmin}
+					<div class="modes">
+						<a class:active={data.mode === 'scope'} href={setMode('scope')}>My scope</a>
+						<a class:active={data.mode === 'all'} href={setMode('all')}>All devices</a>
+					</div>
+					<a class="new-btn" href={newHref}>+ New</a>
+				{/if}
+			</div>
+		</div>
 
-<div class="page">
-	<div class="page-head">
-		<h1 class="page-title">Devices</h1>
-		{#if mode === 'list'}
-			<button class="btn-primary" onclick={startCreate}>+ New device</button>
-		{/if}
-	</div>
+		<form method="GET" action={`${base}/devices`} class="searchbar" onsubmit={(e) => { e.preventDefault(); doSearch(); }}>
+			{#if data.mode === 'all'}<input type="hidden" name="mode" value="all" />{/if}
+			<div class="search-wrap">
+				<input name="q" value={data.q} bind:this={searchInput} placeholder="serial / functional location / IP  ·  sn: fl: ip: tid: host: ord:" autocomplete="off" spellcheck="false" />
+				{#if data.q}<button type="button" class="in-clear" onclick={clearSearch} aria-label="Clear search">✕</button>{/if}
+			</div>
+			<button type="submit">Search</button>
+		</form>
 
-	<!-- ══ LIST ══════════════════════════════════════════════════════════════ -->
-	{#if mode === 'list'}
-		<section class="card">
-			<h2 class="card-title">Search</h2>
-			<form class="search-form" onsubmit={(e) => { e.preventDefault(); search(); }}>
-				<input
-					class="search-input"
-					type="text"
-					placeholder="ip:198.51.100.134   serial:100134   (space = AND, | = OR, blank = all)"
-					bind:value={query}
-					disabled={searching}
-					autocomplete="off"
-					spellcheck="false"
-				/>
-				<button class="search-btn" type="submit" disabled={searching}>
-					{searching ? 'Searching…' : 'Search'}
-				</button>
-			</form>
-			<p class="hint">
-				Fields: <code>ip:</code> device IP, or any record field
-				(<code>serial:</code>, <code>product:</code>, <code>country:</code> …).
-				Combine with spaces (AND) or <code>|</code> (OR). Leave blank to list all.
-			</p>
-		</section>
-
-		{#if loadError}<p class="notice notice--warn">{loadError}</p>{/if}
-		{#if searchError}<p class="notice notice--warn">{searchError}</p>{/if}
-
-		{#if devices.length > 0}
-		<section class="card">
-			<h2 class="card-title">Results — {devices.length} device{devices.length !== 1 ? 's' : ''}</h2>
-			<table class="gw-table">
+		<div class="card list">
+			<table>
 				<thead>
-					<tr>
-						<th>IP</th><th>Serial</th><th>Product</th><th>Part #</th>
-						<th>Country</th><th>Apps</th><th></th>
-					</tr>
+					<tr><th>serial / part no</th><th>func. loc.</th><th>model / product</th><th>IP</th><th>hospital / city</th></tr>
 				</thead>
 				<tbody>
-					{#each devices as dev}
-					<tr>
-						<td class="ip-cell">{dev.ip}</td>
-						{#each PRIMARY_FIELDS as f}<td>{dev.fields[f] ?? '—'}</td>{/each}
-						<td>{dev.app_count}</td>
-						<td>
-							<button class="btn-detail" onclick={() => view(dev.ip)} disabled={loading}>View</button>
-						</td>
-					</tr>
+					{#each data.devices as dev (dev.id)}
+						<tr class:sel={dev.id === data.sel} onclick={() => goto(selHref(dev.id), { keepFocus: true, noScroll: true })}>
+							<td class="mono"><div>{dev.serial ?? ''}</div>{#if dev.partno}<div class="sub">{dev.partno}</div>{/if}</td>
+							<td class="mono">{dev.functional_location ?? ''}</td>
+							<td><div class="model-cell">{dev.model_name ?? ''}</div>{#if dev.product_name}<div class="sub">{dev.product_name}</div>{/if}</td>
+							<td class="mono">{dev.ip_address ?? ''}</td>
+							<td><div>{dev.customer_name ?? dev.hospital_name ?? ''}</div>{#if dev.city}<div class="sub">{dev.city}</div>{/if}</td>
+						</tr>
+					{:else}
+						<tr><td colspan="5" class="empty">No devices{data.q ? ' match' : ' in scope'}.</td></tr>
 					{/each}
 				</tbody>
 			</table>
-		</section>
-		{/if}
-	{/if}
+		</div>
 
-	<!-- ══ VIEW ══════════════════════════════════════════════════════════════ -->
-	{#if mode === 'view' && detail}
-		<section class="card">
-			<h2 class="card-title">
-				Device <span class="sub">{detail.ip}</span>
-				<button class="btn-back" onclick={backToList}>✕</button>
-			</h2>
+		<div class="pager">
+			<a class="pg" class:disabled={!data.hasPrev} href={data.hasPrev ? pageLink('prev') : '#'}>‹ Prev</a>
+			<span class="range">
+				{data.from}–{data.to} of
+				{#if effectiveTotal !== null}{effectiveTotal.toLocaleString()}{:else}<span class="spin" title="counting…">⟳</span>{/if}
+			</span>
+			<a class="pg" class:disabled={!data.hasNext} href={data.hasNext ? pageLink('next') : '#'}>Next ›</a>
+		</div>
+	{/snippet}
 
-			<div class="view-actions">
-				<button class="btn-primary" onclick={startEdit}>Edit configuration</button>
-			</div>
+	{#snippet right()}
+		{#if form?.error}<p class="error">{form.error}</p>{/if}
 
-			<h3 class="sub-title">Record fields <span class="sub">read-only</span></h3>
-			{#if Object.keys(detail.fields).length === 0}
-				<p class="notice">No aeroftp record fields (device created via portal).</p>
-			{:else}
-				<table class="result-table">
-					<thead><tr><th>Field</th><th>Value</th></tr></thead>
-					<tbody>
-						{#each Object.entries(detail.fields).sort(([a],[b]) => a.localeCompare(b)) as [field, value]}
-							<tr><td class="cell-field">{field}</td><td class="cell-value">{value}</td></tr>
-						{/each}
-					</tbody>
-				</table>
-			{/if}
-
-			<h3 class="sub-title">Connection</h3>
-			<dl class="kv">
-				<dt>Target</dt><dd class="mono">{target || '—'}</dd>
-				<dt>Gateway</dt><dd class="mono">{gateway || '—'}</dd>
-				<dt>Service key</dt><dd class="mono">{servicekey || '—'}</dd>
-			</dl>
-		</section>
-
-		<!-- Connect: pick apps -->
-		<section class="card">
-			<h2 class="card-title">Connect</h2>
-			{#if portRows.length === 0}
-				<p class="notice">No applications configured. Use <em>Edit configuration</em> to add some.</p>
-			{:else}
-				<form class="connect-form" onsubmit={onConnect}>
-					<div class="app-list">
-						{#each portRows as row}
-						<label class="app-item" class:app-item--on={row.selected}>
-							<input type="checkbox" class="check-input" bind:checked={row.selected} disabled={busy} />
-							<span class="app-name">{row.name || row.application.toUpperCase()}</span>
-							<span class="app-sum">{appSummary(row)}</span>
-						</label>
-						{/each}
-					</div>
-
-					<div class="field-grid">
-						<div class="field">
-							<label class="field-label" for="cf-username">Username <span class="optional">(optional)</span></label>
-							<input id="cf-username" class="field-input" type="text" placeholder="administrator"
-							       bind:value={username} autocomplete="off" spellcheck="false" disabled={busy} />
-						</div>
-						<div class="field">
-							<label class="field-label" for="cf-password">Password <span class="optional">(optional)</span></label>
-							<input id="cf-password" class="field-input" type="password" placeholder="••••••••"
-							       bind:value={password} autocomplete="current-password" disabled={busy} />
-						</div>
-					</div>
-
-					<div class="action-row">
-						<button type="submit" class="connect-btn" disabled={busy || selectedCount === 0}>
-							{#if connectState === 'signing'}Signing token…
-							{:else if connectState === 'connecting'}Connecting…
-							{:else}Connect{selectedCount > 0 ? ` (${selectedCount})` : ''}{/if}
-						</button>
-						{#if connectState === 'done' || connectState === 'error' || connectState === 'launching'}
-							<button type="button" class="reset-btn" onclick={resetConnect}>Dismiss</button>
-						{/if}
+		{#if data.isNew}
+			<div class="card detail">
+				<h3>New device</h3>
+				<form method="POST" action="?/createDevice" use:enhance={toastEnhance('Device created')}>
+					{@render fields(null, true)}
+					<div class="actions-bar">
+						<a class="act-cancel" href={cancelHref}>Cancel</a>
+						<button type="submit" class="act-primary">Create device</button>
 					</div>
 				</form>
+			</div>
+		{:else if d}
+			<div class="card detail">
+				<div class="dhead">
+					<h3>{d.serial || '(no serial)'}</h3>
+					<span class="model">{d.model_name ?? ''}</span>
+				</div>
+				<p class="path">{d.modality_name ?? '?'} / {d.product_name ?? '?'} / {d.model_name ?? '?'}</p>
 
-				<!-- Result banner -->
-				{#if connectState === 'done'}
-					<div class="result-banner result-ok" role="status" bind:this={resultBanner}>
-						<span class="result-icon">✓</span>
-						<div class="result-body">
-							<span class="result-msg">{connectMsg}</span>
-							{#if resultButtons.length > 0}
-								<div class="result-buttons">
-									{#each resultButtons as btn}
-										<button type="button" class="result-open-btn"
-											class:result-open-btn--guac={btn.kind === 'guac'}
-											class:result-open-btn--launch={btn.kind === 'launch'}
-											disabled={probeState === 'checking' && probeBtn?.label === btn.label}
+				<div class="tabs" role="tablist">
+					<a role="tab" aria-selected={tab === 'connect'} class:active={tab === 'connect'} href={tabHref('connect')}>Connect</a>
+					<a role="tab" aria-selected={tab === 'files'} class:active={tab === 'files'} href={tabHref('files')}>Files</a>
+					<a role="tab" aria-selected={tab === 'manage'} class:active={tab === 'manage'} href={tabHref('manage')}>Manage</a>
+				</div>
+
+				{#if tab === 'connect'}
+					{#if apps.length === 0}
+						<p class="muted">No applications defined on this device's model.</p>
+					{:else}
+						{#if !hasTunnelGw}
+							<p class="warn-box">⚠ No <strong>Tunnel Gateway</strong> is set on this device. Connections are blocked until one is configured in the <a href={tabHref('manage')}>Manage</a> tab.</p>
+						{/if}
+						<form class="connect-form" onsubmit={onConnect}>
+							<div class="capps">
+								{#each portRows as row (row.name + row.application + row.ports)}
+									<label class="capp" class:on={row.selected}>
+										<input type="checkbox" bind:checked={row.selected} disabled={busy} />
+										<span class="capp-name">{row.name || row.application.toUpperCase()}</span>
+										<span class="capp-sum">{appSummary(row)}</span>
+									</label>
+								{/each}
+							</div>
+
+							{#if needsCreds}
+								<div class="cgrid">
+									<label>Username <span class="opt">(optional)</span>
+										<input type="text" bind:value={username} placeholder="administrator" autocomplete="off" spellcheck="false" disabled={busy} />
+									</label>
+									<label>Password <span class="opt">(optional)</span>
+										<input type="password" bind:value={password} placeholder="••••••••" autocomplete="current-password" disabled={busy} />
+									</label>
+								</div>
+							{/if}
+
+							<div class="crow">
+								<button type="submit" class="act-primary" disabled={busy || selectedCount === 0 || !hasTunnelGw}>
+									{#if connectState === 'signing'}Signing token…
+									{:else if connectState === 'connecting'}Connecting…
+									{:else}Connect{selectedCount > 0 ? ` (${selectedCount})` : ''}{/if}
+								</button>
+								{#if connectState === 'done' || connectState === 'error' || connectState === 'launching'}
+									<button type="button" class="act-cancel" onclick={resetConnect}>Dismiss</button>
+								{/if}
+							</div>
+						</form>
+
+						{#if connectState === 'error'}
+							<p class="error">{connectMsg}</p>
+						{:else if connectState === 'launching'}
+							<p class="muted">Opening the FleetShell client… if nothing happens, ensure it is installed and running.</p>
+						{:else if connectState === 'done'}
+							<div class="cbanner">
+								<p class="cbanner-msg">{connectMsg}</p>
+								{#if resultButtons.length}
+									<div class="cbtns">
+										{#each resultButtons as btn (btn.label)}
+											<button type="button" class="cbtn" class:guac={btn.kind === 'guac'} class:launch={btn.kind === 'launch'}
+												disabled={probeState === 'checking' && probeBtnLabel === btn.label}
 											onclick={() => openItem(btn)}>
-											{#if probeState === 'checking' && probeBtn?.label === btn.label}Checking…{:else}{btn.label}{/if}
+											{#if probeState === 'checking' && probeBtnLabel === btn.label}Checking…{:else}{btn.label}{/if}
 										</button>
 									{/each}
 								</div>
 							{/if}
-							{#if probeState === 'unreachable' && probeBtn}
-								<div class="probe-warn">
-									<strong>⚠ Device not reachable</strong>
-									<span>{probeMsg}</span>
-									<span class="probe-warn-btns">
-										<button type="button" class="probe-btn probe-btn-open"
-											onclick={async () => { const b = probeBtn!; probeState = 'idle'; probeBtn = null; await executeItem(b); }}>Open anyway</button>
-										<button type="button" class="probe-btn probe-btn-retry"
-											onclick={async () => { const b = probeBtn!; probeState = 'idle'; probeBtn = null; await openItem(b); }}>Retry check</button>
-									</span>
-								</div>
-							{/if}
-						</div>
-					</div>
-				{:else if connectState === 'error'}
-					<div class="result-banner result-err" role="alert" bind:this={resultBanner}>
-						<span class="result-icon">✕</span>
-						<span class="result-msg">{connectMsg}</span>
-					</div>
-				{:else if connectState === 'launching'}
-					<div class="result-banner result-launching" role="status" bind:this={resultBanner}>
-						<span class="result-icon">⟳</span>
-						<div class="result-body">
-							<span class="result-msg">
-								FleetShell client is not running. A launch command has been sent via the
-								<code>fleetshell://</code> protocol — if the client is installed it will start and
-								connect automatically. Otherwise install it from the <a href="/support">Support</a> page.
-							</span>
-						</div>
-						<button type="button" class="open-btn" onclick={doConnect}>Try again</button>
-					</div>
-				{/if}
-			{/if}
-		</section>
-	{/if}
-
-	<!-- ══ EDIT / CREATE ═════════════════════════════════════════════════════ -->
-	{#if mode === 'edit'}
-		<section class="card">
-			<h2 class="card-title">
-				{isCreate ? 'New device' : `Edit — ${detail?.ip ?? ''}`}
-				<button class="btn-back" onclick={cancelEdit}>✕</button>
-			</h2>
-
-			{#if isCreate}
-				<p class="notice">Enter the device IP and its application configuration. The device must be saved before you can connect.</p>
-			{/if}
-
-			<div class="field-grid">
-				{#if isCreate}
-				<div class="field">
-					<label class="field-label" for="cf-ip">Device IP <em class="req">*</em></label>
-					<input id="cf-ip" class="field-input mono" type="text" placeholder="198.51.100.134"
-					       bind:value={createIp} autocomplete="off" spellcheck="false" />
-				</div>
-				{/if}
-				<div class="field">
-					<label class="field-label" for="cf-target">Target</label>
-					<input id="cf-target" class="field-input mono" type="text" placeholder="192.168.1.100"
-					       bind:value={target} autocomplete="off" spellcheck="false" />
-				</div>
-				<div class="field">
-					<label class="field-label" for="cf-gateway">Gateway</label>
-					<input id="cf-gateway" class="field-input" type="text" placeholder="gateway.fleetshell.com"
-					       bind:value={gateway} autocomplete="off" spellcheck="false" />
-				</div>
-			</div>
-
-			<!-- Port rows editor -->
-			<div class="field">
-				<span class="field-label">Applications</span>
-				<div class="port-rows">
-					<div class="port-row-head">
-						<span>Name</span>
-						<span>Ports</span>
-						<span>Application</span>
-						<span class="col-center">Guac</span>
-						<span class="col-center">E2E</span>
-						<span></span>
-					</div>
-					{#each portRows as row, i}
-					<div class="port-row">
-						<input class="pr-input" type="text" placeholder="RDP console"
-						       bind:value={row.name} autocomplete="off" spellcheck="false" />
-						<input class="pr-input" type="text" placeholder="443 or 80,8080-8090"
-						       bind:value={row.ports} autocomplete="off" spellcheck="false" />
-						<select class="pr-input pr-select" bind:value={row.application} onchange={() => onAppChange(row)}>
-							<option value="https">HTTPS</option>
-							<option value="http">HTTP</option>
-							<option value="expert-i">Expert-i</option>
-							<option value="rdp">RDP</option>
-							<option value="vnc">VNC</option>
-							<option value="ssh">SSH</option>
-						</select>
-						<label class="pr-check" title={guacApplicable(row) ? 'Open via Guacamole in a new browser tab' : 'Guacamole not applicable'}>
-							<input type="checkbox" class="check-input" bind:checked={row.guac} disabled={!guacApplicable(row)} />
-						</label>
-						<label class="pr-check" title={row.guac ? 'E2E not applicable — guacd handles the upstream' : guacApplicable(row) ? 'Required — native protocol relayed byte-for-byte' : 'Pass TLS bytes end-to-end'}>
-							<input type="checkbox" class="check-input" bind:checked={row.e2ecrypt}
-							       disabled={row.guac || (guacApplicable(row) && row.application !== 'ssh')} />
-						</label>
-						<button type="button" class="pr-remove" onclick={() => removeRow(i)}
-						        disabled={portRows.length === 1} title="Remove row" aria-label="Remove row">✕</button>
-					</div>
-					{#if showPathParam(row)}
-					<div class="port-row-path">
-						<span class="path-param-label">Path</span>
-						<input class="path-param-input" type="text" placeholder="/" bind:value={row.path} autocomplete="off" spellcheck="false" />
-						<span class="path-param-label path-param-sni-label">SNI</span>
-						<input class="path-param-input path-param-sni" type="text" placeholder="device.example.com"
-						       bind:value={row.sni} disabled={!sniEffective(row)} autocomplete="off" spellcheck="false" />
-					</div>
+								{#if probeState === 'unreachable'}
+									<p class="probe-warn">⚠ Device not reachable · {probeMsg}</p>
+								{/if}
+							</div>
+						{/if}
 					{/if}
-					{#if showGuacParams(row)}
-					<div class="port-row-guac">
-						<span class="guac-param-label">Width</span>
-						<input class="guac-param-input" type="number" min="640" max="7680" step="1" bind:value={row.width} />
-						<span class="guac-param-label">Height</span>
-						<input class="guac-param-input" type="number" min="480" max="4320" step="1" bind:value={row.height} />
-						<span class="guac-param-label">DPI</span>
-						<input class="guac-param-input guac-param-dpi" type="number" min="72" max="288" step="1" bind:value={row.dpi} />
-						<span class="guac-param-hint">px — Guacamole display size</span>
-						<label class="guac-param-drive" title={row.application === 'rdp' ? 'Mount a shared drive buffer (RDP only)' : 'Drive sharing is RDP-only'}>
-							<input type="checkbox" class="check-input" bind:checked={row.drive} disabled={row.application !== 'rdp'} /> Drives
-						</label>
-						<label class="guac-param-record" title="Record this session on the gateway">
-							<input type="checkbox" class="check-input" bind:checked={row.record} /> Record
-						</label>
-					</div>
-					{/if}
-					{/each}
-					<button type="button" class="pr-add" onclick={addRow}>+ Add application</button>
-				</div>
+				{:else if tab === 'files'}
+					<p class="muted files-stub">File browser (S3 <span class="mono">/clean/&lt;modality&gt;/&lt;product&gt;/&lt;partno&gt;/&lt;serial&gt;/</span>) is not wired yet.</p>
+				{:else}
+					<form method="POST" action="?/updateDevice" use:enhance={toastEnhance('Device saved')}>
+						<input type="hidden" name="id" value={d.id} />
+						<input type="hidden" name="tab" value="manage" />
+						{#key d.id}
+							{@render fields(d, canEdit)}
+						{/key}
+						{#if canEdit}
+							<div class="actions-bar">
+								<button type="button" class="act-delete" onclick={() => (confirmDelete = true)}>Delete device</button>
+								<button type="submit" class="act-primary">Save device</button>
+							</div>
+						{/if}
+					</form>
+				{/if}
 			</div>
+		{:else}
+			<div class="card placeholder">Select a device, or search.</div>
+		{/if}
+	{/snippet}
+</SplitPane>
 
-			<!-- Service key -->
-			<div class="field">
-				<label class="field-label" for="cf-servicekey">Service Key <span class="optional">(optional)</span></label>
-				<input id="cf-servicekey" class="field-input" type="text" placeholder="abcde-…"
-				       bind:value={servicekey} autocomplete="off" spellcheck="false" />
-			</div>
+{#if d}
+	<ConfirmDialog bind:open={confirmDelete} title="Delete device?" message={`Delete "${d.serial || d.id}"? This cannot be undone.`}>
+		<form method="POST" action="?/deleteDevice" use:enhance={toastEnhance('Device deleted', () => (confirmDelete = false))}>
+			<input type="hidden" name="id" value={d.id} />
+			<button type="submit" class="act-delete">Delete</button>
+		</form>
+	</ConfirmDialog>
+{/if}
 
-			{#if saveError}<p class="notice notice--warn">{saveError}</p>{/if}
+{#snippet fields(x: Record<string, string | null> | null, edit: boolean)}
+	<div class="grid2">
+		<label>Serial<input name="serial" value={x?.serial ?? ''} disabled={!edit} /></label>
+		<label>Functional location<input name="functional_location" value={x?.functional_location ?? ''} disabled={!edit} /></label>
+		<label>Technical ident<input name="technical_ident" value={x?.technical_ident ?? ''} disabled={!edit} /></label>
+		<label>Host / hardware ID<input name="host_hw_id" value={x?.host_hw_id ?? ''} disabled={!edit} /></label>
+		<label>Order number<input name="order_number" value={x?.order_number ?? ''} disabled={!edit} /></label>
+		<label>Software version<input name="software_version" value={x?.software_version ?? ''} disabled={!edit} /></label>
+		<label>IP address<input name="ip_address" value={x?.ip_address ?? ''} disabled={!edit} /></label>
+		<label>IP (real)<input name="ip_real" value={x?.ip_real ?? ''} disabled={!edit} /></label>
+		<label>Access requirement
+			<select name="access_requirement" value={x?.access_requirement ?? 'open'} disabled={!edit}>
+				<option value="open">open</option><option value="device">device</option>
+				<option value="customer">customer</option><option value="site">site</option>
+			</select>
+		</label>
+		<label>NAT mode
+			<select name="nat_mode" value={x?.nat_mode ?? 'customer'} disabled={!edit}>
+				<option value="customer">customer (customer NATs)</option>
+				<option value="platform">platform (we NAT via ip_real)</option>
+			</select>
+		</label>
+		<label>Hospital<input name="hospital_name" value={x?.hospital_name ?? ''} disabled={!edit} /></label>
+		<label>City<input name="city" value={x?.city ?? ''} disabled={!edit} /></label>
+	</div>
+	<label class="full">Contact<input name="contact" value={x?.contact ?? ''} disabled={!edit} /></label>
+	{#key x?.id ?? 'new'}
+		<ContractsChips internalUse={x?.internal_use} dpa={x?.dpa} dmy={x?.dmy} disabled={!edit} />
+	{/key}
 
-			<div class="form-actions">
-				<button class="btn-action" onclick={cancelEdit} disabled={saving}>Cancel</button>
-				<button class="btn-action btn-action--primary" onclick={save} disabled={saving}>
-					{saving ? 'Saving…' : 'Save'}
-				</button>
-			</div>
-		</section>
-	{/if}
-</div>
+	<h4>Notifications</h4>
+	<div class="checks">
+		<label class="chk"><input type="checkbox" name="notify_on_access" checked={!!x?.notify_on_access} disabled={!edit} /> Notify on access</label>
+		<label class="chk"><input type="checkbox" name="notify_on_disconnect" checked={!!x?.notify_on_disconnect} disabled={!edit} /> Notify on disconnect</label>
+		<label class="chk"><input type="checkbox" name="notification_info_active" checked={!!x?.notification_info_active} disabled={!edit} /> Notification info active</label>
+		<label class="chk"><input type="checkbox" name="notify_pseudonymized" checked={!!x?.notify_pseudonymized} disabled={!edit} /> Anonymize (send ID, not username)</label>
+	</div>
+	<label class="full">Notification address<input name="notification_address" type="email" value={x?.notification_address ?? ''} disabled={!edit} placeholder="ops@example.com" /></label>
+
+	<h4>Operator messages</h4>
+	<label class="full">Display before connect<textarea name="display_before_connect" rows="2" disabled={!edit} placeholder="Shown to the operator before a session starts">{x?.display_before_connect ?? ''}</textarea></label>
+	<label class="full">Additional info (annotations)<textarea name="additional_info" rows="2" disabled={!edit}>{x?.additional_info ?? ''}</textarea></label>
+
+	<h4>Relations</h4>
+	<div class="rel-cols">
+		<div class="rel">
+			<span class="rlabel">Region</span>
+			<EntityPicker api="/api/administration/regions" name="region_path" idField="path" labelField="name"
+				value={x?.region_path ?? null} label={x?.region_name ?? null} disabled={!edit} placeholder="search region..." />
+			<span class="rlabel">Product model</span>
+			<EntityPicker api="/api/administration/models" name="product_path" idField="path" labelField="display"
+				value={x?.product_path ?? null} label={x?.model_name ?? null} disabled={!edit} placeholder="search model..." />
+			{#if x?.model_partno}
+				<span class="rlabel"></span>
+				<span class="partno-note">Part no <span class="mono">{x.model_partno}</span></span>
+			{/if}
+			<span class="rlabel">IPSec Gateway</span>
+			<EntityPicker api="/api/administration/gateways" name="gateway_id" idField="id" labelField="name"
+				value={x?.gateway_id ?? null} label={x?.gateway_name ?? null} disabled={!edit} placeholder="search gateway..." />
+		</div>
+		<div class="rel">
+			<span class="rlabel">Customer</span>
+			<span class="rval" class:unset={!x?.customer_name}>{x?.customer_name ?? 'not assigned'}</span>
+			<span class="rlabel">Site</span>
+			<span class="rval" class:unset={!x?.site_name}>{x?.site_name ?? 'not assigned'}</span>
+			<span class="rel-note">Derived from site membership · manage in <a href={`${base}/customers`}>Customers / Sites</a></span>
+			<span class="rlabel">Tunnel Gateway</span>
+			<span class="rval" class:unset={!x?.gateway_tunnel}>{x?.gateway_tunnel ?? 'set on the IPsec gateway'}</span>
+			<span class="rel-note">The Connect gateway is a property of the IPsec gateway (one per region){#if x?.gateway_id}, edited on <a href={`${base}/gateways?sel=${x.gateway_id}`}>{x?.gateway_name ?? 'this gateway'}</a>.{:else}. Assign an IPsec gateway above, then set it in <a href={`${base}/gateways`}>Gateways</a>.{/if}</span>
+		</div>
+	</div>
+{/snippet}
 
 <style>
-	.page       { display: flex; flex-direction: column; gap: 18px; max-width: 1000px; }
-	.page-head  { display: flex; align-items: center; justify-content: space-between; }
-	.page-title { font-size: 1.1rem; font-weight: 700; color: var(--fg2); text-transform: uppercase; letter-spacing: 0.1em; margin: 0; }
+	.col-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.6rem; gap: 0.6rem; flex: none; }
+	h2 { font-size: 1rem; margin: 0; }
+	.count { color: var(--text-subtle); font-weight: 400; font-size: 0.85rem; }
+	.head-actions { display: flex; align-items: center; gap: 0.6rem; }
+	.modes { display: flex; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+	.modes a { padding: 0.25rem 0.6rem; font-size: 0.78rem; color: var(--text-muted); text-decoration: none; }
+	.modes a.active { background: var(--surface-active); color: var(--text); box-shadow: inset 0 -2px 0 var(--accent); }
+	.new-btn { background: var(--accent); color: var(--on-accent); text-decoration: none; border-radius: var(--radius); padding: 0.3rem 0.6rem; font-size: 0.8rem; font-weight: 600; }
+	.new-btn:hover { background: var(--accent-hover); }
 
-	/* Cards */
-	.card { background: var(--bg1, #3c3836); border: 1px solid var(--bg3, #504945); border-radius: 6px; padding: 18px 20px; }
-	.card-title {
-		font-size: 0.8rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
-		color: var(--fg4, #a89984); margin: 0 0 14px; display: flex; align-items: center; gap: 10px;
-	}
-	.card-title .sub { font-size: 0.7rem; color: var(--fg4); text-transform: none; letter-spacing: 0; }
-	.sub-title { font-size: 0.75rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--fg3, #bdae93); margin: 18px 0 8px; }
-	.sub-title .sub { font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--fg4); }
-	.view-actions { margin-bottom: 6px; }
+	.searchbar { display: flex; gap: 0.4rem; margin-bottom: 0.6rem; flex: none; align-items: center; }
+	.search-wrap { position: relative; flex: 1; display: flex; }
+	.searchbar input { width: 100%; background: var(--bg-app); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.45rem 1.9rem 0.45rem 0.6rem; font: inherit; font-size: 0.85rem; }
+	.searchbar input:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+	.in-clear { position: absolute; right: 0.35rem; top: 50%; transform: translateY(-50%); background: none; border: none; color: var(--text-subtle); cursor: pointer; font-size: 0.8rem; line-height: 1; padding: 0.2rem; border-radius: var(--radius); }
+	.in-clear:hover { color: var(--text); }
+	.searchbar > button { background: var(--accent); color: var(--on-accent); border: none; border-radius: var(--radius); padding: 0.45rem 0.8rem; font: inherit; font-weight: 600; font-size: 0.83rem; cursor: pointer; }
 
-	/* Search */
-	.search-form  { display: flex; gap: 10px; align-items: stretch; }
-	.search-input {
-		flex: 1; min-width: 0; background: var(--bg, #1d2021); color: var(--fg1);
-		border: 1px solid var(--bg3); border-radius: 4px; padding: 9px 14px; font-size: 0.95rem; outline: none;
-	}
-	.search-input:focus { border-color: var(--bright-blue); }
-	.search-btn {
-		background: var(--bright-blue, #83a598); color: #1d2021; border: none; border-radius: 4px;
-		padding: 9px 24px; font-weight: 700; cursor: pointer; white-space: nowrap; flex-shrink: 0; width: auto;
-	}
-	.search-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-	.hint  { font-size: 0.75rem; color: var(--fg4, #a89984); margin: 8px 0 0; }
-	.hint code { background: var(--bg, #1d2021); padding: 1px 5px; border-radius: 3px; }
+	.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
+	.list { flex: 1; min-height: 0; overflow-y: auto; padding: 0.2rem 0.3rem; }
+	table { width: 100%; border-collapse: collapse; }
+	th, td { text-align: left; padding: 0.4rem 0.55rem; border-bottom: 1px solid var(--divider); vertical-align: top; }
+	th { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-subtle); position: sticky; top: 0; background: var(--surface); }
+	td { font-size: 0.83rem; }
+	.mono { font-variant-numeric: tabular-nums; }
+	.model-cell { line-height: 1.2; }
+	.sub { color: var(--text-subtle); font-size: 0.72rem; line-height: 1.2; }
+	tbody tr { cursor: pointer; }
+	tbody tr:hover td { background: var(--surface-2); }
+	tbody tr.sel td { background: var(--surface-active); }
+	tbody tr:last-child td { border-bottom: none; }
+	.empty { color: var(--text-subtle); text-align: center; padding: 1.4rem; cursor: default; }
 
-	/* Buttons */
-	.btn-primary {
-		flex-shrink: 0; width: auto; padding: 8px 18px; background: var(--bright-blue, #83a598);
-		color: #1d2021; border: none; border-radius: 4px; font-weight: 700; font-size: 0.9rem; cursor: pointer; white-space: nowrap;
-	}
-	.btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
-	.btn-detail {
-		width: auto; padding: 6px 16px; background: var(--bg2, #504945); color: var(--fg, #ebdbb2);
-		border: 1px solid var(--bg3, #665c54); border-radius: 4px; font-size: 0.8rem; cursor: pointer; white-space: nowrap;
-	}
-	.btn-detail:hover { background: var(--bg3, #665c54); }
-	.btn-detail:disabled { opacity: 0.5; cursor: not-allowed; }
-	.btn-back { margin-left: auto; background: none; border: none; color: var(--fg4, #a89984); cursor: pointer; font-size: 0.9rem; padding: 0; width: auto; }
-	.btn-back:hover { color: var(--fg, #ebdbb2); }
+	.pager { display: flex; align-items: center; justify-content: space-between; gap: 0.6rem; padding: 0.5rem 0.2rem 0; flex: none; }
+	.pg { color: var(--accent); text-decoration: none; font-size: 0.82rem; }
+	.pg.disabled { color: var(--text-subtle); pointer-events: none; }
+	.range { color: var(--text-subtle); font-size: 0.78rem; }
+	.spin { display: inline-block; animation: spin 0.9s linear infinite; }
+	@keyframes spin { to { transform: rotate(360deg); } }
 
-	/* Results / record table */
-	.gw-table, .result-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
-	.gw-table th, .result-table th {
-		text-align: left; color: var(--fg4, #a89984); font-weight: 600; padding: 6px 10px;
-		border-bottom: 1px solid var(--bg3, #504945); font-size: 0.72rem; letter-spacing: 0.05em; text-transform: uppercase;
-	}
-	.gw-table td, .result-table td { padding: 8px 10px; border-bottom: 1px solid var(--bg2, #3c3836); vertical-align: top; }
-	.ip-cell { font-family: monospace; color: var(--bright-aqua, #8ec07c); }
-	.cell-field { color: var(--bright-aqua); white-space: nowrap; width: 220px; }
-	.cell-value { color: var(--fg2); word-break: break-word; }
-	.mono { font-family: monospace; }
+	.detail { padding: 0.9rem; }
+	.placeholder { padding: 2rem; text-align: center; color: var(--text-subtle); }
+	.dhead { display: flex; align-items: baseline; gap: 0.6rem; }
+	h3 { font-size: 0.98rem; margin: 0; }
+	.model { color: var(--text-muted); font-size: 0.85rem; }
+	.path { font-size: 0.76rem; color: var(--text-subtle); margin: 0.2rem 0 0.9rem; }
 
-	/* Key/value list */
-	.kv { display: grid; grid-template-columns: 160px 1fr; gap: 4px 16px; margin: 6px 0; font-size: 0.85rem; }
-	.kv dt { color: var(--fg4, #a89984); }
-	.kv dd { margin: 0; color: var(--fg1, #ebdbb2); }
+	.tabs { display: flex; gap: 0.15rem; border-bottom: 1px solid var(--border); margin: 0 0 1rem; }
+	.tabs a {
+		padding: 0.4rem 0.85rem; font-size: 0.82rem; font-weight: 600; text-decoration: none;
+		color: var(--text-muted); border-bottom: 2px solid transparent; margin-bottom: -1px;
+	}
+	.tabs a:hover { color: var(--text); }
+	.tabs a.active { color: var(--text); border-bottom-color: var(--accent); }
+	.files-stub { padding: 1.5rem 0; }
+	h4 { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-subtle); margin: 1.2rem 0 0.5rem; }
 
-	/* Connect app list */
-	.connect-form { display: flex; flex-direction: column; gap: 18px; }
-	.app-list { display: flex; flex-direction: column; gap: 6px; }
-	.app-item {
-		display: flex; align-items: center; gap: 12px; padding: 8px 12px;
-		background: var(--bg, #1d2021); border: 1px solid var(--bg3, #504945); border-radius: 4px; cursor: pointer;
-	}
-	.app-item--on { border-color: var(--bright-aqua, #8ec07c); background: color-mix(in srgb, var(--bright-aqua, #8ec07c) 8%, var(--bg, #1d2021)); }
-	.app-name { font-weight: 700; color: var(--fg1, #ebdbb2); font-size: 0.9rem; }
-	.app-sum  { font-family: monospace; font-size: 0.8rem; color: var(--fg4, #a89984); }
+	.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0.6rem 0.9rem; }
+	label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.76rem; color: var(--text-muted); }
+	input, select { background: var(--bg-app); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.4rem 0.55rem; font: inherit; font-size: 0.84rem; }
+	input:focus-visible, select:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+	input:disabled, select:disabled { color: var(--text-muted); opacity: 0.85; }
+	textarea { background: var(--bg-app); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.4rem 0.55rem; font: inherit; font-size: 0.84rem; resize: vertical; }
+	textarea:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+	textarea:disabled { color: var(--text-muted); opacity: 0.85; }
+	.checks { display: grid; grid-template-columns: 1fr 1fr; gap: 0.4rem 0.9rem; margin: 0.2rem 0 0.6rem; }
+	label.chk { flex-direction: row; align-items: center; gap: 0.45rem; color: var(--text); font-size: 0.82rem; }
+	label.chk input { flex: none; width: auto; }
+	label.full { margin-top: 0.6rem; }
 
-	/* Field grid */
-	.field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 18px; }
-	.field { display: flex; flex-direction: column; gap: 6px; }
-	/* Standalone fields in the edit form (Applications, Service Key) need breathing room. */
-	.card > .field { margin-top: 18px; }
-	.field-label { font-size: 0.78rem; font-weight: 600; color: var(--fg4); text-transform: uppercase; letter-spacing: 0.07em; }
-	.optional { font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--bg4); }
-	.req { color: var(--bright-orange, #fe8019); font-style: normal; }
-	.field-input {
-		background: var(--bg1, #1d2021); color: var(--fg1); border: 1px solid var(--bg3);
-		border-radius: 3px; padding: 9px 12px; font-size: 0.9rem; outline: none; min-width: 0;
-	}
-	.field-input:focus { border-color: var(--bright-blue); }
-	.field-input::placeholder { color: var(--bg4); }
-	.field-input:disabled { opacity: 0.5; cursor: not-allowed; }
-	.check-input { width: 15px; height: 15px; accent-color: var(--bright-blue); flex-shrink: 0; cursor: inherit; }
+	.rel-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem 1.4rem; align-items: start; }
+	.rel { display: grid; grid-template-columns: 7rem 1fr; gap: 0.5rem 0.8rem; align-items: start; align-content: start; }
+	.rlabel { align-self: center; font-size: 0.76rem; color: var(--text-muted); }
+	.rval { align-self: center; font-size: 0.84rem; color: var(--text); padding: 0.4rem 0; }
+	.rval.unset { color: var(--text-subtle); font-style: italic; }
+	.rel-note { grid-column: 1 / -1; font-size: 0.72rem; color: var(--text-subtle); }
+	.rel-note a { color: var(--accent); }
+	.partno-note { align-self: center; font-size: 0.76rem; color: var(--text-subtle); }
 
-	/* Action rows */
-	.action-row { display: flex; gap: 10px; align-items: center; }
-	.connect-btn {
-		background: var(--green, #689d6a); color: var(--fg0, #fbf1c7); border: none; border-radius: 3px;
-		padding: 11px 32px; font-size: 1rem; font-weight: 700; cursor: pointer; white-space: nowrap; width: auto;
-	}
-	.connect-btn:hover:not(:disabled) { background: var(--bright-green, #b8bb26); color: var(--bg-hard); }
-	.connect-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-	.reset-btn {
-		background: transparent; color: var(--fg4); border: 1px solid var(--bg3); border-radius: 3px;
-		padding: 11px 18px; font-size: 0.9rem; cursor: pointer; width: auto;
-	}
-	.reset-btn:hover { border-color: var(--fg4); color: var(--fg2); }
-	.form-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
-	.btn-action {
-		width: auto; min-width: 96px; padding: 8px 20px; border-radius: 4px; font-size: 0.85rem; font-weight: 700;
-		cursor: pointer; white-space: nowrap; background: var(--bg2, #504945); color: var(--fg, #ebdbb2); border: 1px solid var(--bg3, #665c54);
-	}
-	.btn-action:hover:not(:disabled) { background: var(--bg3, #665c54); }
-	.btn-action--primary { background: var(--bright-blue, #83a598); color: #1d2021; border: none; }
-	.btn-action--primary:hover:not(:disabled) { filter: brightness(1.05); }
-	.btn-action:disabled { opacity: 0.4; cursor: not-allowed; }
-	.open-btn {
-		background: var(--yellow, #d79921); color: var(--bg-hard); border: none; border-radius: 3px;
-		padding: 8px 18px; font-weight: 700; cursor: pointer; width: auto; margin-left: auto;
-	}
+	/* Connect tab */
+	.connect-form { display: flex; flex-direction: column; gap: 0.9rem; }
+	.capps { display: flex; flex-direction: column; gap: 0.35rem; }
+	.capp { display: grid; grid-template-columns: auto auto 1fr; align-items: center; gap: 0.55rem;
+		padding: 0.4rem 0.6rem; border: 1px solid var(--border); border-radius: var(--radius);
+		background: var(--surface-2); cursor: pointer; font-size: 0.83rem; }
+	.capp.on { border-color: var(--accent); background: var(--surface-active); }
+	.capp input { margin: 0; }
+	.capp-name { font-weight: 600; color: var(--text); }
+	.capp-sum { color: var(--text-subtle); font-size: 0.76rem; justify-self: end; }
+	.cgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.6rem 0.9rem; }
+	.opt { color: var(--text-subtle); font-weight: 400; }
+	.crow { display: flex; align-items: center; gap: 0.6rem; }
+	.cbanner { margin-top: 0.9rem; padding: 0.7rem 0.8rem; border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+		border-radius: var(--radius); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+	.cbanner-msg { margin: 0 0 0.5rem; font-size: 0.82rem; color: var(--text); }
+	.cbtns { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+	.cbtn { background: var(--accent); color: var(--on-accent); border: none; border-radius: var(--radius);
+		padding: 0.4rem 0.7rem; font: inherit; font-size: 0.8rem; font-weight: 600; cursor: pointer; }
+	.cbtn:hover { background: var(--accent-hover); }
+	.cbtn.launch { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
+	.cbtn:disabled { opacity: 0.6; cursor: default; }
+	.probe-warn { margin: 0.5rem 0 0; font-size: 0.8rem; color: var(--danger); }
+	.warn-box { margin: 0 0 0.9rem; padding: 0.6rem 0.7rem; font-size: 0.82rem; color: var(--text);
+		border: 1px solid color-mix(in srgb, var(--danger) 45%, transparent);
+		background: color-mix(in srgb, var(--danger) 8%, transparent); border-radius: var(--radius); }
+	.warn-box a { color: var(--accent); }
 
-	/* Notices */
-	.notice       { font-size: 0.85rem; color: var(--fg4, #a89984); margin: 8px 0; }
-	.notice--warn { color: var(--bright-orange, #fe8019); }
-
-	/* ── Result banner ───────────────────────────────────────────────────── */
-	.result-banner { display: flex; align-items: flex-start; gap: 12px; border-radius: 3px; padding: 14px 18px; font-size: 0.9rem; line-height: 1.5; margin-top: 16px; }
-	.result-ok        { background: color-mix(in srgb, var(--green)  15%, var(--bg0)); border: 1px solid var(--green); }
-	.result-err       { background: color-mix(in srgb, var(--red)    15%, var(--bg0)); border: 1px solid var(--bright-red); }
-	.result-launching { background: color-mix(in srgb, var(--yellow) 12%, var(--bg0)); border: 1px solid var(--yellow); }
-	.result-icon { font-size: 1rem; flex-shrink: 0; margin-top: 1px; }
-	.result-ok .result-icon { color: var(--bright-green); }
-	.result-err .result-icon { color: var(--bright-red); }
-	.result-launching .result-icon { color: var(--yellow); }
-	.result-body { display: flex; flex-direction: column; gap: 8px; }
-	.result-msg { color: var(--fg2); }
-	.result-err .result-msg { color: var(--fg1); }
-	.result-launching a { color: var(--yellow); }
-	.result-launching code { color: var(--yellow); font-family: inherit; }
-	.result-buttons { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
-	.result-open-btn {
-		background: var(--green); color: var(--fg0); border: none; border-radius: 3px; padding: 7px 18px;
-		font-size: 0.88rem; font-weight: 600; cursor: pointer; white-space: nowrap; width: auto;
-	}
-	.result-open-btn:hover { background: var(--bright-green); color: var(--bg-hard); }
-	.result-open-btn--guac { background: var(--blue); }
-	.result-open-btn--guac:hover { background: var(--bright-blue); color: var(--fg0); }
-	.result-open-btn--launch { background: var(--orange); }
-	.result-open-btn--launch:hover { background: var(--bright-orange); color: var(--fg0); }
-
-	.probe-warn {
-		display: flex; flex-direction: column; gap: 0.4rem; padding: 0.65rem 0.9rem; border-radius: 3px;
-		font-size: 0.82rem; line-height: 1.5; background: color-mix(in srgb, var(--orange) 12%, var(--bg0)); border: 1px solid var(--orange); color: var(--fg2);
-	}
-	.probe-warn strong { color: var(--bright-orange); font-size: 0.84rem; }
-	.probe-warn-btns { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 2px; }
-	.probe-btn { background: transparent; border: 1px solid var(--bg3); border-radius: 3px; padding: 3px 10px; font-size: 0.78rem; color: var(--fg4); cursor: pointer; }
-	.probe-btn-open:hover { color: var(--orange); border-color: var(--orange); }
-	.probe-btn-retry:hover { color: var(--aqua); border-color: var(--aqua); }
-
-	/* ── Port rows editor ───────────────────────────────────────────────────── */
-	.port-rows { border: 1px solid var(--bg3); border-radius: 3px; overflow: hidden; }
-	.port-row-head, .port-row {
-		display: grid; grid-template-columns: 130px 130px 110px 48px 48px 32px; align-items: stretch;
-	}
-	.port-row-head { background: var(--bg1); font-size: 0.72rem; font-weight: 600; color: var(--fg4); text-transform: uppercase; letter-spacing: 0.07em; }
-	.port-row-head > span { padding: 7px 10px; }
-	.col-center { text-align: center; }
-	.port-row { border-top: 1px solid var(--bg2); }
-	.pr-input {
-		background: transparent; color: var(--fg1); border: none; border-right: 1px solid var(--bg2);
-		padding: 9px 10px; font-family: inherit; font-size: 0.9rem; outline: none; width: 100%; min-width: 0;
-	}
-	.pr-input:focus { background: var(--bg1); box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--bright-blue) 30%, transparent); position: relative; z-index: 1; }
-	.pr-input::placeholder { color: var(--bg4); }
-	.pr-select {
-		appearance: none;
-		background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%237c6f64' d='M6 8 0 0h12z'/%3E%3C/svg%3E");
-		background-repeat: no-repeat; background-position: right 8px center; padding-right: 28px; cursor: pointer;
-	}
-	.pr-select option { background: var(--bg1); }
-	.pr-check { display: flex; justify-content: center; align-items: center; border-right: 1px solid var(--bg2); cursor: pointer; }
-	.pr-check:has(.check-input:disabled) { opacity: 0.5; cursor: not-allowed; }
-	.path-param-sni:disabled { opacity: 0.4; }
-	.path-param-sni-label:has(~ .path-param-sni:disabled) { opacity: 0.4; }
-	.pr-remove { background: transparent; color: var(--fg4); border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 0; font-size: 0.85rem; }
-	.pr-remove:hover:not(:disabled) { color: var(--bright-red); }
-	.pr-remove:disabled { opacity: 0.25; cursor: not-allowed; }
-	.pr-add { display: block; width: 100%; background: transparent; color: var(--bright-blue); border: none; border-top: 1px solid var(--bg2); padding: 8px 14px; font-size: 0.85rem; cursor: pointer; text-align: left; }
-	.pr-add:hover:not(:disabled) { background: var(--bg1); color: var(--bright-aqua); }
-	.port-row-path { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-top: 1px dashed var(--bg3); background: color-mix(in srgb, var(--bright-blue) 5%, var(--bg0)); }
-	.path-param-label { font-size: 0.72rem; font-weight: 600; color: var(--bright-blue); text-transform: uppercase; letter-spacing: 0.06em; white-space: nowrap; }
-	.path-param-input { flex: 1; background: var(--bg1); color: var(--fg1); border: 1px solid var(--bg3); border-radius: 3px; padding: 4px 8px; font-family: monospace; font-size: 0.88rem; outline: none; }
-	.path-param-input:not(.path-param-sni) { flex: 0 0 180px; }
-	.path-param-input:focus { border-color: var(--bright-blue); }
-	.path-param-input:disabled { opacity: 0.5; cursor: not-allowed; }
-	.port-row-guac { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-top: 1px dashed var(--bg3); background: color-mix(in srgb, var(--bright-aqua) 5%, var(--bg0)); }
-	.guac-param-label { font-size: 0.72rem; font-weight: 600; color: var(--bright-aqua); text-transform: uppercase; letter-spacing: 0.06em; white-space: nowrap; }
-	.guac-param-input { width: 72px; background: var(--bg1); color: var(--fg1); border: 1px solid var(--bg3); border-radius: 3px; padding: 4px 8px; font-size: 0.88rem; outline: none; }
-	.guac-param-input:focus { border-color: var(--bright-aqua); }
-	.guac-param-dpi { width: 52px; }
-	.guac-param-hint { font-size: 0.75rem; color: var(--bg4); margin-left: 4px; }
-	.guac-param-drive { display: flex; align-items: center; gap: 5px; margin-left: auto; font-size: 0.72rem; font-weight: 600; color: var(--bright-aqua); text-transform: uppercase; letter-spacing: 0.06em; white-space: nowrap; cursor: pointer; }
-	.guac-param-drive:has(input:disabled) { opacity: 0.4; cursor: not-allowed; }
-	.guac-param-record { display: flex; align-items: center; gap: 5px; margin-left: 12px; font-size: 0.72rem; font-weight: 600; color: var(--bright-orange); text-transform: uppercase; letter-spacing: 0.06em; white-space: nowrap; cursor: pointer; }
+	.error { color: var(--danger); font-size: 0.85rem; margin: 0 0 0.8rem; }
 </style>

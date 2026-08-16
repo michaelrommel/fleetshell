@@ -1,51 +1,46 @@
-import { fail, redirect }  from '@sveltejs/kit';
-import { env }              from '$env/dynamic/private';
-import { SESSION_COOKIE }   from '$lib/server/constants.js';
-import { signSession }      from '$lib/server/session.js';
+import type { PageServerLoad, Actions } from './$types';
+import { fail, redirect } from '@sveltejs/kit';
+import { base } from '$app/paths';
+import { signSession, SESSION_COOKIE, verifySession } from '$lib/server/session';
+import { verifyLogin, listPersonas } from '$lib/server/identity';
 
-import type { Actions, PageServerLoad } from './$types';
+function setSession(cookies: Parameters<Actions['default']>[0]['cookies'], accountId: string, userId: string | null) {
+	cookies.set(SESSION_COOKIE, signSession({ accountId, userId }), {
+		path: base || '/',
+		httpOnly: true,
+		sameSite: 'lax',
+		maxAge: 60 * 60 * 24,
+	});
+}
 
-/** Redirect already-authenticated visitors straight to the welcome page. */
-export const load: PageServerLoad = ({ locals }) => {
-	if (locals.user) redirect(303, '/welcome');
+export const load: PageServerLoad = async ({ cookies }) => {
+	// Already signed in? Skip straight past the form.
+	const session = verifySession(cookies.get(SESSION_COOKIE));
+	if (session?.userId) throw redirect(303, base || '/');
+	if (session?.accountId) throw redirect(303, `${base}/select-persona`);
+	return {};
 };
 
 export const actions: Actions = {
 	default: async ({ request, cookies }) => {
-		const data     = await request.formData();
-		const username = (data.get('username') as string | null)?.trim() ?? '';
-		const password = (data.get('password') as string | null) ?? '';
+		const data = await request.formData();
+		const login = String(data.get('login') ?? '').trim();
+		const password = String(data.get('password') ?? '');
+		if (!login || !password) return fail(400, { error: 'Enter username and password.', login });
 
-		const expectedUser = env.PORTAL_USERNAME ?? '';
-		const expectedPass = env.PORTAL_PASSWORD ?? '';
+		const account = await verifyLogin(login, password);
+		if (!account) return fail(401, { error: 'Invalid username or password.', login });
 
-		if (!expectedUser || !expectedPass) {
-			console.error(
-				'[portal] PORTAL_USERNAME or PORTAL_PASSWORD is not set — ' +
-				'set these environment variables before starting the server.',
-			);
-			return fail(500, { error: 'Server is not configured. Contact the administrator.' });
+		const personas = await listPersonas(account.account_id);
+		if (personas.length === 0) {
+			return fail(403, { error: 'This account has no linked personas.', login });
 		}
-
-		// Constant-time-ish comparison: always check both fields to avoid
-		// leaking which field was wrong via timing.
-		const userOk = username === expectedUser;
-		const passOk = password === expectedPass;
-
-		if (!userOk || !passOk) {
-			return fail(401, { error: 'Invalid username or password.' });
+		if (personas.length === 1) {
+			setSession(cookies, account.account_id, personas[0].user_id);
+			throw redirect(303, base || '/');
 		}
-
-		const secret = env.PORTAL_SESSION_SECRET ?? 'change-me-in-production';
-
-		cookies.set(SESSION_COOKIE, signSession(username, secret), {
-			path     : '/',
-			httpOnly : true,
-			sameSite : 'lax',
-			secure   : false,          // set to true behind HTTPS in production
-			maxAge   : 8 * 60 * 60,   // 8 hours
-		});
-
-		redirect(303, '/welcome');
+		// Multiple personas: authenticate the account, defer persona choice.
+		setSession(cookies, account.account_id, null);
+		throw redirect(303, `${base}/select-persona`);
 	},
 };

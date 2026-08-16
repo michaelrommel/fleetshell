@@ -1,64 +1,49 @@
-/**
- * Stateless signed-cookie session helpers.
- *
- * Cookie format:  <base64url(JSON payload)>.<base64url(HMAC-SHA256 signature)>
- *
- * The secret is passed explicitly so this module has no side-effects at
- * import time and works correctly regardless of module load order.
- */
-import { createHmac, timingSafeEqual } from 'node:crypto';
+// src/lib/server/session.ts
+//
+// Signed session for the dev login. Carries TWO ids (see docs/portal_ui.md):
+//   accountId  the human who authenticated (login_account)
+//   userId     the active persona (app_user) they are working as, or null when
+//              the account has >1 linked persona and has not chosen yet.
+//
+// Payload is base64url(JSON) with an HMAC so it can't be forged. Callers read
+// locals.userId (active persona) exactly as before; the account layer is
+// additive. Swap verifyLogin (identity.ts) for SAML/OAuth without touching this.
 
-// ── Types ─────────────────────────────────────────────────────────────────────
+import crypto from 'node:crypto';
+import { env } from '$env/dynamic/private';
 
-interface SessionPayload {
-	user : string;
-	iat  : number;   // Unix ms — issued-at, used for future expiry checks
+const SECRET = env.SESSION_SECRET ?? 'dev-session-secret-change-me';
+export const SESSION_COOKIE = 'session';
+
+export interface SessionData {
+	accountId: string;
+	userId: string | null;
 }
 
-// ── Exports ───────────────────────────────────────────────────────────────────
-
-/**
- * Sign a session payload and return the cookie value string.
- * The returned string is safe to store in an HttpOnly cookie.
- */
-export function signSession(username: string, secret: string): string {
-	const payload = Buffer
-		.from(JSON.stringify({ user: username, iat: Date.now() } satisfies SessionPayload))
-		.toString('base64url');
-	const sig = hmac(payload, secret);
-	return `${payload}.${sig}`;
+function mac(value: string): string {
+	return crypto.createHmac('sha256', SECRET).update(value).digest('base64url');
 }
 
-/**
- * Verify a cookie value and return the username it encodes, or `null` if
- * the cookie is missing, malformed, or the signature does not match.
- *
- * Uses a timing-safe comparison to prevent HMAC oracle attacks.
- */
-export function verifySession(cookie: string, secret: string): string | null {
+export function signSession(data: SessionData): string {
+	const payload = Buffer.from(JSON.stringify(data)).toString('base64url');
+	return `${payload}.${mac(payload)}`;
+}
+
+export function verifySession(cookie: string | undefined): SessionData | null {
+	if (!cookie) return null;
 	const dot = cookie.lastIndexOf('.');
 	if (dot < 0) return null;
-
-	const payload  = cookie.slice(0, dot);
-	const received = cookie.slice(dot + 1);
-	const expected = hmac(payload, secret);
-
-	// Timing-safe comparison — Buffer lengths must match first.
-	const rBuf = Buffer.from(received, 'base64url');
-	const eBuf = Buffer.from(expected, 'base64url');
-	if (rBuf.length !== eBuf.length) return null;
-	if (!timingSafeEqual(rBuf, eBuf)) return null;
-
+	const payload = cookie.slice(0, dot);
+	const sig = cookie.slice(dot + 1);
+	const expected = mac(payload);
+	if (sig.length !== expected.length) return null;
+	if (!crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) return null;
 	try {
-		const data = JSON.parse(Buffer.from(payload, 'base64url').toString()) as SessionPayload;
-		return typeof data.user === 'string' ? data.user : null;
+		const data = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+		if (typeof data?.accountId !== 'string') return null;
+		const userId = typeof data.userId === 'string' ? data.userId : null;
+		return { accountId: data.accountId, userId };
 	} catch {
 		return null;
 	}
-}
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-function hmac(data: string, secret: string): string {
-	return createHmac('sha256', secret).update(data).digest('base64url');
 }

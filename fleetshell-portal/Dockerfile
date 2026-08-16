@@ -1,106 +1,69 @@
-# ── Stage 1: builder ──────────────────────────────────────────────────────────
-# Full Node.js image so all devDependencies (TypeScript, Vite, Svelte compiler…)
-# are available for the build step.  Nothing from this layer ships in the final
-# image.
+# FleetShell MDM portal -- container image.
+#
+# Build context is the REPO ROOT (see scripts/build_portal.sh), so all COPY
+# paths are prefixed with fleetshell-portal/.
+#
+# The app is served by a custom entry (server.js) that wraps adapter-node's
+# request handler and attaches the WebSocket server on the same port -- so the
+# CMD is `node server.js`, not `node build/index.js`.
+
+# -- Stage 1: builder ---------------------------------------------------------
+# Full Node image so all devDependencies (Vite, Svelte compiler, TS) are present.
 FROM node:22-alpine AS builder
 
 WORKDIR /build
 
-# Copy the lock-file and manifest first so npm ci is cached as long as
-# dependencies haven't changed, even if source files have.
+# Lockfile + manifest first so `npm ci` is cached until deps change.
 COPY fleetshell-portal/package.json fleetshell-portal/package-lock.json ./
-
-# Install every dependency (including devDeps — needed by Vite / svelte-check).
 RUN npm ci
 
-# Copy the rest of the source tree.
+# Rest of the source tree, then compile (adapter-node -> build/).
 COPY fleetshell-portal/ .
 
-# Compile the SvelteKit app with adapter-node.
-# Output layout:
-#   build/index.js      ← Node.js server entrypoint
-#   build/handler.js    ← request handler (used by custom Node wrappers)
-#   build/client/       ← static assets (JS bundles, CSS, hashed filenames)
-#   build/server/       ← SSR server chunks
+# BASE_PATH must match runtime; empty = site root (default). Override at build
+# time only when deploying under a sub-path.
+ARG BASE_PATH=""
+ENV BASE_PATH=${BASE_PATH}
 RUN npm run build
 
 
-# ── Stage 2: runner ────────────────────────────────────────────────────────────
-# Minimal Node.js runtime.  server.js (the custom entry point) uses the `ws`
-# package at runtime, so we do need node_modules — but only production deps.
+# -- Stage 2: runner ----------------------------------------------------------
+# Minimal runtime; server.js + the postgres/redis/ws deps run in production.
 FROM node:22-alpine
 
-# ── Non-root user ──────────────────────────────────────────────────────────────
 RUN adduser -D fleetshell
-
 WORKDIR /fleetshell-portal
 
-# Install only production dependencies (just `ws` and its peers; all devDeps
-# are excluded).  Copy manifests first so this layer is cached on dep changes.
+# Production dependencies only (manifests first for layer caching).
 COPY --from=builder /build/package.json /build/package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts
 
-# The compiled SvelteKit bundle.
+# Compiled bundle + the custom server entry (+ its ws helper).
 COPY --from=builder --chown=fleetshell:fleetshell /build/build ./build
-COPY ./dist/fleetshell-client_0.13.1_x64-setup.exe .
+COPY --from=builder --chown=fleetshell:fleetshell /build/server.js /build/ws-server.js ./
+
 USER fleetshell
 
-# ── Runtime configuration ──────────────────────────────────────────────────────
-# Required — override these before deploying.
-# The application will not start without PORTAL_USERNAME and PORTAL_PASSWORD.
-
-# ── Credentials ───────────────────────────────────────────────────────────────
-# PORTAL_USERNAME=admin
-# PORTAL_PASSWORD=changeme
-
-# ── Session ───────────────────────────────────────────────────────────────────
-# HMAC-SHA256 secret used to sign session cookies.
-# Generate a strong random value, e.g.:
-#   openssl rand -base64 32
-# PORTAL_SESSION_SECRET=change-me-in-production
-
-# ── JWT ───────────────────────────────────────────────────────────────────
-# HMAC-SHA256 secret used to sign probe JWT tokens.
-# Must be the same value used by fleetshell-gateway if both services are deployed.
-# Generate: openssl rand -base64 32
-# JWT_SECRET=secret
-
-# ── Downloads ───────────────────────────────────────────────────────────────────
-# Absolute (or cwd-relative) path to each installer on disk.
-# The logical download URL stays the same forever; to ship a new version just
-# update the path here and restart the server — no rebuild needed.
-#
-# The file in static/ is served during development; point to a stable directory
-# outside the build folder in production so binaries survive redeployments.
-# DOWNLOAD_FLEETSHELL_CLIENT=/fleetshell-portal/fleetshell-client_0.13.1_x64-setup.exe
-# DOWNLOAD_VNC_VIEWER=
-# DOWNLOAD_TEAMVIEWER_CLIENT=
-# DOWNLOAD_SSH_TERMINAL=
-
-# ── Redis ───────────────────────────────────────────────────────────────────
-# REDIS_URL=redis://localhost:6379
-
-# ── Network ───────────────────────────────────────────────────────────────────
-# The Node server listens on this host:port when started with `node build/index.js`.
-# HOST=0.0.0.0
-# PORT=3000
-
-# ORIGIN is used by @sveltejs/adapter-node to determine the request URL origin
-# for CSRF protection.  Set this to the public URL of the portal.
-# Without this the adapter falls back to assuming HTTPS, which will cause
-# CSRF false-positives on plain-HTTP setups.
-# Examples:
-#   ORIGIN=http://localhost:3000          (local development)
-#   ORIGIN=https://portal.fleetshell.com (production)
-# ORIGIN=http://localhost:3000
-#
-# BODY_SIZE_LIMIT — Optional.  adapter-node default is 512 kB.
+# -- Runtime configuration (override at deploy time) --------------------------
+# Global plane (master data + authz):
+#   GLOBAL_DB_HOST / GLOBAL_DB_PORT / GLOBAL_DB_NAME / GLOBAL_DB_USER / GLOBAL_DB_PASSWORD
+# Regional plane (user PII + group membership):
+#   LOCAL_DB_HOST / LOCAL_DB_PORT / LOCAL_DB_NAME / LOCAL_DB_USER / LOCAL_DB_PASSWORD
+#   PGSSL=verify-full (prod, + PGSSLROOTCERT) | require | disable
+# Auth / crypto:
+#   SESSION_SECRET   -- cookie signing key (openssl rand -base64 32)
+#   JWT_SECRET       -- tunnel + probe JWTs; MUST match the gateway's JWT_SECRET
+# Valkey (classification / dtm / infoproxy / subscription spools + enrollment):
+#   VALKEY_URL=rediss://host:6379   VALKEY_TLS_REJECT_UNAUTHORIZED=true (prod)
+# adapter-node CSRF: ORIGIN = the public URL (e.g. https://portal.fleetshell.com)
+# Optional: BASE_PATH (default empty = root), PUBLIC_CLIENT_API_PORT,
+#   DOWNLOAD_* installer paths, PUBLIC_GITHUB_RELEASE_URL, CLIENT_CERT/CLIENT_KEY.
 
 ENV PORT=3000 \
-	DOWNLOAD_FLEETSHELL_CLIENT=/fleetshell-portal/fleetshell-client_0.13.1_x64-setup.exe \
-	PUBLIC_GITHUB_RELEASE_URL=https://github.com/michaelrommel/fleetshell/releases/download/v0.13.1-beta/fleetshell-client_0.13.1_x64-setup.exe \
+    HOST=0.0.0.0 \
+    BASE_PATH="" \
     NODE_ENV=production
 
 EXPOSE 3000
 
-CMD ["node", "build/index.js"]
+CMD ["node", "server.js"]

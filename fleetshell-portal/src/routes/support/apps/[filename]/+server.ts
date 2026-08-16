@@ -1,90 +1,55 @@
 /**
- * Generic download endpoint for support assets.
+ * GET /support/apps/<logical-name>  (base-relative: /support/apps/...)
  *
- * URL pattern:  GET /support/apps/<logical-name>
- *               e.g. /support/apps/fleetshell-client.exe
+ * Streams a support installer whose on-disk path comes from an env var, so a
+ * new binary version is shipped by updating the env var + restarting -- no code
+ * change. Lives outside the (app) group, so it is not session-guarded (the
+ * desktop client and unauthenticated download links can reach it).
  *
- * Each logical name maps to an environment variable that holds the
- * **absolute path** (or a path relative to cwd) of the actual file on disk.
- * To ship a new binary version, update the env var and restart the server —
- * no code change or rebuild required.
- *
- * Environment variables
- * ─────────────────────
- * DOWNLOAD_FLEETSHELL_CLIENT   path to the FleetShell Client installer
- * DOWNLOAD_VNC_VIEWER          path to the VNC Viewer installer
- * DOWNLOAD_TEAMVIEWER_CLIENT   path to the TeamViewer Client installer
- * DOWNLOAD_SSH_TERMINAL        path to the SSH Terminal installer
+ * Env vars (absolute path, or relative to cwd):
+ *   DOWNLOAD_FLEETSHELL_CLIENT, DOWNLOAD_VNC_VIEWER,
+ *   DOWNLOAD_TEAMVIEWER_CLIENT, DOWNLOAD_SSH_TERMINAL
  */
-import { env }              from '$env/dynamic/private';
-import { error }            from '@sveltejs/kit';
+import { env } from '$env/dynamic/private';
+import { error } from '@sveltejs/kit';
 import { createReadStream } from 'node:fs';
-import { stat }             from 'node:fs/promises';
-import { basename }         from 'node:path';
-import { Readable }         from 'node:stream';
+import { stat } from 'node:fs/promises';
+import { basename } from 'node:path';
+import { Readable } from 'node:stream';
 import type { RequestHandler } from './$types';
 
-/** Logical download name → env-var key that holds the on-disk path. */
 const FILE_MAP: Record<string, keyof typeof env> = {
-	'fleetshell-client.exe' : 'DOWNLOAD_FLEETSHELL_CLIENT',
-	'vnc-viewer.exe'        : 'DOWNLOAD_VNC_VIEWER',
-	'teamviewer-client.exe' : 'DOWNLOAD_TEAMVIEWER_CLIENT',
-	'ssh-terminal.exe'      : 'DOWNLOAD_SSH_TERMINAL',
+	'fleetshell-client.exe': 'DOWNLOAD_FLEETSHELL_CLIENT',
+	'vnc-viewer.exe': 'DOWNLOAD_VNC_VIEWER',
+	'teamviewer-client.exe': 'DOWNLOAD_TEAMVIEWER_CLIENT',
+	'ssh-terminal.exe': 'DOWNLOAD_SSH_TERMINAL',
 } as const;
 
 export const GET: RequestHandler = async ({ params }) => {
 	const logicalName = params.filename;
-	const envKey      = FILE_MAP[logicalName];
-
-	console.log(`[download] request for logical name: "${logicalName}"`);
-	console.log(`[download] mapped env key: ${envKey ?? '(none — not in FILE_MAP)'}`);
-
-	// Unknown logical name — not in the map at all.
-	if (!envKey) {
-		console.log(`[download] 404 — no FILE_MAP entry for "${logicalName}"`);
-		error(404, `No download registered for "${logicalName}"`);
-	}
+	const envKey = FILE_MAP[logicalName];
+	if (!envKey) error(404, `No download registered for "${logicalName}"`);
 
 	const diskPath = (env[envKey] ?? '').trim();
-	console.log(`[download] env.${envKey} = "${diskPath || '(empty/unset)'}"`);
+	if (!diskPath) error(503, `Download not yet available (set ${envKey})`);
 
-	// Env var exists in the map but has not been configured yet.
-	if (!diskPath) {
-		console.log(`[download] 503 — env var ${envKey} is empty or unset`);
-		error(503, `Download not yet available (set the ${envKey} environment variable)`);
-	}
-
-	// Verify the file exists and get its size for Content-Length.
 	let fileStat: Awaited<ReturnType<typeof stat>>;
 	try {
 		fileStat = await stat(diskPath);
-		console.log(`[download] stat ok — size=${fileStat.size}, isFile=${fileStat.isFile()}`);
-	} catch (err) {
-		console.log(`[download] 404 — stat failed for "${diskPath}": ${err}`);
+	} catch {
 		error(404, `File not found on server: ${diskPath}`);
 	}
 
-	// Stream the file — important for large installers.
-	console.log(`[download] streaming "${diskPath}" as "${logicalName}"`);
 	const nodeStream = createReadStream(diskPath);
-	nodeStream.on('error', (err) => {
-		console.error(`[download] stream error after headers sent for "${diskPath}": ${err}`);
-	});
-	nodeStream.on('close', () => {
-		console.log(`[download] stream closed for "${diskPath}"`);
-	});
-	const webStream  = Readable.toWeb(nodeStream) as ReadableStream;
+	nodeStream.on('error', (err) => console.error(`[download] stream error for "${diskPath}": ${err}`));
+	const webStream = Readable.toWeb(nodeStream) as ReadableStream;
 
 	return new Response(webStream, {
 		headers: {
-			'Content-Type'              : 'application/octet-stream',
-			// Use the *logical* name as the download filename so the browser
-			// always saves it as e.g. "fleetshell-client.exe" regardless of
-			// what the file is actually called on disk.
-			'Content-Disposition'       : `attachment; filename="${basename(diskPath)}"`,
-			'Content-Length'            : String(fileStat.size),
-			// Prevent caches from serving stale binaries after an update.
-			'Cache-Control'             : 'no-store',
+			'Content-Type': 'application/octet-stream',
+			'Content-Disposition': `attachment; filename="${basename(diskPath)}"`,
+			'Content-Length': String(fileStat.size),
+			'Cache-Control': 'no-store',
 		},
 	});
 };

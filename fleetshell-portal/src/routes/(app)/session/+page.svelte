@@ -1,7 +1,9 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { base } from '$app/paths';
 	import { page } from '$app/stores';
 	import type Guac from 'guacamole-common-js';
+	import '@xterm/xterm/css/xterm.css';
 
 	const wsUrl = $derived($page.url.searchParams.get('ws') ?? '');
 
@@ -191,17 +193,23 @@
 				// Wait for all four Victor Mono NF faces to be ready before
 				// opening the terminal.  Without this, xterm.js measures glyph
 				// widths before the font loads and the cell grid is wrong.
-				const FontFaceObserver = (await import('fontfaceobserver')).default;
+				// Fonts live under the app base path (static/fonts) and are loaded
+				// via the FontFace API so the URL stays base-path correct.
+				const faces = [
+					{ file: 'VictorMonoNF-Regular.woff2',    weight: '400', style: 'normal' },
+					{ file: 'VictorMonoNF-Bold.woff2',       weight: '700', style: 'normal' },
+					{ file: 'VictorMonoNF-Italic.woff2',     weight: '400', style: 'italic' },
+					{ file: 'VictorMonoNF-BoldItalic.woff2', weight: '700', style: 'italic' },
+				];
 				try {
-					await Promise.all([
-						new FontFaceObserver('Victor Mono NF', { weight: 'normal', style: 'normal' }).load(null, 5000),
-						new FontFaceObserver('Victor Mono NF', { weight: 'bold',   style: 'normal' }).load(null, 5000),
-						new FontFaceObserver('Victor Mono NF', { weight: 'normal', style: 'italic' }).load(null, 5000),
-						new FontFaceObserver('Victor Mono NF', { weight: 'bold',   style: 'italic' }).load(null, 5000),
-					]);
+					await Promise.all(faces.map(async (f) => {
+						const face = new FontFace('Victor Mono NF', `url(${base}/fonts/${f.file})`, { weight: f.weight, style: f.style });
+						await face.load();
+						document.fonts.add(face);
+					}));
 				} catch {
-					// Font load timed out or failed — proceed anyway with fallback.
-					console.warn('Victor Mono NF font load timed out, proceeding with fallback');
+					// Font load failed -- proceed anyway with the monospace fallback.
+					console.warn('Victor Mono NF font load failed, proceeding with fallback');
 				}
 
 				const term = new Terminal({

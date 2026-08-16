@@ -1,23 +1,27 @@
-/**
- * GET /api/devices?q=<query>
- *
- * Search devices in Valkey.  Query grammar:
- *   ip:<v>       match on the device IP
- *   <field>:<v>  match on any aeroftp hash field (serial, product, country, ...)
- *   <v>          bare word matches ip OR any field value
- *   space ANDs tokens;  '|' ORs alternatives within a token
- * An empty query returns every device (browse mode).
- *
- * Returns: { devices: DeviceSummary[] }
- */
-import { json, error }        from '@sveltejs/kit';
-import { searchDevices }      from '$lib/server/devices';
+import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
+import { env } from '$env/dynamic/private';
+import { resolveGroupIds, listDevices } from '$lib/server/authz';
 
-export const GET: RequestHandler = async ({ locals, url }) => {
-	if (!locals.user) error(401, 'Unauthorized');
+// GET /api/devices?user=<uuid>&verb=view&limit=50
+// Cursor pagination: &after_updated=<iso>&after_id=<uuid>
+export const GET: RequestHandler = async ({ url }) => {
+	const userId = url.searchParams.get('user') ?? env.DEV_USER_ID;
+	if (!userId) throw error(400, 'no user (pass ?user= or set DEV_USER_ID)');
 
-	const q = url.searchParams.get('q') ?? '';
-	const devices = await searchDevices(q);
-	return json({ devices });
+	const verb = url.searchParams.get('verb') ?? 'view';
+	const limit = Number(url.searchParams.get('limit') ?? 50);
+	const afterUpdated = url.searchParams.get('after_updated');
+	const afterId = url.searchParams.get('after_id');
+	const cursor = afterUpdated && afterId ? { updatedAt: afterUpdated, id: afterId } : undefined;
+
+	const groupIds = await resolveGroupIds(userId);
+	const devices = await listDevices(groupIds, verb, cursor, limit);
+
+	const nextCursor =
+		devices.length === limit
+			? { after_updated: devices[devices.length - 1].updated_at, after_id: devices[devices.length - 1].id }
+			: null;
+
+	return json({ userId, groupIds, count: devices.length, nextCursor, devices });
 };

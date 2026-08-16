@@ -1,124 +1,68 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
-	import type { ActionData } from './$types';
+	import Logo from '$lib/components/Logo.svelte';
 
-	let { form }: { form: ActionData } = $props();
-
-	let submitting = $state(false);
+	let { form } = $props();
 </script>
 
-<svelte:head><title>FleetShell Portal — Login</title></svelte:head>
-
-<div class="page">
+<main class="wrap">
 	<div class="card">
-		<div class="logo">
-			<span class="logo-fleet">Fleet</span><span class="logo-shell">Shell</span>
+		<div class="head">
+			<div class="mark"><Logo /></div>
+			<h1>FleetShell&nbsp;Portal <span class="tag">dev</span></h1>
 		</div>
-		<p class="subtitle">Portal</p>
+		<p class="hint">Sign in with your account. You will pick a persona next if you have more than one.</p>
 
-		<form
-			method="POST"
-			use:enhance={() => {
-				submitting = true;
-				return async ({ update }) => {
-					await update();
-					submitting = false;
-				};
-			}}
-		>
-			{#if form?.error}
-				<div class="error-banner" role="alert">{form.error}</div>
-			{/if}
+		{#if form?.error}<p class="error">{form.error}</p>{/if}
 
-			<div class="field">
-				<label for="username">Username</label>
-				<input
-					id="username"
-					name="username"
-					type="text"
-					autocomplete="username"
-					autocapitalize="off"
-					spellcheck="false"
-					required
-				/>
-			</div>
-
-			<div class="field">
-				<label for="password">Password</label>
-				<input
-					id="password"
-					name="password"
-					type="password"
-					autocomplete="current-password"
-					required
-				/>
-			</div>
-
-			<button type="submit" disabled={submitting}>
-				{submitting ? 'Signing in…' : 'Sign In'}
-			</button>
+		<form method="POST" use:enhance>
+			<label>
+				<span>Username or email</span>
+				<input name="login" autocomplete="username" value={form?.login ?? ''} required />
+			</label>
+			<label>
+				<span>Password</span>
+				<input name="password" type="password" autocomplete="current-password" required />
+			</label>
+			<button type="submit">Sign in</button>
 		</form>
 	</div>
-</div>
+</main>
 
 <style>
-	.page {
-		min-height      : 100vh;
-		display         : flex;
-		align-items     : center;
-		justify-content : center;
-		padding         : 20px;
-		background      : var(--bg-hard);
-	}
-
+	.wrap { min-height: 100vh; display: grid; place-items: center; padding: 1rem; }
 	.card {
-		width           : 100%;
-		max-width       : 380px;
-		background      : var(--bg0);
-		border          : 1px solid var(--bg2);
-		border-radius   : 5px;
-		padding         : 40px 36px 36px;
-		box-shadow      : 0 8px 32px rgba(0, 0, 0, 0.5);
+		width: 100%; max-width: 26rem;
+		background: var(--surface); border: 1px solid var(--border);
+		border-radius: var(--radius); padding: 1.8rem 1.6rem;
 	}
-
-	/* ── Logo ── */
-	.logo {
-		font-size   : 1.8rem;
-		font-weight : 700;
-		letter-spacing: -0.01em;
-		line-height : 1;
-		margin-bottom: 4px;
+	.head { display: flex; align-items: center; gap: 0.8rem; margin-bottom: 0.4rem; }
+	.mark { --logo-fg: var(--text); display: inline-flex; }
+	h1 { font-size: 1.15rem; margin: 0; }
+	.tag {
+		font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.05em;
+		background: var(--accent); color: var(--on-accent);
+		padding: 0.1rem 0.4rem; border-radius: var(--radius); vertical-align: middle;
 	}
-	.logo-fleet  { color: var(--fg1); }
-	.logo-shell  { color: var(--bright-aqua); }
-
-	.subtitle {
-		font-size     : 0.8rem;
-		text-transform: uppercase;
-		letter-spacing: 0.18em;
-		color         : var(--fg4);
-		margin-bottom : 32px;
+	.hint { color: var(--text-muted); font-size: 0.88rem; margin: 0.2rem 0 1.1rem; }
+	.error {
+		color: var(--danger); font-size: 0.88rem; margin: 0 0 1rem;
+		background: color-mix(in srgb, var(--danger) 12%, transparent);
+		border: 1px solid color-mix(in srgb, var(--danger) 40%, transparent);
+		border-radius: var(--radius); padding: 0.5rem 0.7rem;
 	}
-
-	/* ── Form ── */
-	form {
-		display        : flex;
-		flex-direction : column;
-		gap            : 18px;
+	form { display: flex; flex-direction: column; gap: 0.9rem; }
+	label { display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.85rem; color: var(--text-muted); }
+	input {
+		background: var(--bg-app); color: var(--text);
+		border: 1px solid var(--border); border-radius: var(--radius);
+		padding: 0.55rem 0.7rem; font: inherit;
 	}
-
-	.field {
-		display        : flex;
-		flex-direction : column;
+	input:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+	button {
+		margin-top: 0.3rem; background: var(--accent); color: var(--on-accent);
+		border: none; border-radius: var(--radius); padding: 0.6rem 0.9rem;
+		font: inherit; font-weight: 600; cursor: pointer;
 	}
-
-	.error-banner { margin-bottom: 4px; }
-
-	button[type="submit"] {
-		margin-top: 6px;
-	}
-	button[type="submit"]:disabled {
-		opacity: 0.55;
-		cursor : not-allowed;
-	}
+	button:hover { background: var(--accent-hover); }
 </style>
