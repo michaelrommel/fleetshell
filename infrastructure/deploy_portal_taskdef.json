@@ -1,0 +1,56 @@
+{
+  "family": "fleetshell-portal",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "512",
+  "memory": "1024",
+  "executionRoleArn": "arn:aws:iam::295934382486:role/ecsTaskExecutionRole",
+  "taskRoleArn": "arn:aws:iam::295934382486:role/ecsTaskExecutionRoleWithSSM",
+  "runtimePlatform": { "cpuArchitecture": "X86_64", "operatingSystemFamily": "LINUX" },
+  "containerDefinitions": [
+    {
+      "name": "fleetshell-portal",
+      "image": "295934382486.dkr.ecr.eu-west-2.amazonaws.com/fleetshell/fleetshell-portal:latest",
+      "essential": true,
+      "portMappings": [
+        { "containerPort": 3000, "hostPort": 3000, "protocol": "tcp", "name": "portal-3000-tcp" }
+      ],
+      "environment": [
+        { "name": "PORT",           "value": "3000" },
+        { "name": "HOST",           "value": "0.0.0.0" },
+        { "name": "NODE_ENV",       "value": "production" },
+        { "name": "NO_COLOR",       "value": "true" },
+        { "name": "BASE_PATH",      "value": "" },
+        { "name": "ORIGIN",         "value": "https://portal.fleetshell.com" },
+        { "name": "AWS_REGION",     "value": "eu-west-2" },
+        { "name": "PGSSL",          "value": "require" },
+        { "name": "GLOBAL_DB_HOST", "value": "fleetshell-global-proxy.proxy-cpgmocimewi5.eu-west-2.rds.amazonaws.com" },
+        { "name": "GLOBAL_DB_PORT", "value": "5432" },
+        { "name": "GLOBAL_DB_NAME", "value": "fleetshell" },
+        { "name": "LOCAL_DB_HOST",  "value": "fleetshell-local-euw2.cluster-cpgmocimewi5.eu-west-2.rds.amazonaws.com" },
+        { "name": "LOCAL_DB_PORT",  "value": "5432" },
+        { "name": "LOCAL_DB_NAME",  "value": "fleetshell_local" },
+        { "name": "VALKEY_URL",     "value": "rediss://clustercfg.dev-valkey-aeroftp.ak121m.memorydb.eu-west-2.amazonaws.com:6379" }
+      ],
+      "secrets": [
+        { "name": "CLIENT_CERT",        "valueFrom": "arn:aws:secretsmanager:eu-west-2:295934382486:secret:fleetshell/client-cert-Uhh4oy" },
+        { "name": "CLIENT_KEY",         "valueFrom": "arn:aws:secretsmanager:eu-west-2:295934382486:secret:fleetshell/client-key-OvOAuj" },
+        { "name": "JWT_SECRET",         "valueFrom": "arn:aws:secretsmanager:eu-west-2:295934382486:secret:aerotrack/auth_secret-zTocUO" },
+        { "name": "SESSION_SECRET",     "valueFrom": "arn:aws:secretsmanager:eu-west-2:295934382486:secret:fleetshell/portal/session-secret-K8vmuH" },
+        { "name": "GLOBAL_DB_USER",     "valueFrom": "arn:aws:secretsmanager:eu-west-2:295934382486:secret:fleetshell/global/master-x3Pexj:username::" },
+        { "name": "GLOBAL_DB_PASSWORD", "valueFrom": "arn:aws:secretsmanager:eu-west-2:295934382486:secret:fleetshell/global/master-x3Pexj:password::" },
+        { "name": "LOCAL_DB_USER",      "valueFrom": "arn:aws:secretsmanager:eu-west-2:295934382486:secret:rds!cluster-4a19c703-8dc1-4f23-8d36-326d9ca0f398-I6Wbu0:username::" },
+        { "name": "LOCAL_DB_PASSWORD",  "valueFrom": "arn:aws:secretsmanager:eu-west-2:295934382486:secret:rds!cluster-4a19c703-8dc1-4f23-8d36-326d9ca0f398-I6Wbu0:password::" }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/fleetshell-portal",
+          "awslogs-create-group": "true",
+          "awslogs-region": "eu-west-2",
+          "awslogs-stream-prefix": "ecs"
+        }
+      }
+    }
+  ]
+}

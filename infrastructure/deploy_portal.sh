@@ -24,6 +24,11 @@ set -euo pipefail
 #   task role          ecsTaskExecutionRoleWithSSM
 #   cpu/mem            512 / 1024   FARGATE / X86_64 / awsvpc
 #   Global Aurora      RDS Proxy  fleetshell-global-proxy.proxy-cpgmocimewi5.eu-west-2.rds.amazonaws.com  db=fleetshell
+#                      (proxy is now healthy -- targets AVAILABLE -- after the
+#                       fleetshell/global/master password fix + adding the
+#                       self-referencing 5432 rule to sg-0cab189b921350efd so the
+#                       proxy ENIs can reach the cluster. Fall back to the direct
+#                       cluster writer endpoint if the proxy degrades again.)
 #   Local  Aurora      cluster    fleetshell-local-euw2.cluster-cpgmocimewi5.eu-west-2.rds.amazonaws.com   db=fleetshell_local
 #   Global creds       secret fleetshell/global/master        (JSON keys username/password)
 #   Local  creds       secret rds!cluster-4a19c703-...-I6Wbu0 (RDS-managed; JSON username/password)
@@ -51,6 +56,11 @@ SEC_LOCAL="arn:aws:secretsmanager:eu-west-2:295934382486:secret:rds!cluster-4a19
 # Filled in by STEP 0 (paste the returned ARN here, then run STEP 1+):
 SEC_SESSION="arn:aws:secretsmanager:eu-west-2:295934382486:secret:fleetshell/portal/session-secret-K8vmuH"
 
+# strip stray whitespace from pasted ARNs (a trailing space -> ValidationException).
+for v in SEC_CLIENT_CERT SEC_CLIENT_KEY SEC_JWT SEC_GLOBAL SEC_LOCAL SEC_SESSION; do
+  printf -v "$v" '%s' "$(echo -n "${!v}" | tr -d '[:space:]')"
+done
+
 # ---------------------------------------------------------------------------
 # STEP 0 -- Create the SESSION_SECRET (cookie signing key). Run once.
 # ---------------------------------------------------------------------------
@@ -69,75 +79,14 @@ SEC_SESSION="arn:aws:secretsmanager:eu-west-2:295934382486:secret:fleetshell/por
 # ---------------------------------------------------------------------------
 # STEP 1 -- Register the new task definition revision (env + secrets swapped).
 # ---------------------------------------------------------------------------
-# Requires SEC_SESSION to be set (STEP 0). Writes the container definition to a
-# temp file and registers it as a new revision of the same family.
+# Registers a new revision of family fleetshell-portal from the committed
+# task-def file (env + secrets already filled in: direct Aurora endpoints,
+# Valkey, and the Secrets Manager ARNs incl. the SESSION_SECRET from STEP 0).
+# One line, no heredoc -- edit deploy_portal_taskdef.json to change anything.
 
-# register() {
-#   [ -n "${SEC_SESSION}" ] || { echo "Set SEC_SESSION (STEP 0) first." >&2; exit 1; }
-#   local tmp; tmp="$(mktemp)"
-#   cat > "${tmp}" <<JSON
-# {
-#   "family": "${FAMILY}",
-#   "networkMode": "awsvpc",
-#   "requiresCompatibilities": ["FARGATE"],
-#   "cpu": "512",
-#   "memory": "1024",
-#   "executionRoleArn": "arn:aws:iam::295934382486:role/ecsTaskExecutionRole",
-#   "taskRoleArn": "arn:aws:iam::295934382486:role/ecsTaskExecutionRoleWithSSM",
-#   "runtimePlatform": { "cpuArchitecture": "X86_64", "operatingSystemFamily": "LINUX" },
-#   "containerDefinitions": [
-#     {
-#       "name": "fleetshell-portal",
-#       "image": "295934382486.dkr.ecr.eu-west-2.amazonaws.com/fleetshell/fleetshell-portal:latest",
-#       "essential": true,
-#       "portMappings": [
-#         { "containerPort": 3000, "hostPort": 3000, "protocol": "tcp", "name": "portal-3000-tcp" }
-#       ],
-#       "environment": [
-#         { "name": "PORT",           "value": "3000" },
-#         { "name": "HOST",           "value": "0.0.0.0" },
-#         { "name": "NODE_ENV",       "value": "production" },
-#         { "name": "NO_COLOR",       "value": "true" },
-#         { "name": "BASE_PATH",      "value": "" },
-#         { "name": "ORIGIN",         "value": "https://portal.fleetshell.com" },
-#         { "name": "AWS_REGION",     "value": "eu-west-2" },
-#         { "name": "PGSSL",          "value": "require" },
-#         { "name": "GLOBAL_DB_HOST", "value": "fleetshell-global-proxy.proxy-cpgmocimewi5.eu-west-2.rds.amazonaws.com" },
-#         { "name": "GLOBAL_DB_PORT", "value": "5432" },
-#         { "name": "GLOBAL_DB_NAME", "value": "fleetshell" },
-#         { "name": "LOCAL_DB_HOST",  "value": "fleetshell-local-euw2.cluster-cpgmocimewi5.eu-west-2.rds.amazonaws.com" },
-#         { "name": "LOCAL_DB_PORT",  "value": "5432" },
-#         { "name": "LOCAL_DB_NAME",  "value": "fleetshell_local" },
-#         { "name": "VALKEY_URL",     "value": "rediss://clustercfg.dev-valkey-aeroftp.ak121m.memorydb.eu-west-2.amazonaws.com:6379" }
-#       ],
-#       "secrets": [
-#         { "name": "CLIENT_CERT",        "valueFrom": "${SEC_CLIENT_CERT}" },
-#         { "name": "CLIENT_KEY",         "valueFrom": "${SEC_CLIENT_KEY}" },
-#         { "name": "JWT_SECRET",         "valueFrom": "${SEC_JWT}" },
-#         { "name": "SESSION_SECRET",     "valueFrom": "${SEC_SESSION}" },
-#         { "name": "GLOBAL_DB_USER",     "valueFrom": "${SEC_GLOBAL}:username::" },
-#         { "name": "GLOBAL_DB_PASSWORD", "valueFrom": "${SEC_GLOBAL}:password::" },
-#         { "name": "LOCAL_DB_USER",      "valueFrom": "${SEC_LOCAL}:username::" },
-#         { "name": "LOCAL_DB_PASSWORD",  "valueFrom": "${SEC_LOCAL}:password::" }
-#       ],
-#       "logConfiguration": {
-#         "logDriver": "awslogs",
-#         "options": {
-#           "awslogs-group": "/ecs/fleetshell-portal",
-#           "awslogs-create-group": "true",
-#           "awslogs-region": "eu-west-2",
-#           "awslogs-stream-prefix": "ecs"
-#         }
-#       }
-#     }
-#   ]
-# }
-# JSON
-#   aws ecs register-task-definition --cli-input-json "file://${tmp}" \
-#     --region "${REGION}" --query 'taskDefinition.taskDefinitionArn' --output text
-#   rm -f "${tmp}"
-# }
-# register
+# aws ecs register-task-definition \
+#   --cli-input-json file://infrastructure/deploy_portal_taskdef.json \
+#   --region "${REGION}" --query 'taskDefinition.taskDefinitionArn' --output text
 
 # ---- RESULT (paste the new task-definition ARN, e.g. .../fleetshell-portal:7) ----
 # arn:aws:ecs:eu-west-2:295934382486:task-definition/fleetshell-portal:8
