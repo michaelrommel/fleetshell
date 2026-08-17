@@ -36,6 +36,11 @@
 	// ---- selected records ---------------------------------------------------
 	const server = $derived(data.server as Record<string, any> | null);
 	const subscription = $derived(data.subscription as Record<string, any> | null);
+	// Boolean form fields need seeded $state + bind:checked -- a one-way
+	// checked={expr} makes the checkbox controlled/read-only in Svelte 5.
+	let activated = $state(false);
+	let usePartnoFolder = $state(false);
+	let negate = $state(false);
 	const showServerForm = $derived(canEdit && (data.isNew || !!server));
 	const showSubForm = $derived(canEdit && (data.isNew || !!subscription));
 
@@ -50,6 +55,8 @@
 		deliveryMethod = (s?.delivery_method as string) ?? 'adls';
 		adlsMethod = auth.method === 'default' ? 'default' : 'service_principal';
 		s3Method = auth.method === 'assume_role' ? 'assume_role' : 'access_key';
+		activated = !!s?.activated;
+		usePartnoFolder = !!s?.use_partno_folder;
 	});
 	const auth = $derived((server?.auth ?? {}) as Record<string, string>);
 
@@ -58,6 +65,7 @@
 	$effect(() => {
 		void data.sel; void data.isNew;
 		subModalityId = ((data.subscription as Record<string, any> | null)?.modality_id as string) ?? '';
+		negate = !!(data.subscription as Record<string, any> | null)?.negate;
 	});
 
 	// ---- server detail: attached-subscriptions list (staged, saved together) --
@@ -191,7 +199,7 @@
 								</label>
 
 								<label class="f-check">
-									<input type="checkbox" name="activated" checked={server?.activated ?? false} />
+									<input type="checkbox" name="activated" bind:checked={activated} />
 									<span>Activated</span>
 								</label>
 
@@ -208,7 +216,7 @@
 								</label>
 
 								<label class="f-check">
-									<input type="checkbox" name="use_partno_folder" checked={server?.use_partno_folder ?? false} />
+									<input type="checkbox" name="use_partno_folder" bind:checked={usePartnoFolder} />
 									<span>Use part number as folder level</span>
 								</label>
 
@@ -422,7 +430,7 @@
 								</label>
 
 								<label class="f-check">
-									<input type="checkbox" name="negate" checked={subscription?.negate ?? false} />
+									<input type="checkbox" name="negate" bind:checked={negate} />
 									<span>Negate (exclude matches from a broader subscription)</span>
 								</label>
 							</div>
@@ -516,9 +524,9 @@
 	.fieldgrid label, .auth label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-subtle); }
 	.f-wide { grid-column: 1 / -1; }
 	.f-check { flex-direction: row !important; align-items: center; gap: 0.5rem !important; text-transform: none; letter-spacing: normal; font-size: 0.85rem; color: var(--text); grid-column: 1 / -1; }
-	.f-check input { width: auto; }
+	.f-check input { width: 15px; height: 15px; flex: none; }
 	.f-inline { flex-direction: row !important; align-items: center; gap: 0.6rem !important; margin-bottom: 0.8rem; }
-	.fieldgrid input, .fieldgrid select, .auth input, .auth select {
+	.fieldgrid input:not([type='checkbox']), .fieldgrid select, .auth input:not([type='checkbox']), .auth select {
 		background: var(--surface); color: var(--text); border: 1px solid var(--border);
 		border-radius: var(--radius); padding: 0.4rem 0.55rem; font: inherit; font-size: 0.88rem; text-transform: none; letter-spacing: normal;
 	}

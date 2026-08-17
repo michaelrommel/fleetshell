@@ -1,250 +1,197 @@
 #!/usr/bin/env python3
-"""import_subscriptions.py -- load the legacy File Subscriptions overview into the
-new master-data tables (subscriber_server / subscription / subscription_server).
+"""import_subscriptions.py -- load File Subscriptions from the NORMALIZED second
+export (RDSUBSCRIBER / RDSUBSCRIPTION / RDSUBSCRIPTIONLIST) into the master-data
+tables (subscriber_server / subscription / subscription_server).
 
-Source: old_database/subscription_overview_2026-05-05.xlsx (gitignored, like the
-rest of old_database). One denormalized row per (server x subscription); the same
-subscription line repeats across every server it is attached to.
+Replaces the old xlsx overview importer: the normalized tables are richer and more
+complete -- they carry the real delivery method, ADLS/S3 targets, data root,
+use-partno-folder, use-case and activated flags that the xlsx importer had to
+DEFAULT. Standalone + self-contained: it TRUNCATEs the three tables and rebuilds,
+resolving product/modality by NAME against the LIVE product tree (the id maps are
+destroyed after load.py), so it can be re-run at any time WITHOUT a full reload.
 
-Columns:
-  ipaddress subscriber country subscription modality productmodel namepattern
-  negated quality_file_subscription modificationdate annotation creatinguser
-  modifyinguser
+Source (old_database/second_load/*.csv.gz):
+  RDSUBSCRIBER       -> subscriber_server (delivery target)
+  RDSUBSCRIPTION     -> subscription      (file matcher: pattern + modality/product)
+  RDSUBSCRIPTIONLIST -> subscription_server (the attach matrix)
 
-Mapping into the new model (see migrate_file_subscriptions.sql):
-  subscriber_server : name=subscriber, ip_address=ipaddress, country=<ISO of `country`>,
-                      use_case=DEFAULT_USE_CASE, activated=DEFAULT_ACTIVATED,
-                      delivery_method=DEFAULT_DELIVERY.  (No delivery/auth/root
-                      existed in legacy -- admins fill those in later.)
-  subscription      : name=subscription, modality_id=<by name>,
-                      product_id=<by name, the part after ' / '>, pattern=namepattern,
-                      negate=(negated=='negated').
-  subscriber_server.comment : the anonymized `annotation` (contacts/purpose). It
-                      is consistent per server in the source, so it maps cleanly
-                      onto the server rather than each subscription.
-  subscription_server: the (subscriber, subscription) attach matrix.
+Field mapping:
+  subscriber_server : name=NAME, ip_address=IPADDRESS, country=<ISO of COUNTRYID>,
+    delivery_method=(DELIVERYMETHOD 2->scp, 7->adls; AWSBUCKET->s3),
+    root_path=DATAROOT, use_partno_folder=(TARGETDIRECTORYMODE=='1'),
+    container_path=AZURECONTAINER, use_case=(USECASETYPE 1->compliance else internal),
+    activated=(ACTIVATED=='1'), comment=<anon ANNOTATIONS>,
+    auth=<structural, non-secret bits; PWID/AUTHIDENT secrets are NOT in the export
+         -> {} (admin/password-store fills them, like PSK / service keys)>.
+  subscription : name=NAME, pattern=NAMEPATTERN, negate=(TYPEPATTERN bit-4 set),
+    PRODUCTID -> resolve by NAME: a product node -> product_id (+ its modality),
+    a modality node -> modality_id.
 
-Anonymization honors the SAME ANONYMIZE switch as load.py (default on). Only the
-free-text `annotation` carries PII (names/emails); it is replaced with the shared
-ANON_TEXT_PLACEHOLDER when ANONYMIZE=1, and passes through raw when ANONYMIZE=0
-(production take-over with real data). The legacy IP is imported as-is either way.
+Anonymization honors the SAME ANONYMIZE switch as load.py: only the free-text
+ANNOTATIONS is PII (contacts) -> placeholder when on, raw when off. The IP, root
+paths and container names pass through (operational, not PII).
 
-Idempotent: upserts by the unique `name` on both entities, so a re-run (or a
-post-reload run, since a `product` TRUNCATE CASCADE empties subscription +
-subscription_server) rebuilds cleanly and re-resolves the product/modality FKs.
-
-Env:
-  IMPORT_GLOBAL_DSN   e.g. "host=localhost port=5432 dbname=fleetshell user=fsadmin password=... sslmode=require"
-  ANONYMIZE           1 (default) = fake PII; 0 = raw (production take-over)
-
-Usage:
-  IMPORT_GLOBAL_DSN=... python import_subscriptions.py
-  IMPORT_GLOBAL_DSN=... python import_subscriptions.py --file path/to.xlsx --dry-run
+Env:  IMPORT_GLOBAL_DSN ; ANONYMIZE (1 default)
+Usage: IMPORT_GLOBAL_DSN=... python import_subscriptions.py [--dry-run]
 """
 
 from __future__ import annotations
-import argparse, os, sys
-from collections import defaultdict
+import argparse, csv, gzip, os, sys
 
 import psycopg
-import openpyxl
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_FILE = os.path.join(HERE, "old_database", "subscription_overview_2026-05-05.xlsx")
+SRC = os.path.join(HERE, "old_database", "second_load")
+SRC_FALLBACK = os.path.join(HERE, "old_database", "first_load")
 
-# Same switch + placeholder semantics as load.py.
 ANONYMIZE = os.environ.get("ANONYMIZE", "1").strip().lower() not in ("0", "false", "no", "off")
 ANON_TEXT_PLACEHOLDER = "<content was anonymized during seeding>"
 
-# Import defaults for fields absent from the legacy export (confirmed with owner).
-DEFAULT_DELIVERY = "scp"          # legacy IP-based FTP landing zones
-DEFAULT_USE_CASE = "compliance"
-DEFAULT_ACTIVATED = True
+
+def read(name):
+    p = os.path.join(SRC, name + ".csv.gz")
+    if not os.path.exists(p):
+        p = os.path.join(SRC_FALLBACK, name + ".csv.gz")
+    with gzip.open(p, "rt", encoding="utf-8", newline="") as f:
+        yield from csv.DictReader(f, delimiter=";")
 
 
-def anon_annotation(raw: str | None) -> str | None:
-    """Free-text contact/purpose note: fixed placeholder when anonymizing (it is
-    PII and cannot be structurally faked), raw text otherwise. Empty -> NULL."""
+def anon_annotation(raw):
     v = (raw or "").strip()
     if not v:
         return None
     return ANON_TEXT_PLACEHOLDER if ANONYMIZE else v
 
 
-def load_lookups(g: psycopg.Connection):
-    """Name-keyed resolvers from the live product tree + region country ISO."""
+def delivery_method(m, azure_container, aws_bucket):
+    if (aws_bucket or "").strip():
+        return "s3"
+    if (azure_container or "").strip() or (m or "").strip() == "7":
+        return "adls"
+    return "scp"
+
+
+def load_lookups(g):
+    """Name-keyed resolvers from the live product tree + country ISO by id."""
     with g.cursor() as c:
-        c.execute("SELECT name, id FROM product WHERE kind='modality' AND name<>''")
-        modality_by_name = {n: i for n, i in c.fetchall()}
-        # Product names are globally unique across modalities (verified), so a
-        # bare name-keyed map is unambiguous.
-        c.execute("SELECT name, id FROM product WHERE kind='product' AND name<>''")
-        product_by_name: dict[str, str] = {}
+        c.execute("SELECT name, id::text FROM product WHERE kind='modality' AND name<>''")
+        modality_by_name = {}
         for n, i in c.fetchall():
-            product_by_name.setdefault(n, i)
-        c.execute("SELECT iso, name FROM region WHERE nlevel(path)=2 AND iso IS NOT NULL")
-        country_rows = c.fetchall()
-    # country name -> ISO: exact match first, then a prefix match ("United States"
-    # -> "United States of America"). Deterministic (sorted).
-    iso_by_exact = {name: iso for iso, name in country_rows}
-    def country_iso(name: str | None) -> str | None:
-        v = (name or "").strip()
-        if not v:
-            return None
-        if v in iso_by_exact:
-            return iso_by_exact[v]
-        for iso, rn in sorted(country_rows, key=lambda t: t[1]):
-            if rn.startswith(v):
-                return iso
-        return None
-    return modality_by_name, product_by_name, country_iso
-
-
-def read_rows(path: str) -> list[dict]:
-    wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
-    ws = wb[wb.sheetnames[0]]
-    it = ws.iter_rows(values_only=True)
-    hdr = next(it)
-    idx = {name: i for i, name in enumerate(hdr)}
-    need = ["ipaddress", "subscriber", "country", "subscription", "modality",
-            "productmodel", "namepattern", "negated", "annotation", "modificationdate"]
-    for col in need:
-        if col not in idx:
-            sys.exit(f"missing expected column '{col}' in {path}")
-    out = []
-    for r in it:
-        if not r or all(v is None for v in r):
-            continue
-        out.append({col: r[idx[col]] for col in need})
-    return out
+            modality_by_name.setdefault(n, i)
+        # product name -> (product id, its modality id). Names are unique.
+        c.execute("""SELECT p.name, p.id::text,
+                            (SELECT m.id::text FROM product m
+                             WHERE m.path = subltree(p.path, 0, 2))
+                     FROM product p WHERE p.kind='product' AND p.name<>''""")
+        product_by_name = {}
+        for n, pid, mid in c.fetchall():
+            product_by_name.setdefault(n, (pid, mid))
+    # country id (region OR country id) -> ISO, from the source tables.
+    iso_by_country = {r["ID"]: (r.get("CODE3166") or "").strip() for r in read("RDCOUNTRY")}
+    region_iso = {}
+    for r in read("RDREGION"):
+        region_iso[r["ID"]] = iso_by_country.get(r.get("COUNTRYID", ""), "")
+    def country_iso(cid):
+        cid = (cid or "").strip()
+        return (iso_by_country.get(cid) or region_iso.get(cid) or None) if cid not in ("0", "") else None
+    # legacy RDPRODUCT id -> name (to resolve RDSUBSCRIPTION.PRODUCTID by name)
+    prod_name = {r["ID"]: (r.get("NAME") or "").strip() for r in read("RDPRODUCT")}
+    return modality_by_name, product_by_name, country_iso, prod_name
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--file", default=DEFAULT_FILE)
-    ap.add_argument("--dry-run", action="store_true", help="resolve + report, do not write")
+    ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
-
-    if not os.path.exists(a.file):
-        sys.exit(f"source not found: {a.file}")
     dsn = os.environ.get("IMPORT_GLOBAL_DSN")
     if not dsn:
         sys.exit("IMPORT_GLOBAL_DSN is not set")
 
-    rows = read_rows(a.file)
-    print(f"read {len(rows)} rows from {os.path.basename(a.file)}  (ANONYMIZE={'on' if ANONYMIZE else 'off'})")
-
     g = psycopg.connect(dsn)
-    modality_by_name, product_by_name, country_iso = load_lookups(g)
+    modality_by_name, product_by_name, country_iso, prod_name = load_lookups(g)
 
-    # --- collapse the denormalized rows -------------------------------------
-    servers: dict[str, dict] = {}          # subscriber name -> fields
-    subs: dict[str, dict] = {}             # subscription name -> fields
-    attach: set[tuple[str, str]] = set()   # (subscriber, subscription)
-    missing_mod, missing_prod, missing_country = set(), set(), set()
+    # --- subscriber_server rows (keyed by legacy id) ---
+    servers = {}
+    for r in read("RDSUBSCRIBER"):
+        servers[r["ID"]] = {
+            "name": (r.get("NAME") or "").strip(),
+            "ip_address": (r.get("IPADDRESS") or "").strip() or None,
+            "country": country_iso(r.get("COUNTRYID")),
+            "delivery_method": delivery_method(r.get("DELIVERYMETHOD"), r.get("AZURECONTAINER"), r.get("AWSBUCKET")),
+            "root_path": (r.get("DATAROOT") or "").strip() or None,
+            "use_partno_folder": (r.get("TARGETDIRECTORYMODE") or "").strip() == "1",
+            "container_path": (r.get("AZURECONTAINER") or "").strip() or None,
+            "use_case": "compliance" if (r.get("USECASETYPE") or "").strip() == "1" else "internal",
+            "activated": (r.get("ACTIVATED") or "").strip() == "1",
+            "comment": anon_annotation(r.get("ANNOTATIONS")),
+        }
 
-    for r in rows:
-        sname = (r["subscriber"] or "").strip()
-        subname = (r["subscription"] or "").strip()
-        if not sname:
-            continue
+    # --- subscription rows (keyed by legacy id) ---
+    subs = {}
+    missing_prod = set()
+    for r in read("RDSUBSCRIPTION"):
+        pid_legacy = (r.get("PRODUCTID") or "").strip()
+        pname = prod_name.get(pid_legacy, "")
+        mod_id = prod_id = None
+        if pname in product_by_name:
+            prod_id, mod_id = product_by_name[pname]
+        elif pname in modality_by_name:
+            mod_id = modality_by_name[pname]
+        elif pid_legacy not in ("0", ""):
+            missing_prod.add(pname or pid_legacy)
+        tp = (r.get("TYPEPATTERN") or "").strip()
+        subs[r["ID"]] = {
+            "name": (r.get("NAME") or "").strip(),
+            "modality_id": mod_id,
+            "product_id": prod_id,
+            "pattern": (r.get("NAMEPATTERN") or "").strip(),
+            "negate": len(tp) > 3 and tp[3] == "1",   # bit-4 = negate (verified: 5 MR subs)
+        }
 
-        # server (first IP/country wins; each name maps to one IP in the source.
-        # annotation is consistent per server, so keep the first non-empty one).
-        srv = servers.get(sname)
-        if srv is None:
-            iso = country_iso(r["country"])
-            if r["country"] and iso is None:
-                missing_country.add(str(r["country"]))
-            servers[sname] = srv = {
-                "ip_address": (r["ipaddress"] or "").strip() or None,
-                "country": iso,
-                "annotation": (r["annotation"] or "").strip(),
-            }
-        elif not srv["annotation"]:
-            srv["annotation"] = (r["annotation"] or "").strip()
+    # --- attach matrix (RDSUBSCRIPTIONLIST) ---
+    attach = set()
+    for r in read("RDSUBSCRIPTIONLIST"):
+        sid = r.get("SUBSCRIBERID"); subid = r.get("SUBSCRIPTIONID")
+        if sid in servers and subid in subs:
+            attach.add((sid, subid))
 
-        # a server row without a subscription (e.g. an empty landing zone) still
-        # registers the server above; nothing more to do for this row.
-        if not subname:
-            continue
-
-        # subscription (rows are internally consistent per subscription name)
-        pm = (r["productmodel"] or "").strip()
-        product_name = pm.split(" / ", 1)[1] if " / " in pm else None
-        mod_id = modality_by_name.get((r["modality"] or "").strip()) if r["modality"] else None
-        prod_id = product_by_name.get(product_name) if product_name else None
-        if r["modality"] and mod_id is None:
-            missing_mod.add(str(r["modality"]))
-        if product_name and prod_id is None:
-            missing_prod.add(product_name)
-
-        if subname not in subs:
-            subs[subname] = {
-                "modality_id": mod_id,
-                "product_id": prod_id,
-                "pattern": (r["namepattern"] or "").strip(),
-                "negate": (r["negated"] or "").strip().lower() == "negated",
-            }
-
-        attach.add((sname, subname))
-
-    print(f"collapsed -> {len(servers)} servers, {len(subs)} subscriptions, {len(attach)} attachments")
-    if missing_country:
-        print("  WARN unmapped countries:", ", ".join(sorted(missing_country)))
-    if missing_mod:
-        print("  WARN unmapped modalities:", ", ".join(sorted(missing_mod)))
+    print(f"parsed {len(servers)} servers, {len(subs)} subscriptions, {len(attach)} attachments "
+          f"(ANONYMIZE={'on' if ANONYMIZE else 'off'})")
     if missing_prod:
-        print(f"  WARN {len(missing_prod)} unmapped product name(s):", ", ".join(sorted(missing_prod)))
-
+        print(f"  WARN {len(missing_prod)} unresolved product/modality name(s):", ", ".join(sorted(missing_prod))[:200])
     if a.dry_run:
-        print("dry-run: no writes")
-        g.close()
-        return
+        print("dry-run: no writes"); g.close(); return
 
-    # --- write (upsert by unique name) --------------------------------------
     with g.cursor() as c:
-        server_id: dict[str, str] = {}
-        for name, f in servers.items():
+        # Clean rebuild (self-contained; the FK cascades subscription_server).
+        c.execute("TRUNCATE subscription_server, subscription, subscriber_server RESTART IDENTITY CASCADE")
+        srv_uuid = {}
+        for lid, f in servers.items():
             c.execute(
                 """INSERT INTO subscriber_server
-                     (name, ip_address, country, use_case, comment, activated, delivery_method)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s)
-                   ON CONFLICT (name) DO UPDATE SET
-                     ip_address=EXCLUDED.ip_address, country=EXCLUDED.country,
-                     use_case=EXCLUDED.use_case, comment=EXCLUDED.comment,
-                     activated=EXCLUDED.activated,
-                     delivery_method=EXCLUDED.delivery_method, updated_at=now()
-                   RETURNING id""",
-                (name, f["ip_address"], f["country"], DEFAULT_USE_CASE,
-                 anon_annotation(f["annotation"]), DEFAULT_ACTIVATED, DEFAULT_DELIVERY),
+                     (name, ip_address, country, use_case, comment, activated,
+                      delivery_method, root_path, use_partno_folder, container_path)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
+                (f["name"], f["ip_address"], f["country"], f["use_case"], f["comment"],
+                 f["activated"], f["delivery_method"], f["root_path"],
+                 f["use_partno_folder"], f["container_path"]),
             )
-            server_id[name] = c.fetchone()[0]
-
-        sub_id: dict[str, str] = {}
-        for name, f in subs.items():
+            srv_uuid[lid] = c.fetchone()[0]
+        sub_uuid = {}
+        for lid, f in subs.items():
             c.execute(
-                """INSERT INTO subscription
-                     (name, modality_id, product_id, pattern, negate)
-                   VALUES (%s,%s,%s,%s,%s)
-                   ON CONFLICT (name) DO UPDATE SET
-                     modality_id=EXCLUDED.modality_id, product_id=EXCLUDED.product_id,
-                     pattern=EXCLUDED.pattern, negate=EXCLUDED.negate, updated_at=now()
-                   RETURNING id""",
-                (name, f["modality_id"], f["product_id"], f["pattern"], f["negate"]),
+                """INSERT INTO subscription (name, modality_id, product_id, pattern, negate)
+                   VALUES (%s,%s,%s,%s,%s) RETURNING id""",
+                (f["name"], f["modality_id"], f["product_id"], f["pattern"], f["negate"]),
             )
-            sub_id[name] = c.fetchone()[0]
-
+            sub_uuid[lid] = c.fetchone()[0]
         n_att = 0
-        for sname, subname in attach:
-            c.execute(
-                """INSERT INTO subscription_server (subscription_id, server_id)
-                   VALUES (%s,%s) ON CONFLICT DO NOTHING""",
-                (sub_id[subname], server_id[sname]),
-            )
+        for sid, subid in attach:
+            c.execute("INSERT INTO subscription_server (subscription_id, server_id) "
+                      "VALUES (%s,%s) ON CONFLICT DO NOTHING", (sub_uuid[subid], srv_uuid[sid]))
             n_att += c.rowcount
     g.commit()
-    print(f"wrote {len(server_id)} servers, {len(sub_id)} subscriptions, {n_att} new attachment(s)")
+    print(f"wrote {len(srv_uuid)} servers, {len(sub_uuid)} subscriptions, {n_att} attachments")
     g.close()
 
 

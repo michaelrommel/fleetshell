@@ -864,7 +864,7 @@
 
 	.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0.6rem 0.9rem; }
 	label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.76rem; color: var(--text-muted); }
-	input, select { background: var(--bg-app); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.4rem 0.55rem; font: inherit; font-size: 0.84rem; }
+	input:not([type='checkbox']), select { background: var(--bg-app); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.4rem 0.55rem; font: inherit; font-size: 0.84rem; }
 	input:focus-visible, select:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
 	input:disabled, select:disabled { color: var(--text-muted); opacity: 0.85; }
 	textarea { background: var(--bg-app); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.4rem 0.55rem; font: inherit; font-size: 0.84rem; resize: vertical; }
@@ -872,7 +872,7 @@
 	textarea:disabled { color: var(--text-muted); opacity: 0.85; }
 	.checks { display: grid; grid-template-columns: 1fr 1fr; gap: 0.4rem 0.9rem; margin: 0.2rem 0 0.6rem; }
 	label.chk { flex-direction: row; align-items: center; gap: 0.45rem; color: var(--text); font-size: 0.82rem; }
-	label.chk input { flex: none; width: auto; }
+	label.chk input { flex: none; width: 15px; height: 15px; }
 	label.full { margin-top: 0.6rem; }
 
 	.rel-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem 1.4rem; align-items: start; }

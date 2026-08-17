@@ -67,9 +67,11 @@ step "Group hierarchy"
 echo "  (imported from RDUSERGROUP by load.py -- build_group_hierarchy.py retired)"
 
 step "Import file subscriptions (servers + subscriptions + attach matrix)"
-# Re-resolves modality/product FKs by NAME; a `product` TRUNCATE CASCADE above
-# emptied subscription + subscription_server, so this rebuilds them. Honors
-# ANONYMIZE like load.py. Reads the gitignored xlsx from old_database/.
+# Reads the NORMALIZED RDSUBSCRIBER/RDSUBSCRIPTION/RDSUBSCRIPTIONLIST tables
+# (second_load) -- real delivery method / ADLS / root path / use-case / activated,
+# richer than the retired xlsx overview. Self-contained (TRUNCATEs + rebuilds the
+# 3 tables, resolves product/modality by NAME against the live tree), so it can
+# be re-run standalone any time. Honors ANONYMIZE like load.py.
 IMPORT_GLOBAL_DSN="$IMPORT_GLOBAL_DSN" ANONYMIZE="${ANONYMIZE:-1}" python import_subscriptions.py
 
 step "Import infoproxy (proxy destination collections + rules + bindings)"
