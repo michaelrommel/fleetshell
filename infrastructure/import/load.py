@@ -1,20 +1,19 @@
 #!/usr/bin/env python3
 """load.py -- anonymizing bulk importer for the FleetShell MDM dev clusters.
 
-Reads the gzipped semicolon CSV exports in old_database/, transforms + anonymizes
-them (see docs/data_import.md and anonymize.py), and COPYs into the two Aurora
-clusters. Referential integrity across files is kept via per-run IdMaps, which
-are DESTROYED at the end unless --keep is given.
+Reads the gzipped semicolon CSV exports and COPYs them into the two Aurora
+clusters, anonymizing by default. Referential integrity across files is kept via
+per-run IdMaps, DESTROYED at the end unless --keep is given.
 
-Connections (env):
-  IMPORT_GLOBAL_DSN  e.g. "host=localhost port=5432 dbname=fleetshell       user=fsadmin password=... sslmode=require"
-  IMPORT_LOCAL_DSN   e.g. "host=localhost port=5433 dbname=fleetshell_local user=fsadmin password=... sslmode=require"
+Source: the NORMALIZED second export (old_database/second_load/*.csv.gz) is
+preferred; the first export (old_database/first_load/) is a fallback only for the
+denormalized gateway view RDRSROUTERDETAILVIEWV1 (until the gateway stage is
+migrated to RDRSROUTER). See docs/second_load_analysis.md.
 
-Usage:
-  python load.py --stage all                 # full run
-  python load.py --stage reference           # regions/products/gateways only
-  python load.py --stage devices --limit 5000  # quick dry slice
-Stages run in order: reference, devices, users, grants.
+Stages: reference (+customers), devices, users, roles, grants, families,
+classification, dtm. Roles/privileges come from RDROLE/RDPRIVILEGE/
+RDPRIVILEGE2ROLE; grants from the normalized RDBASEGRANT/RDGROUPGRANT (with the
+group tree from RDUSERGROUP -- build_group_hierarchy.py is retired).
 """
 
 from __future__ import annotations
@@ -24,7 +23,7 @@ from anonymize import IdMap, LabelMap, fake_person, fake_email, fake_serial, \
     hospital_generator, company_generator, site_generator, city_generator, \
     functional_location_generator, ip_generator, technical_ident_generator, \
     hostid_generator, orderno_generator, contact_generator, public_ip_generator, \
-    email_generator
+    email_generator, fake_service_key, phone_generator
 
 # --- anonymization switch ----------------------------------------------------
 # The loader is written so the SAME procedure runs for the real take-over: set
@@ -35,9 +34,16 @@ ANONYMIZE = os.environ.get("ANONYMIZE", "1").strip().lower() not in ("0", "false
 ANON_TEXT_PLACEHOLDER = "<content was anonymized during seeding>"
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SRC = os.path.join(HERE, "old_database")
+# Prefer the normalized second_load export; fall back to the first export only
+# for the denormalized VIEWS not present there (RDRSROUTERDETAILVIEWV1 -- gateways,
+# until the gateway stage is migrated). RDGRANTVIEWV1 is no longer read after the
+# normalized-grants rewrite.
+SRC = os.path.join(HERE, "old_database", "second_load")
+SRC_FALLBACK = os.path.join(HERE, "old_database", "first_load")
 
-def src(name): return os.path.join(SRC, name + ".csv.gz")
+def src(name):
+    p = os.path.join(SRC, name + ".csv.gz")
+    return p if os.path.exists(p) else os.path.join(SRC_FALLBACK, name + ".csv.gz")
 
 def read(name):
     """Yield dict rows from a gzipped ;-CSV (UTF-8, CRLF, quoted multiline)."""
@@ -53,6 +59,8 @@ product_map = IdMap(os.path.join(HERE, "product.map.json"))
 model_map   = IdMap(os.path.join(HERE, "model.map.json"))
 customer_map= IdMap(os.path.join(HERE, "customer.map.json"))
 site_map    = IdMap(os.path.join(HERE, "site.map.json"))
+role_map    = IdMap(os.path.join(HERE, "role.map.json"))
+account_map = IdMap(os.path.join(HERE, "account.map.json"))   # RDUSER.ID -> login_account uuid
 hospital_lbl= LabelMap(os.path.join(HERE, "hospital.map.json"), hospital_generator())
 customer_lbl= LabelMap(os.path.join(HERE, "customer_lbl.map.json"), company_generator())
 site_lbl    = LabelMap(os.path.join(HERE, "site_lbl.map.json"), site_generator())
@@ -64,11 +72,14 @@ ord_lbl     = LabelMap(os.path.join(HERE, "ord.map.json"),       orderno_generat
 contact_lbl = LabelMap(os.path.join(HERE, "contact.map.json"),   contact_generator())
 city_lbl    = LabelMap(os.path.join(HERE, "city.map.json"),      city_generator())
 notify_lbl  = LabelMap(os.path.join(HERE, "notify.map.json"),    email_generator())
-pubip_gen   = public_ip_generator()   # synthesized per gateway (no real value to map)
+pubip_lbl   = LabelMap(os.path.join(HERE, "pubip.map.json"),     public_ip_generator())  # real public IPs -> public-looking fakes
+phone_lbl   = LabelMap(os.path.join(HERE, "phone.map.json"),     phone_generator())      # user phone/mobile (PII)
+company_lbl = LabelMap(os.path.join(HERE, "company.map.json"),   company_generator())    # external user company (PII)
 
 ALL_MAPS = [user_map, group_map, device_map, gateway_map, product_map, model_map, customer_map, site_map,
+            role_map, account_map,
             hospital_lbl, customer_lbl, site_lbl, fl_lbl, ip_lbl, tid_lbl, host_lbl, ord_lbl, contact_lbl,
-            city_lbl, notify_lbl]
+            city_lbl, notify_lbl, pubip_lbl, phone_lbl, company_lbl]
 
 # --- anonymization helpers (all honor the ANONYMIZE switch) ------------------
 def anon_map(m, raw):
@@ -113,14 +124,53 @@ def anon_email(raw_email, seq):
         return fake_email(seq)
     return (raw_email or "").strip() or None
 
-def anon_org_name(gen_map, map_key, real_id):
-    """Customer/site DISPLAY name. While seeding it is a stable fake keyed by the
-    org id. The legacy device export carries only the numeric id here (no name),
-    so raw mode emits the id verbatim rather than fabricating a name.
-    TODO(real take-over): join the real customer/site name source (RDOU) here."""
+def anon_org2(lbl, key, real_name):
+    """Customer/site display name from the NORMALIZED export (RDCUSTOMER /
+    RDCUSTOMERSITE carry a real NAME). Fake keyed by id while seeding; the real
+    name when ANONYMIZE=0."""
     if ANONYMIZE:
-        return gen_map.get(map_key)
-    return (real_id or "").strip() or map_key
+        return lbl.get(key)
+    return (real_name or "").strip() or key
+
+def anon_pcode(raw):
+    """Postcode: dropped while seeding (identifying together with city), raw
+    otherwise."""
+    v = (raw or "").strip()
+    if not v:
+        return None
+    return None if ANONYMIZE else v
+
+def anon_pubip(raw):
+    """Public IPsec endpoint IP: a stable public-looking fake per real IP while
+    seeding, or the raw value otherwise. Empty/0 -> NULL."""
+    v = (raw or "").strip()
+    if not v or v == "0":
+        return None
+    return pubip_lbl.get(v) if ANONYMIZE else v
+
+# Service keys are CREDENTIALS: the real->fake map is kept IN MEMORY ONLY (never
+# written to a .map.json), stable within a run, shape-preserving (see
+# fake_service_key). Empty -> NULL; raw when ANONYMIZE=0.
+_svckey_cache: dict[str, str] = {}
+def anon_svckey(raw):
+    v = (raw or "").strip()
+    if not v:
+        return None
+    if not ANONYMIZE:
+        return v
+    f = _svckey_cache.get(v)
+    if f is None:
+        f = fake_service_key(v); _svckey_cache[v] = f
+    return f
+
+def excluded_org(name, ann):
+    """True for SYNTHETIC collector customers/sites that are not real orgs and
+    must not be imported: the 'none' dummy and the 'SSL VPN' collection. NOT the
+    (real) 'Service Partner Type2' parent site, and NOT the 'Gateway NAT' site
+    (already invisible in the UI -- left as-is per owner review)."""
+    n = (name or "").strip().lower()
+    a = (ann or "").strip().lower()
+    return n == "none" or "collect ssl vpn" in a
 
 def notify_flags(raw):
     """Unpack the 4-char NOTIFYONACCESS code into 4 booleans.
@@ -142,42 +192,173 @@ def state_code(raw):
     n = int(v)
     return n if 0 <= n <= 32767 else None
 
-# --- role name -> (resource_type, verb) list ---------------------------------
-CRUD_DEVICE = [("device","view"),("device","connect"),("device","edit"),("device","delete")]
+# --- privilege catalog (CRUD x type; used only by ensure_privileges) ---------
+CRUD_DEVICE = [("device","view"),("device","connect"),("device","edit"),("device","delete"),("device","create")]
 CRUD_REGION = [("region","view"),("region","create"),("region","edit"),("region","delete")]
-CRUD_GROUP  = [("group","view"),("group","create"),("group","edit"),("group","delete"),
-               ("group","add_member"),("group","remove_member")]
-CRUD_PRODUCT= [("product","maintain"),("product","create"),("product","edit"),("product","delete")]
-ALL_TYPES   = CRUD_DEVICE+CRUD_REGION+CRUD_GROUP+CRUD_PRODUCT+[("customer","create"),
-              ("site","create"),("site","edit"),("grant","create"),("grant","view")]
+CRUD_GROUP  = [("group","view"),("group","create"),("group","edit"),("group","delete")]
+CRUD_PRODUCT= [("product","view"),("product","create"),("product","edit"),("product","delete")]
+CRUD_GATEWAY= [("gateway","view"),("gateway","create"),("gateway","edit"),("gateway","delete")]
+CRUD_CUST   = [("customer","view"),("customer","create"),("customer","edit"),("customer","delete")]
+CRUD_SITE   = [("site","view"),("site","create"),("site","edit"),("site","delete")]
+CRUD_ROLE   = [("role","view"),("role","create"),("role","edit"),("role","delete")]
+CRUD_SERVICE= [("service","view"),("service","create"),("service","edit"),("service","delete")]
+ALL_TYPES   = (CRUD_DEVICE+CRUD_REGION+CRUD_GROUP+CRUD_PRODUCT+CRUD_GATEWAY+CRUD_CUST+
+               CRUD_SITE+CRUD_ROLE+CRUD_SERVICE)
 
-ROLE_PRIVS = {
-    "User": [("device","view"),("device","connect")],
-    "Connect under constr. systems": [("device","view"),("device","connect")],
-    "CWP User": [("device","view")],
-    "ReadOnly": [("device","view")],
-    "Helpdesk Support Role": CRUD_DEVICE,
-    "SRSConfiguration": CRUD_DEVICE,
-    "SRS Manager": CRUD_REGION,
-    "CountryKeyUserAdmin": CRUD_REGION,
-    "CountryUserAdmin": CRUD_REGION,
-    "GroupManager": CRUD_GROUP,
-    "GroupAdmin": CRUD_GROUP,
-    "GroupUserAdmin": [("group","add_member"),("group","remove_member")],
-    "UserGroupView": [("group","view")],
-    "BURepresentative": CRUD_PRODUCT,
-    "SuperUser": ALL_TYPES,
-}
-DEFAULT_PRIVS = [("device","view"),("device","connect")]
+# --- privilege NAME -> (resource_type, verb) onto our CRUD catalog -----------
+# The normalized RDPRIVILEGE names encode type+verb, e.g. "Customer System -
+# Detail View" (device:view), "Router - Modify" (gateway:edit), "Customer and
+# Customer Sites - Add" (customer:create). Prefix -> type; suffix -> CRUD verb.
+# Types outside our authz surface (IP reservation, password pool, ...) -> None.
+_PRIV_PREFIX = [
+    ("Customer System", "device"), ("Census", "device"),
+    ("Router", "gateway"),
+    ("Customer and Customer Sites", "customer"),   # "on Site" -> site (handled below)
+    ("User Group", "group"),
+    ("Role", "role"),
+    ("Region", "region"), ("Department", "region"),
+    ("Product Model", "product"), ("Product Communication", "product"), ("Product", "product"),
+    ("Service Domain", "service"), ("File Subscriber Server", "service"), ("File Subscription", "service"),
+    ("Device Authorization", "service"), ("System Mgmt", "service"), ("Customer VPN", "service"),
+    ("Client Updater", "service"), ("Extended File Processing", "service"), ("File Services", "service"),
+    ("Event Log", "service"), ("Application Session Log", "service"), ("File Log", "service"),
+    ("Portal Session", "service"), ("Operating System Log", "service"), ("Qualified Log", "service"),
+    # not represented in our authz surface -> skipped
+    ("User", None), ("IP Reservation", None), ("Password Pool", None), ("Usage Policies", None),
+    ("SAP to SRS", None), ("Portal News", None), ("cRSP Portal", None), ("CWP User", None),
+]
+
+def privilege_tv(name):
+    """Map an RDPRIVILEGE name to (resource_type, verb) in our catalog, or None."""
+    n = (name or "").strip()
+    rt = None
+    for pre, t in _PRIV_PREFIX:
+        if n.startswith(pre):
+            rt = t
+            break
+    if rt is None:
+        return None
+    low = n.lower()
+    if rt == "customer" and "on site" in low:
+        rt = "site"
+    if "establish connection" in low or "establish clientless" in low:
+        vb = "connect"
+    elif "- add" in low:
+        vb = "create"
+    elif "- delete" in low:
+        vb = "delete"
+    elif "view" in low:
+        vb = "view"
+    elif any(k in low for k in ("modify", "grant explicit", "set / release", "configure",
+                                 "attach", "administrate", "update", "allow login", "commands",
+                                 "distribute", "package", "reset password", "edit")):
+        vb = "edit"
+    else:
+        vb = "view"
+    if rt == "device" and vb == "create":
+        return ("device", "create")
+    return (rt, vb)
 
 # in-memory lookups filled during reference stage
 region_path: dict[str,str] = {}      # RDREGION.ID -> id-based ltree
 region_iso:  dict[str,str] = {}      # RDREGION.ID -> ISO (country ancestor)
+region_name: dict[str,str] = {}      # RDREGION.ID -> display name (for gateway.region)
 admin_region_ids: set[str] = set()   # RDREGION.ID of REGIONTYPE=1 (administrative regions, dropped)
 product_path: dict[str,str] = {}     # RDPRODUCT.ID -> id-based ltree
 product_modality: dict[str,str] = {} # RDPRODUCT.ID -> top-level category name
 product_model_path: dict[str,str] = {} # RDPRODUCTMODEL.ID -> model node ltree
+model_partno: dict[str,str] = {}     # RDPRODUCTMODEL.ID -> PARTNUMBER (str), for the contract-flag join
 gateway_src_ids: set = set()         # RSROUTER ids that actually got a gateway row
+site_customer: dict[str,str] = {}    # RDCUSTOMERSITE.ID -> customer uuid (Slice A)
+excluded_customer_src: set = set()   # RDCUSTOMER ids NOT imported (synthetic collectors)
+excluded_site_src: set = set()       # RDCUSTOMERSITE ids NOT imported (synthetic collectors)
+role_types: dict[str, set] = {}      # RDROLE.ID -> set of resource types it confers (Slice B)
+
+# Slice G: legacy APPTYPE code -> kept FleetShell application. Dropped types
+# (31 ping, 22 NetOp, 29 Novius, 24 X11, and every unused/obsolete protocol incl.
+# pcanywhere/netmeeting/timbuktu/telnet) are simply absent -> never imported.
+# See docs/second_load_analysis.md Slice G survey.
+APP_MAP = {
+    "1": "http", "43": "https", "16": "rdp", "12": "vnc", "3": "ssh",
+    "49": "expert-i", "50": "teamviewer", "90": "transparent",
+    "34": "scp", "33": "sftp", "27": "ftp",
+}
+
+# --- Slice D2: IPsec crypto decode (RDKEYTEXT TARGETREF 6030) -> ipsecnode tokens.
+# Verified against the legacy GUI: ESP + remote_ts always come from RDIPSECSPD2
+# POLICYTYPE=5; IKE is per-tunnel POLICYTYPE=1 for IKEv1, but the FIXED default
+# profile for IKEv2 (IKEV2PROFILEID=1, uniform across all v2 routers). AH unused.
+_ENC = {"2":"3des","3":"aes128","4":"aes192","5":"aes256",
+        "6":"aes128gcm","7":"aes192gcm","8":"aes256gcm"}
+_HASH = {"0":"none","1":"sha1","2":"md5","3":"sha256","4":"sha384","5":"sha512"}
+_DH = {"1":1,"2":2,"3":5,"4":14,"5":15,"6":16,"7":19,"8":20,"9":21,"10":24}
+# The Default IKEv2 Profile (owner-verified in the GUI; identical for every
+# IKEV2PROFILEID=1 router). Proposal 1 = AES-CBC, Proposal 2 = AES-GCM.
+_IKEV2_DEFAULT = {
+    "ike_enc":  ["aes128", "aes192", "aes256", "aes128gcm", "aes256gcm"],
+    "ike_auth": ["sha256", "sha384", "sha512"],
+    "ike_dh":   [14, 15, 16, 20],
+}
+
+def build_ipsec_records():
+    """Per-router IPsec crypto from RDIPSECSPD2 (Slice D2): POLICYTYPE=1 -> the
+    IKEv1 proposal (used only for IKEv1 routers); POLICYTYPE=5 -> ESP crypto +
+    the remote traffic selectors. No AH."""
+    ike1, esp, rts, seen = {}, {}, {}, {}
+    for r in read("RDIPSECSPD2"):
+        t, pt = r["TUNNELID"], r["POLICYTYPE"]
+        if pt == "1":
+            ike1[t] = (_ENC.get(r["ESPENCRYPTION"]), _HASH.get(r["ESPAUTHENTICATION"]), _DH.get(r["KESECURITY"]))
+        elif pt == "5":
+            if t not in esp:
+                esp[t] = (_ENC.get(r["ESPENCRYPTION"]), _HASH.get(r["ESPAUTHENTICATION"]), _DH.get(r["KESECURITY"]))
+            ip = (r.get("IPADDRESS") or "").strip()
+            if ip:
+                sz = (r.get("SUBNETSIZE") or "").strip()
+                ts = f"{ip}/{sz}" if sz else ip
+                s = seen.setdefault(t, set())
+                if ts not in s:
+                    s.add(ts); rts.setdefault(t, []).append(ts)
+    return {"ike1": ike1, "esp": esp, "rts": rts}
+
+
+def _build_site_record(r, rid, ipsec_data, static_ip, pub):
+    """Build (ipsec jsonb, psk) for one router. Returns (None, None) when the
+    router has no tunnel (no POLICYTYPE=5 ESP crypto). Field names match the
+    portal SiteRecord (gateway_spool.ts buildSiteRecord). No AH; local_ts is not
+    in the source (authored later). PSK/dyndns are secrets not in the dump -> a
+    fake under ANONYMIZE, else None (joined from the password store on takeover)."""
+    esprec = ipsec_data["esp"].get(rid)
+    if not esprec:
+        return None, None
+    ikever = (r.get("IKEPROTOCOLVERSION") or "").strip()
+    profid = (r.get("IKEV2PROFILEID") or "0").strip()
+    sr = {
+        "ike_version": 2 if ikever == "2" else 1,
+        "static_ip": static_ip,
+    }
+    ike_id = pub if ANONYMIZE else ((r.get("LOCALIDENTITY") or "").strip() or None)
+    if ike_id:
+        sr["ike_identity"] = ike_id
+    if ikever == "2":
+        if profid not in ("0", "1"):
+            print(f"  [ipsec] WARN router {rid}: unexpected IKEV2PROFILEID {profid!r} "
+                  f"(only the default profile 1 is known); using default")
+        sr.update(_IKEV2_DEFAULT)                 # fixed default IKEv2 profile
+    else:                                         # IKEv1 -> per-tunnel POLICYTYPE=1
+        e, a, d = ipsec_data["ike1"].get(rid, (None, None, None))
+        sr["ike_enc"] = [e] if e else []
+        sr["ike_auth"] = [a] if a else []
+        sr["ike_dh"] = [d] if d else []
+    e, a, d = esprec                              # ESP from POLICYTYPE=5
+    sr["esp_enc"] = [e] if e else []
+    sr["esp_auth"] = [a] if a else []             # 'none' for AEAD/GCM
+    sr["esp_pfs"] = [d] if d else []              # [] = no PFS
+    sr["remote_ts"] = ipsec_data["rts"].get(rid, [])
+    if not static_ip:
+        sr["dyndns_password"] = uuid.uuid4().hex[:24] if ANONYMIZE else None
+    psk = (uuid.uuid4().hex + uuid.uuid4().hex) if ANONYMIZE else None
+    return psycopg.types.json.Json(sr), psk
 
 
 def chain_path(node_id, parent_of, sep="."):
@@ -228,6 +409,7 @@ def stage_reference(g: psycopg.Connection, emit: bool = True):
         p = chain_path(rid, walk) or rid
         region_path[rid] = p
         region_iso[rid] = iso_by_country.get(cid, "")
+        region_name[rid] = (r["NAME"] or rid)
         rows.append((int(rid), p, r["NAME"] or rid, iso_by_country.get(cid) or None,
                      p.count(".") + 1, int(parent_of[rid]) if parent_of.get(rid) else None))
     copy_rows(g, "region (id,path,name,iso,level,parent_id)", rows, on_conflict="id") if emit else None
@@ -276,6 +458,7 @@ def stage_reference(g: psycopg.Connection, emit: bool = True):
         node = model_map.get(mid)
         mpath = f"{base}.{mid}"
         product_model_path[mid] = mpath
+        model_partno[mid] = (m["PARTNUMBER"] or "").strip()
         mnodes.append((node, mpath, "model", None, (m["NAME"] or "").strip()))
         msat.append((node, _int(m["PARTNUMBER"]), _int(m["SERIALFROM"]),
                      _int(m["SERIALTO"]), (m["SYSTEMHOST"] or "").strip() == "1"))
@@ -306,58 +489,157 @@ def stage_reference(g: psycopg.Connection, emit: bool = True):
     def gwmodel(v):
         v = (v or "").strip()
         return None if v in ("", "undefined") else v
+    country_name = {r["ID"]: (r["NAME"] or "").strip() for r in read("RDCOUNTRY")}
+    ipsec_data = build_ipsec_records()   # Slice D2: per-router IPsec crypto
+    n_ipsec = 0
     grows = []
-    for r in read("RDRSROUTERDETAILVIEWV1"):
-        gid = gateway_map.get(r["ID"])
-        gateway_src_ids.add(r["ID"])
-        # NOTE: hostname (DynDNS) is left NULL -- authored in the UI for dynamic-IP
-        # gateways. In production it, plus the DynDNS password (WEBDNSPWID /
-        # WEBDNSPWPW in the source), would feed the IPsec dyndns config.
+    for r in read("RDRSROUTER"):
+        rid = r["ID"]
+        if rid in ("0", "") or (r.get("NAME") or "").strip().lower() == "dummy":
+            continue                              # skip the dummy router
+        gid = gateway_map.get(rid)
+        gateway_src_ids.add(rid)
+        regid = (r.get("REGIONID") or "").strip()
+        rtype = (r.get("ROUTERTYPE") or "").strip()
+        pub = anon_pubip(r.get("IPADDRESSIPSEC2"))
+        # NOTE: hostname (DynDNS) is left NULL -- authored in the UI. region_path
+        # + public_ip are REAL (REGIONID + IPADDRESSIPSEC2). gateway_model degrades
+        # to the raw ROUTERTYPE code. IPsec crypto (Slice D2) reconstructed below.
+        static_ip = (r.get("STATICIP") or "").strip() == "1"
+        ipsec, psk = _build_site_record(r, rid, ipsec_data, static_ip, pub)
+        if ipsec is not None:
+            n_ipsec += 1
         grows.append((
-            gid, r.get("REGIONNAME") or "",
-            hospital_lbl.get(r.get("IDENTIFIER2") or r["ID"]) if ANONYMIZE else (raw(r.get("IDENTIFIER2")) or raw(r["ID"])),   # hospital (shared anon map)
-            raw(r.get("NAME")),                 # name (router id / cisco serial) RAW
-            an(city_lbl, r.get("IDENTIFIER1")), # city (anon)
-            gwmodel(r.get("DISPLAYROUTERTYPE")),          # gateway_model ('undefined' -> NULL)
+            gid,
+            region_name.get(regid, ""),                    # region (display name)
+            hospital_lbl.get(r.get("IDENTIFIER2") or rid) if ANONYMIZE else (raw(r.get("IDENTIFIER2")) or raw(rid)),   # hospital (shared anon map)
+            raw(r.get("NAME")),                            # name (router id / cisco serial) RAW
+            an(city_lbl, r.get("IDENTIFIER1")),            # city (anon)
+            None if rtype in ("", "0", "1") else rtype,    # gateway_model (raw ROUTERTYPE code)
             decode(CONN_LABELS, r.get("CONNECTIONTYPE")),      # connection_type (decoded)
             decode(OPSTATE_LABELS, r.get("OPERATIONALSTATE")), # operational_state (decoded)
             raw(r.get("STATICIP")),             # static_ip RAW
             raw(r.get("NATTYPE")),              # nat_type RAW
             an(ip_lbl, r.get("IPADDRESSADM1")), # admin_ip (anon)
             an(ip_lbl, r.get("IPADDRESSADM2")), # admin_ip2 (anon)
-            raw(r.get("COUNTRYNAME")),          # country RAW
-            pubip_gen(),                        # public_ip (synthesized tunnel endpoint)
+            country_name.get((r.get("COUNTRYID") or "").strip()) or None,  # country
+            pub,                                # public_ip (REAL endpoint, anon)
+            region_path.get(regid),             # region_path (ltree, from REGIONID)
+            psk,                                # psk (fake under ANONYMIZE; Slice D2)
+            ipsec,                              # ipsec SiteRecord jsonb (Slice D2)
         ))
     if emit:
         copy_rows(g, "gateway (id,region,hospital,name,city,gateway_model,connection_type,"
-                     "operational_state,static_ip,nat_type,admin_ip,admin_ip2,country,public_ip)",
+                     "operational_state,static_ip,nat_type,admin_ip,admin_ip2,country,public_ip,"
+                     "region_path,psk,ipsec)",
                   grows, on_conflict="id")
-        print(f"  gateway: {len(grows)}")
+        print(f"  gateway: {len(grows)} ({n_ipsec} with IPsec crypto)")
+
+
+# =============================================================================
+# STAGE: customers + sites (Slice A -- real master data)
+# =============================================================================
+def stage_customers(g: psycopg.Connection):
+    """Import the REAL customer master + sites (RDCUSTOMER / RDCUSTOMERSITE),
+    replacing the old per-site synthetic customer. Populates customer_map /
+    site_map / site_customer for the device stage. Devices link via
+    RDSERVICEDSYSTEM.SITEID -> RDCUSTOMERSITE.ID (~3.2k of 192k; the fleet is
+    mostly flat). Names/addresses are anonymized; the real NAME is used when
+    ANONYMIZE=0. Needs region_iso (built by stage_reference, which runs first)."""
+    iso_by_country = {r["ID"]: (r.get("CODE3166") or "").strip() for r in read("RDCOUNTRY")}
+    crows = []
+    for r in read("RDCUSTOMER"):
+        cid = r["ID"]
+        if excluded_org(r.get("NAME"), r.get("ANNOTATIONS")):
+            excluded_customer_src.add(cid); continue   # synthetic collector -> drop
+        u = customer_map.get("C" + cid)
+        iso = region_iso.get(r.get("REGIONID", "")) or ""
+        crows.append((u, iso, anon_org2(customer_lbl, "C" + cid, r.get("NAME")),
+                      (r.get("ACCESSPOLICY") or "").strip() == "1",
+                      anon_map(city_lbl, r.get("CITY")), anon_pcode(r.get("POSTCODE")),
+                      anon_text(r.get("STREET"))))
+    copy_rows(g, "customer (id,country,name,requires_explicit_grant,city,postcode,street)",
+              crows, on_conflict="id")
+    srows = []
+    for r in read("RDCUSTOMERSITE"):
+        sid, custid = r["ID"], (r.get("CUSTOMERID") or "").strip()
+        if excluded_org(r.get("NAME"), r.get("ANNOTATIONS")) or custid in excluded_customer_src:
+            excluded_site_src.add(sid); continue    # synthetic collector (or its site) -> drop
+        cust_u = customer_map.get("C" + custid) if custid not in ("0", "1", "") else None
+        if cust_u is None:
+            continue                       # site without a known customer -> skip
+        u = site_map.get(sid)
+        site_customer[sid] = cust_u
+        iso = (iso_by_country.get(r.get("COUNTRYID", ""))
+               or region_iso.get(r.get("REGIONID", "")) or "")
+        srows.append((u, cust_u, iso, anon_org2(site_lbl, "S" + sid, r.get("NAME")),
+                      (r.get("ACCESSPOLICY") or "").strip() == "1", "static",
+                      anon_map(city_lbl, r.get("CITY")), anon_pcode(r.get("POSTCODE")),
+                      anon_text(r.get("STREET"))))
+    copy_rows(g, "customer_site (id,customer_id,country,name,requires_explicit_grant,"
+                 "membership_kind,city,postcode,street)", srows, on_conflict="id")
+    print(f"  customers: {len(crows)} (dropped {len(excluded_customer_src)} synthetic)  "
+          f"sites: {len(srows)} (dropped {len(excluded_site_src)} synthetic)")
 
 
 # =============================================================================
 # STAGE: devices
 # =============================================================================
 def stage_devices(g: psycopg.Connection, limit: int | None):
-    cust_rows, site_rows, seen_cust, seen_site = [], [], set(), set()
-    def ensure_customer(key, iso, requires=False, real_id=None):
-        u = customer_map.get(key)
-        if key not in seen_cust:
-            seen_cust.add(key)
-            cust_rows.append((u, iso or "", anon_org_name(customer_lbl, key, real_id), requires))
-        return u
-    def cust_uuid(cid, iso):
-        if cid in ("0","1",""): return None
-        return ensure_customer("C"+cid, iso, real_id=cid)
-    def site_uuid(sid, cust_u, iso, requires):
-        if sid in ("0","1",""): return None
-        if cust_u is None:
-            cust_u = ensure_customer("SC"+sid, iso, real_id=sid)   # orphan site -> synthetic customer
-        u = site_map.get(sid)
-        if sid not in seen_site:
-            seen_site.add(sid)
-            site_rows.append((u, cust_u, iso or "", anon_org_name(site_lbl, "S"+sid, sid), requires, "dynamic"))
-        return u
+    # Contract flags (Slice E), keyed by (model partno, real serial) -- a
+    # 0-conflict key (verified); only equipment with a Y flag is stored. Under
+    # ANONYMIZE the join still works because it uses the RAW serial. internal_use:
+    # CON_TC_WO_U_FLG=Y -> 'NIU' (precedence), else CON_TC_FLG=Y -> 'STD', else
+    # NULL. dpa from CON_DPA_FLG. dmy from RDSYSTEMDUMMYCONTRACT (SYSTEMID = device
+    # id, ISACTIVE=1). See docs/valkey_spool.md (systems:by-ip contracts).
+    contract_flags: dict[tuple, tuple] = {}
+    for c in read("RDCMDBCONTRACTFLAGS"):
+        dpa = c.get("CON_DPA_FLG") == "Y"
+        iu = "NIU" if c.get("CON_TC_WO_U_FLG") == "Y" else ("STD" if c.get("CON_TC_FLG") == "Y" else None)
+        if not dpa and iu is None:
+            continue                       # all-N -> same as default, skip
+        ser = (c.get("EQ_SERIAL_ID") or "").strip()
+        if ser:
+            contract_flags[((c.get("EQ_MAT_ID") or "").strip(), ser)] = (dpa, iu)
+    dmy_devices = {(c.get("SYSTEMID") or "").strip() for c in read("RDSYSTEMDUMMYCONTRACT")
+                   if (c.get("ISACTIVE") or "").strip() == "1"}
+    print(f"  contracts: {len(contract_flags)} equipment w/flag, {len(dmy_devices)} active dummy")
+
+    # Service keys (Slice F). A device may have many keys; pick the one it points
+    # at (device.SERVICEKEYID) else the ISDEFAULT=1 key (latest expiry wins). The
+    # key VALUE is a credential -> shape-preserving fake under ANONYMIZE; level +
+    # expiry are non-secret metadata (kept raw). Transmitted in the tunnel request
+    # by the portal Connect workflow.
+    needed_skids = {(d.get("SERVICEKEYID") or "").strip() for d in read("RDSERVICEDSYSTEM")}
+    needed_skids -= {"", "0", "1"}
+    svc_by_id: dict[str, tuple] = {}     # kid -> (val,level,exp) for explicit pointers
+    svc_all: dict[str, list] = {}        # sysid -> [(val,level,exp,is_default_src,kid)]
+    for k in read("RDSERVICEKEY"):
+        val = (k.get("SERVICEKEY") or "").strip()
+        if not val:
+            continue
+        lvl = (k.get("ACCESSLEVEL") or "").strip() or None
+        exp = (k.get("EXPIRATIONDATE") or "").strip() or None
+        kid = k["ID"]
+        if kid in needed_skids:
+            svc_by_id[kid] = (val, lvl, exp)
+        sid = (k.get("SERVICEDSYSID") or "").strip()
+        if sid:
+            svc_all.setdefault(sid, []).append((val, lvl, exp, (k.get("ISDEFAULT") or "").strip() == "1", kid))
+
+    def resolve_default_key(sysid, skid):
+        """(rec, kid) for the device's default: explicit SERVICEKEYID else the
+        ISDEFAULT=1 key with the latest expiry."""
+        if skid not in ("0", "1", "") and skid in svc_by_id:
+            return svc_by_id[skid], skid
+        best = best_kid = None
+        for (val, lvl, exp, isdef, kid) in svc_all.get(sysid, []):
+            if isdef and (best is None or (exp or "") > (best[2] or "")):
+                best, best_kid = (val, lvl, exp), kid
+        return best, best_kid
+
+    dsk_rows = []   # device_service_key satellite (all keys)
+    print(f"  service keys: {sum(len(v) for v in svc_all.values())} total over {len(svc_all)} systems")
 
     drows = []
     n = 0
@@ -375,10 +657,25 @@ def stage_devices(g: psycopg.Connection, limit: int | None):
         iso = region_iso.get(rid) or None
         exp, esite = r["EXPLICITAUTHEXP"], r["EXPLICITAUTHSITE"]
         access = "device" if exp == "1" else ("site" if esite == "1" else "open")
-        cust_u = cust_uuid(r.get("CUSTOMERID",""), iso)
-        site_u = site_uuid(r.get("CUSTOMERSITEID",""), cust_u, iso, access == "site")
+        # Real customer/site link (Slice A): device.SITEID -> RDCUSTOMERSITE, whose
+        # CUSTOMERID gives the customer. Flat devices (no SITEID) stay NULL.
+        site_raw = (r.get("SITEID") or "").strip()
+        site_u = site_map.get(site_raw) if site_raw in site_customer else None
+        cust_u = site_customer.get(site_raw)
 
         na, nd, ninfo, npseudo = notify_flags(r.get("NOTIFYONACCESS"))
+        # Contracts (Slice E): join equipment flags by (model partno, raw serial).
+        dpa_flag, internal_use = contract_flags.get(
+            (model_partno.get(pmid, ""), (r.get("SERIAL") or "").strip()), (False, None))
+        dmy_flag = r["ID"] in dmy_devices
+        # Service key (Slice F): resolved default onto device.*; ALL keys -> satellite.
+        skid = (r.get("SERVICEKEYID") or "").strip()
+        svc, default_kid = resolve_default_key(r["ID"], skid)
+        svc_key = anon_svckey(svc[0]) if svc else None
+        svc_level = svc[1] if svc else None
+        svc_exp = svc[2] if svc else None
+        for (val, lvl, exp, _isdef, kid) in svc_all.get(r["ID"], []):
+            dsk_rows.append((did, anon_svckey(val), lvl, exp, kid == default_kid))
 
         drows.append((
             did,
@@ -408,10 +705,15 @@ def stage_devices(g: psycopg.Connection, limit: int | None):
             anon_map(notify_lbl, r.get("NOTIFICATIONADDRESS")),  # notification_address (PII email)
             anon_text(r.get("SHOWONCONNECT")),          # display_before_connect (free text)
             anon_text(r.get("ANNOTATIONS")),            # additional_info (free text)
+            internal_use, dpa_flag, dmy_flag,           # contracts: internal_use/dpa/dmy (Slice E)
+            svc_key, svc_level, svc_exp,                 # service key + level + expiry (Slice F)
         ))
         if len(drows) >= 10000:
-            _flush_devices(g, drows, cust_rows, site_rows); drows.clear()
-    _flush_devices(g, drows, cust_rows, site_rows)
+            _flush_devices(g, drows); drows.clear()
+    _flush_devices(g, drows)
+    # All service keys -> satellite (after devices exist, for the FK).
+    copy_rows(g, "device_service_key (device_id,service_key,level,expires,is_default)", dsk_rows)
+    print(f"  device_service_key: {len(dsk_rows)} rows")
     # Persist NAME -> device UUID so the infoproxy importer can attribute the
     # legacy Customer-System proxy bindings to the right (anonymized) device.
     # Written as a plain file (NOT an IdMap) so it survives the end-of-run map
@@ -421,14 +723,11 @@ def stage_devices(g: psycopg.Connection, limit: int | None):
         json.dump(sysname_map, f)
     print(f"  [sysname map] wrote {len(sysname_map)} NAME->device entries to {sysname_path} "
           f"(kept for import_infoproxy; NOT destroyed with the id maps)")
-    print(f"  devices: {n if not limit else min(n,limit)}  customers:{len(seen_cust)} sites:{len(seen_site)}")
+    print(f"  devices: {n if not limit else min(n,limit)}  "
+          f"(customer/site link via SITEID -> RDCUSTOMERSITE)")
 
 
-def _flush_devices(g, drows, cust_rows, site_rows):
-    if cust_rows:
-        copy_rows(g, "customer (id,country,name,requires_explicit_grant)", cust_rows, on_conflict="id"); cust_rows.clear()
-    if site_rows:
-        copy_rows(g, "customer_site (id,customer_id,country,name,requires_explicit_grant,membership_kind)", site_rows, on_conflict="id"); site_rows.clear()
+def _flush_devices(g, drows):
     if drows:
         copy_rows(g, "device (id,region_path,country_iso,modality,product_path,customer_id,"
                      "site_id,gateway_id,hospital_name,software_version,access_requirement,attrs,"
@@ -436,166 +735,387 @@ def _flush_devices(g, drows, cust_rows, site_rows):
                      "ip_address,ip_real,contact,city,"
                      "config_state,operational_state,notify_on_access,notify_on_disconnect,"
                      "notification_info_active,notify_pseudonymized,notification_address,"
-                     "display_before_connect,additional_info)", drows, on_conflict="id")
+                     "display_before_connect,additional_info,internal_use,dpa,dmy,"
+                     "service_key,service_key_level,service_key_expires)", drows, on_conflict="id")
+
+
+# =============================================================================
+# STAGE: applications (Slice G core -- product_model_app + device_app)
+# =============================================================================
+def stage_apps(g: psycopg.Connection):
+    """Model default apps (product_model_app) from the profile templates, and
+    per-device overrides (device_app) from the per-system app configs. Every
+    model maps 1:1 to an app profile (via its devices' APPPROFILEID); the
+    profile's SYSTEMID=0 template rows are the model defaults, and SYSTEMID=<dev>
+    rows are that device's full override. Only kept application types (APP_MAP)
+    are imported. Parameter mapping (sni/path/guac dims from RDSERVAPPPROP) is a
+    second pass -- this brings application + port + name. Needs model_map
+    (reference) + device_map (devices)."""
+    # model -> app profile (1:1 via devices' APPPROFILEID)
+    model_profile: dict[str, str] = {}
+    for r in read("RDSERVICEDSYSTEM"):
+        mid = (r.get("PRODUCTMODELID") or "").strip()
+        ap = (r.get("APPPROFILEID") or "").strip()
+        if mid and ap not in ("0", ""):
+            model_profile.setdefault(mid, ap)
+    # profile -> template rows (SYSTEMID=0); device -> override rows (SYSTEMID set).
+    # Each rec carries the RDSERVAPPPAR.ID so G-full props (path/ports/options)
+    # can be attached below.
+    profile_tmpl: dict[str, list] = {}
+    device_over: dict[str, list] = {}
+    apppar_app: dict[str, str] = {}
+    kept = dropped = 0
+    for r in read("RDSERVAPPPAR"):
+        app = APP_MAP.get((r.get("APPTYPE") or "").strip())
+        if not app:
+            dropped += 1; continue
+        kept += 1
+        aid = r["ID"]; apppar_app[aid] = app
+        port = (r.get("PORTNUMBER") or "").strip()
+        rec = (aid, (r.get("APPNAME") or "").strip() or app, app, "" if port in ("0", "") else port)
+        sysid = (r.get("SYSTEMID") or "0").strip()
+        if sysid not in ("0", ""):
+            device_over.setdefault(sysid, []).append(rec)
+        else:
+            profile_tmpl.setdefault((r.get("PROFILEID") or "").strip(), []).append(rec)
+
+    # G-full: attach per-app-config params from RDSERVAPPPROP (kept fields only).
+    #   Homepage File -> path (http/https). Extra/plain TCP Ports -> fold into the
+    #   comma-list `ports` (the gateway/client already do multi-port TCP forwards).
+    #   Extra/plain UDP Ports -> params.udp_ports (no UDP in the gateway yet).
+    #   teamviewer Options -> params.options (raw, stored for when the app is built).
+    props: dict[str, dict] = {}
+    for r in read("RDSERVAPPPROP"):
+        ap = apppar_app.get(r["APPPARID"])
+        if not ap:
+            continue
+        tag = (r.get("TAG") or "").strip(); val = (r.get("VALUE") or "").strip()
+        d = props.setdefault(r["APPPARID"], {})
+        if tag == "Homepage File" and ap in ("http", "https"):
+            d["path"] = val
+        elif tag in ("Extra TCP Ports", "TCP Ports") and ap in ("https", "transparent"):
+            d["tcp"] = val
+        elif tag in ("Extra UDP Ports", "UDP Ports") and ap in ("https", "transparent"):
+            d["udp"] = val
+        elif tag == "Options" and ap == "teamviewer" and val:
+            d.setdefault("opts", []).append(val)
+
+    def split_ports(s):
+        return [p for p in (t.strip() for t in (s or "").split(",")) if p and p != "0"]
+
+    def app_cols(rec):
+        """(name, application, ports, path, params) for an app config rec."""
+        aid, name, app, port = rec
+        p = props.get(aid, {})
+        ports = split_ports(port) + [x for x in split_ports(p.get("tcp", "")) if x not in split_ports(port)]
+        path = p.get("path") or "/"
+        params = {}
+        udp = split_ports(p.get("udp", ""))
+        if udp:
+            params["udp_ports"] = udp
+        if p.get("opts"):
+            params["options"] = "; ".join(dict.fromkeys(p["opts"]))
+        return name, app, ",".join(ports), path, (psycopg.types.json.Json(params) if params else None)
+    # product_model_app (model defaults)
+    pma_rows = []
+    for mid, prof in model_profile.items():
+        if not model_map.has(mid):
+            continue
+        node = model_map.get(mid)
+        for i, rec in enumerate(profile_tmpl.get(prof, [])):
+            name, app, ports, path, params = app_cols(rec)
+            pma_rows.append((node, name, app, ports, path, params, i))
+    copy_rows(g, "product_model_app (product_id,name,application,ports,path,params,sort_order)", pma_rows)
+    # device_app (per-device overrides)
+    da_rows = []
+    for sysid, apps in device_over.items():
+        if not device_map.has(sysid):
+            continue
+        dev = device_map.get(sysid)
+        for i, rec in enumerate(apps):
+            name, app, ports, path, params = app_cols(rec)
+            da_rows.append((dev, name, app, ports, path, params, i))
+    copy_rows(g, "device_app (device_id,name,application,ports,path,params,sort_order)", da_rows)
+    print(f"  apps: {len(pma_rows)} model defaults, {len(da_rows)} device overrides "
+          f"(kept {kept} app rows, dropped {dropped} of dropped types)")
 
 
 # =============================================================================
 # STAGE: users (LOCAL plane)
 # =============================================================================
 def stage_users(l: psycopg.Connection, limit: int | None):
-    # RDUSER.COUNTRYID -> ISO (RDCOUNTRY.CODE3166): the persona's country, needed
-    # by the Data Transfer Matrix. 7733/7735 personas resolve. Built here so a
-    # standalone `--stage users` run does not depend on stage_reference.
+    # Slice H (Option 1 -- correct identity model): each RDUSER is a HUMAN. It
+    # becomes a login_account (name/email/phone/mobile/company + status/PII) PLUS
+    # a 1:1 app_user persona (the 'hat': name + DTM country) linked via
+    # account_persona (is_primary). PII lives on the ACCOUNT, not the persona.
+    # The dev login accounts + 6 test personas are added AFTER, by
+    # seed_test_users.py + seed_login_accounts.mjs (distinct usernames/ids, so
+    # they are preserved).
     iso_by_country = {r["ID"]: (r["CODE3166"] or "").strip() for r in read("RDCOUNTRY")}
-    rows = []
+    WANT = {"User Type from GAMA": "user_type", "CompanyName": "company",
+            "ExpirationDate": "expires"}
+    props: dict[str, dict] = {}
+    for p in read("RDUSERPROPERTY"):
+        tag = WANT.get((p.get("TAG") or "").strip())
+        if tag:
+            props.setdefault(p["USERID"], {})[tag] = (p.get("VALUE") or "").strip() or None
+    STATE = {"0": "active", "21": "expired", "11": "disabled"}
+
+    persona_rows, account_rows, link_rows = [], [], []
+    seen_user, seen_email = set(), set()
     n = have = 0
     for r in read("RDUSER"):
         n += 1
         if limit and n > limit: break
-        uid = user_map.get(r["ID"])
+        rid = r["ID"]
+        uid = user_map.get(rid)                       # persona (app_user) id
+        acct_id = "acct:" + account_map.get(rid)      # login_account id
         fn, ln = anon_person(r.get("FIRSTNAME"), r.get("LASTNAME"), n)
         cid = (r.get("COUNTRYID") or "").strip()
         country = iso_by_country.get(cid) or None if cid not in ("0", "") else None
         if country: have += 1
-        rows.append((uid, "eu-west-2", fn, ln, anon_email(r.get("EMAIL"), n), None, country))
-    copy_rows(l, "app_user (user_id,home_region,firstname,lastname,email,theme,country)", rows, on_conflict="user_id")
-    print(f"  users: {len(rows)} ({have} with country)")
+        pr = props.get(rid, {})
+        email_val = anon_email(r.get("EMAIL"), n)
+
+        # persona (app_user): the 'hat' -- name + optional contact email + DTM country.
+        persona_rows.append((uid, "eu-west-2", fn, ln, email_val, None, country))
+
+        # account (login_account): the human + PII. username/email must be UNIQUE.
+        username = ("u" + rid) if ANONYMIZE else ((r.get("NAME") or "").strip() or ("u" + rid))
+        if username in seen_user:
+            username = f"{username}_{rid}"
+        seen_user.add(username)
+        email = email_val if (email_val and email_val not in seen_email) else f"u{rid}@imported.local"
+        seen_email.add(email)
+        account_rows.append((
+            acct_id, username, email, None, (f"{fn} {ln}").strip(),
+            anon_map(phone_lbl, r.get("PHONE")),          # phone (PII)
+            anon_map(phone_lbl, r.get("MOBILEPHONE")),    # mobile (PII)
+            anon_map(company_lbl, pr.get("company")),     # external company (PII)
+            STATE.get((r.get("STATE") or "").strip()),    # account_state
+            pr.get("user_type"),                          # GAMA user type
+            pr.get("expires"),                            # account_expires
+        ))
+        # link (account_persona): 1:1, primary.
+        link_rows.append((acct_id, uid, True))
+
+    copy_rows(l, "app_user (user_id,home_region,firstname,lastname,email,theme,country)",
+              persona_rows, on_conflict="user_id")
+    copy_rows(l, "login_account (account_id,username,email,password_hash,display_name,"
+                 "phone,mobile,company,account_state,user_type,account_expires)",
+              account_rows, on_conflict="account_id")
+    copy_rows(l, "account_persona (account_id,user_id,is_primary)", link_rows,
+              on_conflict="account_id,user_id")
+    print(f"  users: {len(persona_rows)} personas + {len(account_rows)} accounts "
+          f"({have} with country, {len(props)} with properties)")
 
 
 # =============================================================================
-# STAGE: grants  (-> groups, memberships, roles, scopes, grants)
+# STAGE: roles + privileges (Slice B -- RDROLE / RDPRIVILEGE / RDPRIVILEGE2ROLE)
+# =============================================================================
+def stage_roles(g: psycopg.Connection):
+    """Import the real role catalog. Each RDPRIVILEGE name maps onto our CRUD
+    catalog via privilege_tv(); RDPRIVILEGE2ROLE gives role->privileges. Also
+    builds role_types (RDROLE.ID -> {resource types}) which the grant stage uses
+    to decide whether a grant yields a device and/or gateway scope."""
+    priv_tv = {}
+    for r in read("RDPRIVILEGE"):
+        tv = privilege_tv(r["NAME"])
+        if tv:
+            priv_tv[r["ID"]] = tv
+    rrows = []
+    for r in read("RDROLE"):
+        rid = r["ID"]; u = role_map.get(rid)
+        role_types.setdefault(rid, set())
+        rrows.append((u, (r["NAME"] or rid)[:56] + "-" + u[:8], (r["NAME"] or rid)[:120]))
+    copy_rows(g, "authz_role (id,key,name)", rrows, on_conflict="id")
+    rp = []
+    for r in read("RDPRIVILEGE2ROLE"):
+        tv = priv_tv.get(r["PRIVILEGEID"]); rid = r["ROLEID"]
+        if not tv or rid not in role_types:
+            continue
+        role_types[rid].add(tv[0])
+        rp.append((role_map.get(rid), tv[0], tv[1]))
+    with g.cursor() as c:
+        c.executemany(
+            "INSERT INTO authz_role_privilege(role_id,privilege_id) "
+            "SELECT %s, id FROM authz_privilege WHERE resource_type=%s AND verb=%s "
+            "ON CONFLICT DO NOTHING", rp)
+    g.commit()
+    print(f"  roles: {len(rrows)}  role-privileges: {len(rp)}")
+
+
+# =============================================================================
+# STAGE: grants (Slice C -- RDBASEGRANT + RDGROUPGRANT, normalized)
 # =============================================================================
 def stage_grants(g: psycopg.Connection, l: psycopg.Connection, limit: int | None):
-    # Device IDENTIFIER1 -> RDSERVICEDSYSTEM.ID, for single-system (per-device)
-    # grants: those grant rows carry the device serial in FUNCTIONALLOCATION and
-    # no region/product/customer/site. 100% resolve via IDENTIFIER1.
-    ident1_to_sysid: dict[str, str] = {}
-    for r in read("RDSERVICEDSYSTEM"):
-        ident = (r.get("IDENTIFIER1") or "").strip()
-        if ident:
-            ident1_to_sysid[ident] = r["ID"]
+    """Normalized grant import. Scope dimensions come from the polymorphic
+    OBJREF/VALUE columns (region=ATTR1/1120, product=ATTR2/5110, customer=
+    ATTR3/5210, site=ATTR3/5220, single device=ID/6010; value 1 = ANY). The
+    resource TYPE follows the role's privileges (role_types): a role with device
+    privileges yields a device scope; one with gateway (Router) privileges a
+    gateway (region-only) scope. Groups + hierarchy from RDUSERGROUP (replaces
+    build_group_hierarchy.py); memberships from RDUSER2GROUP. Per-user grants
+    (RDBASEGRANT.GRANTEEID) attach to a synthetic 'user:<id>' group whose sole
+    member is that user. A grant scoped to a dropped (administrative) region is
+    skipped, never widened."""
+    known_users = {r["ID"] for r in read("RDUSER")}
 
-    role_cache: dict[str,str] = {}          # rolename -> role uuid
-    role_priv_rows = []
-    def role_uuid(name):
-        if name not in role_cache:
-            u = str(uuid.uuid4()); role_cache[name] = u
-            for (rt, vb) in ROLE_PRIVS.get(name, DEFAULT_PRIVS):
-                role_priv_rows.append((u, rt, vb))
-        return role_cache[name]
+    # --- real groups with hierarchy (RDUSERGROUP.PARENTID) ---
+    ug = list(read("RDUSERGROUP"))
+    ug_ids = {r["ID"] for r in ug}
+    gparent = {r["ID"]: (r.get("PARENTID") or "").strip() for r in ug}
+    def gpath(gid):
+        chain = [gid]; seen = {gid}; p = gparent.get(gid, "")
+        while p and p in ug_ids and p not in seen:
+            chain.append(p); seen.add(p); p = gparent.get(p, "")
+        return ".".join(reversed(chain))
+    grp_rows, parent_pairs = [], []
+    for r in ug:
+        gid = r["ID"]; u = group_map.get(gid)
+        grp_rows.append((u, "eu-west-2", (r["NAME"] or gid)[:120], gpath(gid), None))
+        pid = gparent.get(gid, "")
+        if pid in ug_ids and pid != gid:
+            parent_pairs.append((group_map.get(pid), u))
+    copy_rows(g, "principal_group (group_id,home_region,label,path,parent_id)", grp_rows, on_conflict="group_id")
+    with g.cursor() as c:   # parent_id in a 2nd pass (self-FK ordering)
+        c.executemany("UPDATE principal_group SET parent_id=%s WHERE group_id=%s", parent_pairs)
+    g.commit()
 
-    scope_cache: dict[tuple,str] = {}
+    # --- real memberships (RDUSER2GROUP) ---
+    seen_mem, member_rows = set(), []
+    for r in read("RDUSER2GROUP"):
+        gid, uid = r["GROUPID"], r["USERID"]
+        if gid not in ug_ids or uid not in known_users:
+            continue
+        key = (group_map.get(gid), user_map.get(uid))
+        if key in seen_mem: continue
+        seen_mem.add(key); member_rows.append(key)
+
+    # --- scope helpers (device + gateway) ---
+    scope_cache = {}
     scope_rows, constraint_rows, scope_device_rows = [], [], []
-    def scope_uuid(region_p, product_p, cust_u, site_u):
-        key = (region_p, product_p, cust_u, site_u)
+    def dev_scope(reg, prod, cust, site):
+        key = ("dev", reg, prod, cust, site)
         if key not in scope_cache:
             u = str(uuid.uuid4()); scope_cache[key] = u
             scope_rows.append((u, "device", "attribute", ""))
-            if region_p:  constraint_rows.append((u, "region_path", "subtree", "{"+region_p+"}"))
-            if product_p: constraint_rows.append((u, "product_path", "subtree", "{"+product_p+"}"))
-            if cust_u:    constraint_rows.append((u, "customer_id", "in", "{"+cust_u+"}"))
-            if site_u:    constraint_rows.append((u, "site_id", "in", "{"+site_u+"}"))
+            if reg:  constraint_rows.append((u, "region_path", "subtree", "{"+reg+"}"))
+            if prod: constraint_rows.append((u, "product_path", "subtree", "{"+prod+"}"))
+            if cust: constraint_rows.append((u, "customer_id", "in", "{"+cust+"}"))
+            if site: constraint_rows.append((u, "site_id", "in", "{"+site+"}"))
         return scope_cache[key]
-
-    def single_scope_uuid(device_u, label):
-        # A single_system scope naming exactly one device (shared across groups).
+    def dev_single(device_u):
         key = ("single", device_u)
         if key not in scope_cache:
             u = str(uuid.uuid4()); scope_cache[key] = u
-            scope_rows.append((u, "device", "single_system", label[:60]))
+            scope_rows.append((u, "device", "single_system", ""))
             scope_device_rows.append((u, device_u))
         return scope_cache[key]
+    def gw_scope(reg):
+        key = ("gw", reg)
+        if key not in scope_cache:
+            u = str(uuid.uuid4()); scope_cache[key] = u
+            scope_rows.append((u, "gateway", "attribute", ""))
+            if reg: constraint_rows.append((u, "region_path", "subtree", "{"+reg+"}"))
+        return scope_cache[key]
 
-    group_rows, seen_groups = [], set()
-    def group_uuid(gid, gname):
-        u = group_map.get(gid if gid not in ("0","") else "u"+gname)
-        if u not in seen_groups:
-            seen_groups.add(u)
-            label = gname or "grantee"
-            group_rows.append((u, "eu-west-2", label[:120], "g"+u.replace("-","")[:30], None))
+    # --- synthetic per-grantee-user groups (lazy) ---
+    syn_group_rows, seen_syn = [], set()
+    def user_group(uid):
+        u = group_map.get("U"+uid)
+        if u not in seen_syn:
+            seen_syn.add(u)
+            syn_group_rows.append((u, "eu-west-2", ("user:"+uid)[:120], "u"+u.replace("-","")[:30], None))
+            member_rows.append((u, user_map.get(uid)))
         return u
 
     grant_rows, seen_grants = [], set()
-    member_rows, seen_members = [], set()
-    n = kept = skipped_admin = 0
-    for r in read("RDGRANTVIEWV1"):
+    stats = {"device": 0, "gateway": 0, "skipped": 0, "norole": 0}
+
+    def decode(r):
+        reg  = region_path.get(r["ATTR1VALUE"]) if r["ATTR1OBJREF"] == "1120" and r["ATTR1VALUE"] not in ("0","1","") else None
+        prod = product_path.get(r["ATTR2VALUE"]) if r["ATTR2OBJREF"] == "5110" and r["ATTR2VALUE"] not in ("0","1","") else None
+        a3r, a3v = r["ATTR3OBJREF"], r["ATTR3VALUE"]
+        cust = customer_map.get("C"+a3v) if a3r == "5210" and a3v not in ("0","1","") and customer_map.has("C"+a3v) else None
+        site = site_map.get(a3v) if a3r == "5220" and a3v not in ("0","1","") and a3v in site_customer else None
+        idv = r["IDVALUE"]
+        dev = device_map.get(idv) if r["IDOBJREF"] == "6010" and idv not in ("0","1","") and device_map.has(idv) else None
+        return reg, prod, cust, site, dev
+
+    def add_grant(group_u, r):
+        roleid = r["ROLEID"]
+        types = role_types.get(roleid)
+        if types is None:
+            stats["norole"] += 1; return
+        # region scoped to a dropped (administrative) region -> skip, don't widen
+        if r["ATTR1OBJREF"] == "1120":
+            rv = r["ATTR1VALUE"]
+            if rv not in ("0","1","") and region_path.get(rv) is None:
+                stats["skipped"] += 1; return
+        # scope to a dropped SYNTHETIC customer/site -> skip (don't widen)
+        a3r, a3v = r["ATTR3OBJREF"], r["ATTR3VALUE"]
+        if a3v not in ("0", "1", "") and (
+                (a3r == "5210" and a3v in excluded_customer_src)
+                or (a3r == "5220" and a3v in excluded_site_src)):
+            stats["skipped"] += 1; return
+        reg, prod, cust, site, dev = decode(r)
+        rl = role_map.get(roleid)
+        made = False
+        if "device" in types:
+            sc = dev_single(dev) if dev is not None else dev_scope(reg, prod, cust, site)
+            key = (group_u, rl, sc)
+            if key not in seen_grants:
+                seen_grants.add(key); grant_rows.append((str(uuid.uuid4()), group_u, rl, sc)); stats["device"] += 1
+            made = True
+        if "gateway" in types:
+            sc = gw_scope(reg)
+            key = (group_u, rl, sc)
+            if key not in seen_grants:
+                seen_grants.add(key); grant_rows.append((str(uuid.uuid4()), group_u, rl, sc)); stats["gateway"] += 1
+            made = True
+        if not made:
+            stats["skipped"] += 1
+
+    def flush():
+        if syn_group_rows:
+            copy_rows(g, "principal_group (group_id,home_region,label,path,parent_id)", syn_group_rows, on_conflict="group_id"); syn_group_rows.clear()
+        if scope_rows:
+            copy_rows(g, "authz_scope (id,resource_type,kind,label)", scope_rows, on_conflict="id"); scope_rows.clear()
+        if constraint_rows:
+            copy_rows(g, "authz_scope_constraint (scope_id,dimension,op,values)", constraint_rows); constraint_rows.clear()
+        if scope_device_rows:
+            copy_rows(g, "authz_scope_device (scope_id,device_id)", scope_device_rows, on_conflict="scope_id,device_id"); scope_device_rows.clear()
+        if grant_rows:
+            copy_rows(g, "authz_grant (id,group_id,role_id,scope_id)", grant_rows, on_conflict="id"); grant_rows.clear()
+
+    n = 0
+    for r in read("RDBASEGRANT"):
         n += 1
         if limit and n > limit: break
-        if r["DOMAINNAME"]:                         # GRANTTYPE 3275 domain grants -> skip
-            continue
-        # Grants scoped to an administrative region (REGIONTYPE=1) authorize
-        # nothing in our model: 0 devices live there, so the scope matches the
-        # empty set today. Drop the WHOLE grant row -- never just null the region
-        # dimension, which would widen it from "matches nothing" to a product/
-        # customer/site wildcard. Effective authorization is unchanged.
-        if r["REGIONID"] in admin_region_ids:
-            skipped_admin += 1
-            continue
-        gid = r["GROUPID"]
-        grp = group_uuid(gid, r["GROUPNAME"] or ("user:"+r["GRANTEEID"]))
-        # membership: grantee user -> group
-        gu = user_map.get(r["GRANTEEID"]) if r["GRANTEEID"] not in ("0","") else None
-        if gu and (grp, gu) not in seen_members:
-            seen_members.add((grp, gu)); member_rows.append((grp, gu))
-        # scope from region/product/customer/site (ANY / 0 / 1 = wildcard)
-        region_p  = region_path.get(r["REGIONID"]) if r["REGIONID"] not in ("0","") else None
-        product_p = product_path.get(r["PRODUCTID"]) if r["PRODUCTNAME"] not in ("ANY","","") and r["PRODUCTID"] not in ("0","1","") else None
-        cust_u = customer_map.get("C"+r["CUSTOMERID"]) if r["CUSTOMERID"] not in ("0","1","") else None
-        site_u = site_map.get(r["SITEID"]) if r["SITEID"] not in ("0","1","") else None
-        if any((region_p, product_p, cust_u, site_u)):
-            sc = scope_uuid(region_p, product_p, cust_u, site_u)
-        else:
-            # Single-system (per-device) grant: the item is a device serial in
-            # FUNCTIONALLOCATION. Resolve IDENTIFIER1 -> device -> single_system.
-            fl = (r["FUNCTIONALLOCATION"] or "").strip()
-            sysid = ident1_to_sysid.get(fl) if fl and fl != "-" else None
-            if not sysid or not device_map.has(sysid):
-                continue                             # unknown/absent device -> skip
-            sc = single_scope_uuid(device_map.get(sysid), fl)
-        rl = role_uuid(r["ROLENAME"] or "User")
-        key = (grp, rl, sc)
-        if key in seen_grants:
-            continue
-        seen_grants.add(key)
-        grant_rows.append((str(uuid.uuid4()), grp, rl, sc)); kept += 1
+        gid = r["GRANTEEID"]
+        if gid not in known_users:
+            stats["norole"] += 1; continue
+        add_grant(user_group(gid), r)
         if len(grant_rows) >= 20000:
-            _flush_grants(g, group_rows, role_cache, role_priv_rows, scope_rows,
-                          constraint_rows, scope_device_rows, grant_rows)
-            group_rows.clear(); role_priv_rows.clear(); scope_rows.clear()
-            constraint_rows.clear(); scope_device_rows.clear(); grant_rows.clear()
-    _flush_grants(g, group_rows, role_cache, role_priv_rows, scope_rows,
-                  constraint_rows, scope_device_rows, grant_rows)
-    # memberships -> LOCAL plane
+            flush()
+    for r in read("RDGROUPGRANT"):
+        gid = r["GROUPID"]
+        if gid in ug_ids:
+            grp = group_map.get(gid)
+        elif gid in known_users:
+            grp = user_group(gid)
+        else:
+            stats["norole"] += 1; continue
+        add_grant(grp, r)
+        if len(grant_rows) >= 20000:
+            flush()
+    flush()
     copy_rows(l, "group_membership (group_id,user_id)", member_rows, on_conflict="group_id,user_id")
-    singles = sum(1 for k in scope_cache if isinstance(k, tuple) and len(k) == 2 and k[0] == "single")
-    print(f"  grants: scanned {n}, kept {kept}, skipped {skipped_admin} administrative-region, "
-          f"groups {len(seen_groups)}, "
-          f"scopes {len(scope_cache)} (single-system {singles}), roles {len(role_cache)}, members {len(member_rows)}")
-
-
-def _flush_grants(g, group_rows, role_cache, role_priv_rows, scope_rows, constraint_rows, scope_device_rows, grant_rows):
-    if group_rows:
-        copy_rows(g, "principal_group (group_id,home_region,label,path,parent_id)", group_rows, on_conflict="group_id")
-    if role_cache:
-        copy_rows(g, "authz_role (id,key,name)",
-                  [(u, name[:60]+"-"+u[:8], name[:120]) for name, u in role_cache.items()],
-                  on_conflict="id")
-    if role_priv_rows:
-        # resolve (resource_type,verb) -> privilege id at insert time
-        with g.cursor() as c:
-            c.executemany(
-                "INSERT INTO authz_role_privilege(role_id,privilege_id) "
-                "SELECT %s, id FROM authz_privilege WHERE resource_type=%s AND verb=%s "
-                "ON CONFLICT DO NOTHING", role_priv_rows)
-    if scope_rows:
-        copy_rows(g, "authz_scope (id,resource_type,kind,label)", scope_rows, on_conflict="id")
-    if constraint_rows:
-        copy_rows(g, "authz_scope_constraint (scope_id,dimension,op,values)", constraint_rows)
-    if scope_device_rows:
-        copy_rows(g, "authz_scope_device (scope_id,device_id)", scope_device_rows,
-                  on_conflict="scope_id,device_id")
-    if grant_rows:
-        copy_rows(g, "authz_grant (id,group_id,role_id,scope_id)", grant_rows, on_conflict="id")
+    print(f"  grants: device {stats['device']}, gateway {stats['gateway']}, "
+          f"skipped {stats['skipped']}, no-role/unknown-grantee {stats['norole']}; "
+          f"groups {len(ug_ids)} real + {len(seen_syn)} synthetic, members {len(member_rows)}, "
+          f"scopes {len(scope_cache)}")
 
 
 # =============================================================================
@@ -811,11 +1331,14 @@ def main():
     if a.stage in ("all", "reference", "devices", "grants"):
         print("reference:")
         stage_reference(g, emit=True)
+        print("customers:"); stage_customers(g)
     if a.stage in ("all","devices"):
         print("devices:");   stage_devices(g, a.limit)
+        print("apps:");      stage_apps(g)
     if a.stage in ("all","users"):
         print("users:");     stage_users(l, a.limit)
     if a.stage in ("all","grants"):
+        print("roles:");     stage_roles(g)
         print("grants:");    stage_grants(g, l, a.limit)
     if a.stage in ("all","reference","families"):
         print("families:"); stage_families(g)

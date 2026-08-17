@@ -115,6 +115,19 @@ export async function can(
 	return row?.ok ?? false;
 }
 
+/** Step 2 (GLOBAL): point check for a single gateway (region-scoped). */
+export async function canGateway(
+	groupIds: string[],
+	verb: string,
+	gatewayId: string,
+): Promise<boolean> {
+	if (groupIds.length === 0) return false;
+	const [row] = await globalDb<{ ok: boolean }[]>`
+		SELECT authz_can_gateway(${groupIds}::uuid[], ${verb}, ${gatewayId}) AS ok
+	`;
+	return row?.ok ?? false;
+}
+
 /**
  * Feature-entitlement check for a portal service FUNCTION, identified by its
  * stable catalog key (e.g. 'screen_recording'). Orthogonal to the device scope:

@@ -100,6 +100,19 @@ def fake_serial(length: int = 6) -> str:
     return fake.unique.numerify("#" * length)
 
 
+def fake_service_key(real: str) -> str:
+    """Shape-preserving fake for a service key (a CREDENTIAL, never emitted raw
+    while seeding). Two real shapes exist: a short ~20-char uppercase HEX key and
+    a long ~335-char DASHED alphanumeric key (groups of 5). The fake mirrors the
+    real shape (dash structure + total length) so UI/tunnel behaviour matches."""
+    v = (real or "").strip()
+    if "-" in v:
+        return "-".join(
+            fake.bothify("?" * len(g), letters="ABCDEFGHJKLMNPQRSTUVWXYZ23456789")
+            for g in v.split("-"))
+    return fake.hexify("^" * len(v), upper=True)
+
+
 # Factories for LabelMap generators.
 def hospital_generator():
     return lambda: f"{fake.city()} Hospital"
@@ -162,6 +175,11 @@ def orderno_generator():
 def contact_generator():
     # CONTACT is PII (name + phone). Replace wholesale with a fake person + phone.
     return lambda: f"{fake.first_name()} {fake.last_name()} {fake.phone_number()}"
+
+
+def phone_generator():
+    # PHONE / MOBILEPHONE are PII -> fake international-looking number.
+    return lambda: fake.numerify("+## ### ########")
 
 
 def email_generator():

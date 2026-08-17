@@ -82,7 +82,7 @@ export const actions: Actions = {
 		const role_id = String(d.get('role_id') ?? '');
 		const resource_type = String(d.get('resource_type') ?? 'device');
 		if (!group_id || !role_id) return fail(400, { error: 'Group and role required.' });
-		if (!['device', 'group', 'service'].includes(resource_type)) return fail(400, { error: 'Unsupported resource type.' });
+		if (!['device', 'gateway', 'group', 'service'].includes(resource_type)) return fail(400, { error: 'Unsupported resource type.' });
 
 		const regions = d.getAll('region').map(String).filter(Boolean);
 		const products = d.getAll('product').map(String).filter(Boolean);
@@ -103,6 +103,9 @@ export const actions: Actions = {
 					for (const customer of orAny(customers))
 						for (const site of orAny(sites))
 							combos.push({ region, product, customer, site });
+		} else if (resource_type === 'gateway') {
+			// Gateways are authorized by region only (region-subtree or ANY).
+			for (const region of orAny(regions)) combos.push({ region });
 		} else if (resource_type === 'service') {
 			for (const service of orAny(servicePaths)) combos.push({ service });
 		} else {

@@ -55,6 +55,14 @@ CREATE TABLE IF NOT EXISTS login_account (
     email         text UNIQUE NOT NULL,
     password_hash text,                        -- scrypt$...; null once IdP owns auth
     display_name  text,
+    -- Human PII imported from RDUSER / RDUSERPROPERTY (Slice H). Lives on the
+    -- ACCOUNT (the person), not the app_user persona.
+    phone           text,
+    mobile          text,
+    company         text,                      -- external contractor company (else NULL)
+    account_state   text,                      -- 'active' | 'expired' | 'disabled'
+    user_type       text,                      -- GAMA user type (e.g. 'SRS User')
+    account_expires text,                      -- account validity end (as imported)
     created_at    timestamptz NOT NULL DEFAULT now(),
     updated_at    timestamptz NOT NULL DEFAULT now()
 );

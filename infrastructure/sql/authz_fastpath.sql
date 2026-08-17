@@ -202,4 +202,67 @@ $$;
 ALTER FUNCTION authz_visible_device_ids(uuid[], text) SET work_mem = '128MB';
 ALTER FUNCTION authz_list_devices(uuid[], text, timestamptz, uuid, integer) SET work_mem = '128MB';
 
+-- ---------------------------------------------------------------------------
+-- GATEWAY authorization (mirrors the device fast path; region-subtree only).
+-- Gateways have no product/customer/site/single_system/access_requirement, so
+-- the visible set is region-subtree scopes UNION the full-wildcard scope.
+-- Full detail + the region_path backfill live in migrate_gateway_authz.sql.
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION authz_visible_gateway_ids(
+    p_group_ids uuid[], p_verb text
+) RETURNS TABLE(id uuid)
+LANGUAGE sql STABLE AS $$
+    WITH es AS (
+        SELECT * FROM authz_effective_scope_rows(p_group_ids, 'gateway', p_verb)
+    ),
+    ro AS (SELECT array_agg(region_path) AS a FROM es
+            WHERE kind='attribute' AND region_path IS NOT NULL
+              AND product_path IS NULL AND customer_id IS NULL AND site_id IS NULL)
+    SELECT g.id FROM gateway g, ro
+     WHERE ro.a IS NOT NULL AND g.region_path IS NOT NULL
+       AND g.region_path <@ ANY(ro.a)
+    UNION
+    SELECT g.id FROM gateway g
+     WHERE EXISTS (SELECT 1 FROM es WHERE kind='attribute'
+                   AND region_path IS NULL AND product_path IS NULL
+                   AND customer_id IS NULL AND site_id IS NULL);
+$$;
+
+CREATE OR REPLACE FUNCTION authz_list_gateways(
+    p_group_ids uuid[], p_verb text,
+    p_after_id  uuid DEFAULT NULL, p_limit int DEFAULT 50
+) RETURNS SETOF gateway
+LANGUAGE sql STABLE AS $$
+    SELECT g.*
+    FROM gateway g
+    JOIN authz_visible_gateway_ids(p_group_ids, p_verb) v ON v.id = g.id
+    WHERE (p_after_id IS NULL OR g.id > p_after_id)
+    ORDER BY g.id
+    LIMIT p_limit;
+$$;
+
+CREATE OR REPLACE FUNCTION authz_can_gateway(
+    p_group_ids uuid[], p_verb text, p_gateway_id uuid
+) RETURNS boolean
+LANGUAGE plpgsql STABLE AS $$
+DECLARE
+    gw gateway%ROWTYPE;
+    ok boolean;
+BEGIN
+    SELECT * INTO gw FROM gateway WHERE id = p_gateway_id;
+    IF NOT FOUND THEN
+        RETURN false;
+    END IF;
+    SELECT EXISTS (
+        SELECT 1
+        FROM authz_effective_scope_rows(p_group_ids, 'gateway', p_verb) es
+        WHERE es.kind = 'attribute'
+          AND es.product_path IS NULL AND es.customer_id IS NULL AND es.site_id IS NULL
+          AND (es.region_path IS NULL
+               OR (gw.region_path IS NOT NULL AND gw.region_path <@ es.region_path))
+    ) INTO ok;
+    RETURN ok;
+END;
+$$;
+
 COMMIT;

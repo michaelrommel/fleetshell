@@ -24,7 +24,7 @@
 
 	// Add-grant form state.
 	let roleId = $state('');
-	let resourceType = $state<'device' | 'group' | 'service'>('device');
+	let resourceType = $state<'device' | 'gateway' | 'group' | 'service'>('device');
 	let regions = $state<Chip[]>([]);
 	let products = $state<Chip[]>([]);
 	let customers = $state<Chip[]>([]);
@@ -59,6 +59,8 @@
 									<span class="kind">system</span> {g.single_label}
 								{:else if g.resource_type === 'group'}
 									<span class="kind">group</span> {g.group_scope}
+								{:else if g.resource_type === 'gateway'}
+									<span class="kind">gateway</span> {g.region}
 								{:else if g.resource_type === 'service'}
 									<span class="kind">service</span> {g.service_scope}
 								{:else}
@@ -88,6 +90,7 @@
 					<div class="modes">
 						<span class="plabel">Applies to</span>
 						<label class="radio"><input type="radio" name="resource_type" value="device" bind:group={resourceType} /> Devices</label>
+						<label class="radio"><input type="radio" name="resource_type" value="gateway" bind:group={resourceType} /> Gateways</label>
 						<label class="radio"><input type="radio" name="resource_type" value="group" bind:group={resourceType} /> Groups</label>
 						<label class="radio"><input type="radio" name="resource_type" value="service" bind:group={resourceType} /> Services</label>
 					</div>
@@ -108,6 +111,11 @@
 						{#each customers as c (c.key)}<input type="hidden" name="customer" value={c.key} />{/each}
 						{#each sites as s (s.key)}<input type="hidden" name="site" value={s.key} />{/each}
 						<p class="hint">Empty dimension = ANY. Multiple picks create one grant per combination (e.g. 2 regions x 2 products = 4 grants). An attribute scope reaches only open devices unless it names a customer/site.</p>
+					{:else if resourceType === 'gateway'}
+						<ScopePicker label="Region (subtree)" endpoint="/api/administration/regions"
+							toItem={(r) => ({ key: r.path, label: r.iso ? `${r.name} (${r.iso})` : r.name })} bind:selected={regions} />
+						{#each regions as r (r.key)}<input type="hidden" name="region" value={r.key} />{/each}
+						<p class="hint">Empty = ALL gateways. Each picked region becomes its own grant, covering that region and every country/state beneath it. Gateways are authorized by region only.</p>
 					{:else if resourceType === 'service'}
 						<ScopePicker label="Services (subtree)" endpoint="/api/administration/services"
 							toItem={(s) => ({ key: s.path, label: s.parent_name ? `${s.parent_name} / ${s.name}` : s.name })} bind:selected={services} />

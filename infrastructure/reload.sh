@@ -29,11 +29,14 @@ psql "$GLOBAL_WRITER_URL" -f sql/migrate_customer_site.sql
 psql "$GLOBAL_WRITER_URL" -f sql/migrate_file_subscriptions.sql
 psql "$GLOBAL_WRITER_URL" -f sql/migrate_infoproxy.sql
 psql "$GLOBAL_WRITER_URL" -f sql/migrate_device_gateway_spool.sql
+psql "$GLOBAL_WRITER_URL" -f sql/migrate_device_service_key.sql
+psql "$GLOBAL_WRITER_URL" -f sql/migrate_device_app.sql
 psql "$GLOBAL_WRITER_URL" -f sql/migrate_authz_catalog.sql
 psql "$GLOBAL_WRITER_URL" -f sql/migrate_services_authz.sql
 
 step "Local schema migrations"
 psql "$LOCAL_WRITER_URL"  -f sql/migrate_user_country.sql
+psql "$LOCAL_WRITER_URL"  -f sql/migrate_user_pii.sql
 
 step "Truncate global + local data"
 psql "$GLOBAL_WRITER_URL" -c "TRUNCATE region, product, gateway, device, customer, customer_site, principal_group, authz_role, authz_scope, authz_grant, dtm_matrix CASCADE;"
@@ -52,8 +55,16 @@ psql "$GLOBAL_WRITER_URL" -c "INSERT INTO customer_site_member_static (site_id, 
 # site but a null customer_id) so the customer list can count by customer_id.
 psql "$GLOBAL_WRITER_URL" -c "UPDATE device d SET customer_id = s.customer_id FROM customer_site s WHERE d.site_id = s.id AND d.customer_id IS DISTINCT FROM s.customer_id;"
 
-step "Materialize group hierarchy"
-python build_group_hierarchy.py && python build_group_hierarchy.py --apply
+step "Gateway authz: region_path backfill + visible/list/can functions"
+# Needs gateway + region populated (backfills gateway.region_path by name), so
+# it runs AFTER the import. Idempotent. (cwd is import/ here -> ../sql.)
+psql "$GLOBAL_WRITER_URL" -f ../sql/migrate_gateway_authz.sql
+
+step "Group hierarchy"
+# Groups + their parent/path hierarchy + memberships now come straight from the
+# normalized RDUSERGROUP/RDUSER2GROUP tables inside load.py stage_grants (Slice
+# C), so build_group_hierarchy.py + groups.txt are obsolete. Nothing to do here.
+echo "  (imported from RDUSERGROUP by load.py -- build_group_hierarchy.py retired)"
 
 step "Import file subscriptions (servers + subscriptions + attach matrix)"
 # Re-resolves modality/product FKs by NAME; a `product` TRUNCATE CASCADE above
@@ -74,4 +85,26 @@ python seed_test_users.py
 node seed_login_accounts.mjs | psql "$LOCAL_WRITER_URL"
 
 cd ..
+
+step "Flush portal authz cache (Valkey)"
+# A full reload mints fresh group/scope UUIDs, so every portal L0/L1 cache entry
+# is now stale (esp. authz:groups:<userId>, which survives a gen bump because it
+# is per-user, not per-generation). Drop the authz cache keys so the portal
+# re-resolves against the new data. Scoped delete (NOT flushdb) so the Valkey
+# spool keys (systems:by-ip, fleetipsec, dtm, data_classes, ftp_subscriptions,
+# infoproxy) are left intact. Best-effort: never fail the reload on this.
+VALKEY_URL="${VALKEY_URL:-rediss://localhost:6380}"
+if command -v redis-cli >/dev/null 2>&1; then
+  VPORT="$(printf '%s' "$VALKEY_URL" | sed -E 's#.*:([0-9]+).*#\1#')"; VPORT="${VPORT:-6380}"
+  VTLS=""; case "$VALKEY_URL" in rediss://*) VTLS="--tls --insecure";; esac
+  for pat in 'authz:*' 'list:dev:*' 'list:gw:*' 'count:dev:*' 'count:gw:*'; do
+    # SCAN + DEL in one pipe; quote the pattern; ignore errors.
+    redis-cli $VTLS -p "$VPORT" --scan --pattern "$pat" 2>/dev/null \
+      | xargs -r redis-cli $VTLS -p "$VPORT" DEL >/dev/null 2>&1 || true
+  done
+  echo "  flushed authz:* / list:* / count:* (spool keys preserved)"
+else
+  echo "  redis-cli not found -- flush skipped; restart the portal or wait out the TTL"
+fi
+
 step "Reload complete"

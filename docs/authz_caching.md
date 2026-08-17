@@ -142,6 +142,9 @@ speed-up. Toggle the whole thing off with `AUTHZ_CACHE=false` (A/B testing).
 - L1 result pages / counts (keyed by the signature), TTL 45s:
   - devices page load (scope mode): `list:dev:{g}:{sig}:{hash(q)}:{cursor}`.
   - `deviceQuery.countDevices`: `count:dev:{g}:{sig|all}:{hash(q)}`.
+  - gateways page load (scope mode): `list:gw:{g}:{sig}:{hash(q)}:{cursor}` +
+    `count:gw:{g}:{sig}:{hash(q)}`. Gateway visibility is region-subtree only
+    (`authz_visible_gateway_ids`); the signature uses `scopeSignature(.., 'gateway')`.
 
 **Generation `g`.** One counter `authz:gen` (INCR = logical flush) is embedded in
 every signature/page/count key. Grant, role-privilege, and group-delete mutations

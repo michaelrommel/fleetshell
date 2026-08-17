@@ -1,0 +1,35 @@
+{
+  "family": "fleetshell-proxy",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "512",
+  "memory": "1024",
+  "executionRoleArn": "arn:aws:iam::295934382486:role/ecsTaskExecutionRole",
+  "taskRoleArn": "arn:aws:iam::295934382486:role/ecsTaskExecutionRoleWithSSM",
+  "runtimePlatform": { "cpuArchitecture": "X86_64", "operatingSystemFamily": "LINUX" },
+  "containerDefinitions": [
+    {
+      "name": "fleetshell-proxy",
+      "image": "295934382486.dkr.ecr.eu-west-2.amazonaws.com/fleetshell/fleetshell-proxy:latest",
+      "essential": true,
+      "portMappings": [
+        { "containerPort": 8080, "hostPort": 8080, "protocol": "tcp", "name": "proxy-8080-tcp" }
+      ],
+      "environment": [
+        { "name": "PROXY_TYPE",      "value": "internet" },
+        { "name": "HELPER_CHILDREN", "value": "40" },
+        { "name": "AWS_REGION",      "value": "eu-west-2" },
+        { "name": "VALKEY_URL",      "value": "rediss://clustercfg.dev-valkey-aeroftp.ak121m.memorydb.eu-west-2.amazonaws.com:6379" }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/fleetshell-proxy",
+          "awslogs-create-group": "true",
+          "awslogs-region": "eu-west-2",
+          "awslogs-stream-prefix": "ecs"
+        }
+      }
+    }
+  ]
+}

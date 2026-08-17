@@ -3,6 +3,8 @@ import { fail, error, redirect } from '@sveltejs/kit';
 import { base } from '$app/paths';
 import { globalDb } from '$lib/server/db';
 import { getPersona } from '$lib/server/identity';
+import { resolveGroupIds, scopeSignature } from '$lib/server/authz';
+import { cacheGet, cacheSet, hashKey, authzGen, l1Ttl } from '$lib/server/cache';
 import { spoolGatewayOnSave, deleteGatewayKeys } from '$lib/server/gateway_spool';
 
 const PAGE_SIZE = 50;
@@ -54,6 +56,8 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 	const isAdmin = persona?.is_admin ?? false;
 
 	const q = (url.searchParams.get('q') ?? '').trim();
+	// Non-admins are always scope-limited; admins default to scope with a toggle.
+	const mode = isAdmin && url.searchParams.get('mode') === 'all' ? 'all' : 'scope';
 	const sel = url.searchParams.get('sel');
 	const isNew = isAdmin && url.searchParams.get('new') === '1';
 	const page = Math.max(1, Number(url.searchParams.get('page') ?? '1') || 1);
@@ -68,20 +72,64 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 	if (before) { cursorFrag = globalDb`AND g.id < ${before}`; order = globalDb`g.id DESC`; reverse = true; }
 	else if (after) { cursorFrag = globalDb`AND g.id > ${after}`; }
 
-	// Gateways are ~20k with no authz materialization, so the count is cheap:
-	// compute it inline (parallel with the page query).
-	const [fetchedRaw, cnt] = await Promise.all([
-		globalDb<ListRow[]>`
-			SELECT g.id::text AS id, g.name, g.hospital, g.city, g.region, g.gateway_model,
-			       g.connection_type, g.operational_state, g.public_ip,
-			       (SELECT count(*) FROM device d WHERE d.gateway_id = g.id)::int AS device_count
-			FROM gateway g
-			WHERE ${where} ${cursorFrag}
-			ORDER BY ${order}
-			LIMIT ${PAGE_SIZE + 1}`,
-		globalDb<{ total: number }[]>`SELECT count(*)::int AS total FROM gateway g WHERE ${where}`,
-	]);
-	const total = cnt[0].total;
+	// 'scope' joins the visible-gateway set (authz_visible_gateway_ids, region
+	// subtree). 'all' (admin toggle) reads the table directly. Non-admins with no
+	// gateway grant see an empty list -- the correct enforced default.
+	let groupIds: string[] = [];
+	let sig = 'all';
+	let scopeJoin = globalDb``;
+	if (mode === 'scope') {
+		groupIds = await resolveGroupIds(locals.userId);
+		sig = await scopeSignature(groupIds, 'view', 'gateway');
+		scopeJoin = globalDb`JOIN authz_visible_gateway_ids(${groupIds}::uuid[], 'view') v ON v.id = g.id`;
+	}
+
+	const tList = performance.now();
+	let listMs = 0;
+	let countMs = 0;
+	let listCached = false;
+	let countCached = false;
+	let fetchedRaw: ListRow[];
+	let total: number;
+
+	if (mode === 'scope' && groupIds.length === 0) {
+		fetchedRaw = [];
+		total = 0;
+	} else {
+		const g = await authzGen();
+		const cur = before ? `b:${before}` : after ? `a:${after}` : 'first';
+		const listKey = `list:gw:${g}:${sig}:${hashKey(q)}:${cur}`;
+		const countKey = `count:gw:${g}:${sig}:${hashKey(q)}`;
+		const cachedList = mode === 'scope' ? await cacheGet<ListRow[]>(listKey) : undefined;
+		const cachedCount = mode === 'scope' ? await cacheGet<number>(countKey) : undefined;
+
+		const listP: Promise<ListRow[]> = cachedList !== undefined
+			? Promise.resolve(cachedList).then((r) => { listCached = true; listMs = Math.round(performance.now() - tList); return r; })
+			: globalDb<ListRow[]>`
+				SELECT g.id::text AS id, g.name, g.hospital, g.city, g.region, g.gateway_model,
+				       g.connection_type, g.operational_state, g.public_ip,
+				       (SELECT count(*) FROM device d WHERE d.gateway_id = g.id)::int AS device_count
+				FROM gateway g ${scopeJoin}
+				WHERE ${where} ${cursorFrag}
+				ORDER BY ${order}
+				LIMIT ${PAGE_SIZE + 1}`.then(async (r) => {
+					listMs = Math.round(performance.now() - tList);
+					if (mode === 'scope') await cacheSet(listKey, r, await l1Ttl());
+					return r;
+				});
+
+		const countP: Promise<number> = cachedCount !== undefined
+			? Promise.resolve(cachedCount).then((n) => { countCached = true; countMs = Math.round(performance.now() - tList); return n; })
+			: globalDb<{ total: number }[]>`SELECT count(*)::int AS total FROM gateway g ${scopeJoin} WHERE ${where}`
+				.then(async (rows) => {
+					countMs = Math.round(performance.now() - tList);
+					const n = rows[0].total;
+					if (mode === 'scope') await cacheSet(countKey, n, await l1Ttl());
+					return n;
+				});
+
+		[fetchedRaw, total] = await Promise.all([listP, countP]);
+	}
 
 	const extra = fetchedRaw.length > PAGE_SIZE;
 	let rows: ListRow[] = fetchedRaw.slice(0, PAGE_SIZE);
@@ -96,7 +144,9 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 	let detail: Record<string, unknown> | null = null;
 	let devices: { id: string; serial: string | null; model: string | null; hospital: string | null; city: string | null }[] = [];
 	let deviceTotal = 0;
+	let detailMs: number | null = null;
 	if (sel) {
+		const tDetail = performance.now();
 		[detail] = await globalDb<Record<string, unknown>[]>`
 			SELECT id::text AS id, hostname, region, hospital, name, city, gateway_model, connection_type,
 			       operational_state, static_ip, nat_type, admin_ip, admin_ip2, country,
@@ -111,13 +161,15 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 				WHERE d.gateway_id = ${sel}
 				ORDER BY d.serial NULLS LAST LIMIT ${DEVICE_PREVIEW}`;
 		}
+		detailMs = Math.round(performance.now() - tDetail);
 	}
 
 	return {
-		rows, total, q, isAdmin, page, from, to, hasPrev, hasNext,
+		rows, total, q, isAdmin, mode, page, from, to, hasPrev, hasNext,
 		prevCursor: rows.length ? rows[0].id : null,
 		nextCursor: rows.length ? rows[rows.length - 1].id : null,
 		sel, isNew, detail, devices, deviceTotal, devicePreview: DEVICE_PREVIEW,
+		listMs, countMs, detailMs, listCached, countCached,
 	};
 };
 

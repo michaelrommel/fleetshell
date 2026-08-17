@@ -26,6 +26,7 @@
 			? withParams({ after: data.nextCursor, before: null, page: String(data.page + 1) })
 			: withParams({ before: data.prevCursor, after: null, page: String(Math.max(1, data.page - 1)) });
 	}
+	function setMode(m: string) { return withParams({ mode: m, after: null, before: null, page: null, sel: null }); }
 	let searchInput: HTMLInputElement;
 	function doSearch() {
 		goto(withParams({ q: searchInput.value.trim() || null, after: null, before: null, page: null }), { keepFocus: true, noScroll: true });
@@ -44,7 +45,15 @@
 	{#snippet left()}
 		<div class="col-head">
 			<h2>Gateways <span class="count">{data.total.toLocaleString()}</span></h2>
-			{#if data.isAdmin}<a class="new-btn" href={newHref}>+ New</a>{/if}
+			<div class="head-actions">
+				{#if data.isAdmin}
+					<div class="modes">
+						<a class:active={data.mode === 'scope'} href={setMode('scope')}>My scope</a>
+						<a class:active={data.mode === 'all'} href={setMode('all')}>All gateways</a>
+					</div>
+					<a class="new-btn" href={newHref}>+ New</a>
+				{/if}
+			</div>
 		</div>
 
 		<form method="GET" action={`${base}/gateways`} class="searchbar" onsubmit={(e) => { e.preventDefault(); doSearch(); }}>
@@ -80,6 +89,10 @@
 		<div class="pager">
 			<a class="pg" class:disabled={!data.hasPrev} href={data.hasPrev ? pageLink('prev') : '#'}>‹ Prev</a>
 			<span class="range">{data.from}–{data.to} of {data.total.toLocaleString()}</span>
+			<span class="perf" title="query timings (• = served from cache)">
+				<span class:cached={data.listCached}>list {data.listMs}ms{#if data.listCached}•{/if}</span>
+				<span class:cached={data.countCached}>count {data.countMs}ms{#if data.countCached}•{/if}</span>
+			</span>
 			<a class="pg" class:disabled={!data.hasNext} href={data.hasNext ? pageLink('next') : '#'}>Next ›</a>
 		</div>
 	{/snippet}
@@ -118,6 +131,9 @@
 					{#if canEdit}
 						<div class="actions-bar">
 							<button type="button" class="act-delete" onclick={() => (confirmDelete = true)}>Delete gateway</button>
+							{#if data.detailMs !== null}
+								<span class="perf bar" title="detail query timing (loaded once; tab switches are client-side)">detail {data.detailMs}ms</span>
+							{/if}
 							<button type="submit" class="act-primary">Save gateway</button>
 						</div>
 					{/if}
@@ -214,6 +230,13 @@
 	.pg { color: var(--accent); text-decoration: none; font-size: 0.82rem; }
 	.pg.disabled { color: var(--text-subtle); pointer-events: none; }
 	.range { color: var(--text-subtle); font-size: 0.78rem; }
+	.perf { display: inline-flex; align-items: center; gap: 0.5rem; color: var(--text-subtle); font-size: 0.7rem; font-variant-numeric: tabular-nums; border: 1px solid var(--border); border-radius: 999px; padding: 0.15rem 0.6rem; }
+	.perf.bar { margin-right: auto; }
+	.perf .cached { color: var(--accent); }
+	.head-actions { display: flex; align-items: center; gap: 0.6rem; }
+	.modes { display: flex; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+	.modes a { padding: 0.25rem 0.6rem; font-size: 0.78rem; color: var(--text-muted); text-decoration: none; }
+	.modes a.active { background: var(--surface-active); color: var(--text); box-shadow: inset 0 -2px 0 var(--accent); }
 
 	.detail { padding: 0.9rem; }
 	.placeholder { padding: 2rem; text-align: center; color: var(--text-subtle); }

@@ -169,13 +169,18 @@ CREATE TABLE IF NOT EXISTS gateway (
     -- {access_server,sd_server,em_server}; real IPs live in ipsecnode.toml.
     backend_access_ip text,
     backend_sd_ip     text,
-    backend_em_ip     text
+    backend_em_ip     text,
+    -- Authorization dimension: the region this gateway lives in, as an id-based
+    -- ltree (mirrors device.region_path). Backfilled from `region` by name; see
+    -- migrate_gateway_authz.sql. NULL = matches no region-scoped grant.
+    region_path       ltree
 );
 CREATE INDEX IF NOT EXISTS ix_gateway_publicip_trgm ON gateway USING gin (public_ip gin_trgm_ops);
 CREATE INDEX IF NOT EXISTS ix_gateway_name_trgm     ON gateway USING gin (name gin_trgm_ops);
 CREATE INDEX IF NOT EXISTS ix_gateway_hospital_trgm ON gateway USING gin (hospital gin_trgm_ops);
 CREATE INDEX IF NOT EXISTS ix_gateway_city_trgm     ON gateway USING gin (city gin_trgm_ops);
 CREATE INDEX IF NOT EXISTS ix_gateway_adminip_trgm  ON gateway USING gin (admin_ip gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS ix_gateway_region_path  ON gateway USING gist (region_path);
 
 CREATE TABLE IF NOT EXISTS customer (
     id      uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -240,7 +245,8 @@ CREATE TABLE IF NOT EXISTS product_model_app (
     product_id  uuid NOT NULL REFERENCES product(id) ON DELETE CASCADE,  -- the model node
     name        text NOT NULL,
     application text NOT NULL
-                CHECK (application IN ('http','https','expert-i','rdp','vnc','ssh')),
+                CHECK (application IN ('http','https','expert-i','rdp','vnc','ssh',
+                                       'teamviewer','transparent','scp','sftp','ftp')),
     ports       text NOT NULL DEFAULT '',   -- '3389' or a range like '3000-3020'
     guac        boolean NOT NULL DEFAULT false,
     e2ecrypt    boolean NOT NULL DEFAULT false,
@@ -251,9 +257,47 @@ CREATE TABLE IF NOT EXISTS product_model_app (
     dpi         int  NOT NULL DEFAULT 96,
     drive       boolean NOT NULL DEFAULT false,
     record      boolean NOT NULL DEFAULT false,
-    sort_order  int  NOT NULL DEFAULT 0
+    sort_order  int  NOT NULL DEFAULT 0,
+    params      jsonb                        -- G-full: extra udp ports, teamviewer options
 );
 CREATE INDEX IF NOT EXISTS ix_product_model_app_product ON product_model_app(product_id);
+
+-- Per-device application override (Slice G). When a device has device_app rows
+-- they REPLACE the model's product_model_app defaults for that device. See
+-- migrate_device_app.sql for resolve_apps().
+CREATE TABLE IF NOT EXISTS device_app (
+    id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    device_id   uuid NOT NULL REFERENCES device(id) ON DELETE CASCADE,
+    name        text NOT NULL,
+    application text NOT NULL
+                CHECK (application IN ('http','https','expert-i','rdp','vnc','ssh',
+                                       'teamviewer','transparent','scp','sftp','ftp')),
+    ports       text NOT NULL DEFAULT '',
+    guac        boolean NOT NULL DEFAULT false,
+    e2ecrypt    boolean NOT NULL DEFAULT false,
+    sni         text NOT NULL DEFAULT '',
+    path        text NOT NULL DEFAULT '/',
+    width       int  NOT NULL DEFAULT 1920,
+    height      int  NOT NULL DEFAULT 1080,
+    dpi         int  NOT NULL DEFAULT 96,
+    drive       boolean NOT NULL DEFAULT false,
+    record      boolean NOT NULL DEFAULT false,
+    sort_order  int  NOT NULL DEFAULT 0,
+    params      jsonb
+);
+CREATE INDEX IF NOT EXISTS ix_device_app_device ON device_app(device_id);
+
+-- All of a device's service keys (Slice F). device.service_key* stays the
+-- resolved default (tunnel); this satellite backs the multi-key UI.
+CREATE TABLE IF NOT EXISTS device_service_key (
+    id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    device_id   uuid NOT NULL REFERENCES device(id) ON DELETE CASCADE,
+    service_key text NOT NULL,
+    level       text,
+    expires     text,
+    is_default  boolean NOT NULL DEFAULT false
+);
+CREATE INDEX IF NOT EXISTS ix_device_service_key_device ON device_service_key(device_id);
 
 -- The Services catalog (see migrate_services_authz.sql). Portal FUNCTIONS
 -- (Screen Recording, File Transfer, ...) as an ltree tree; grants scope over
@@ -449,6 +493,11 @@ CREATE TABLE IF NOT EXISTS device (
     internal_use       text CHECK (internal_use IN ('STD','NIU')),
     dpa                boolean NOT NULL DEFAULT false,
     dmy                boolean NOT NULL DEFAULT false,
+    -- Service key (credential) transmitted in the tunnel request; level + expiry
+    -- are non-secret metadata. Imported from RDSERVICEKEY (Slice F).
+    service_key         text,
+    service_key_level   text,
+    service_key_expires text,
     -- Tunnel Gateway NAME (JWT gw claim) now lives on the gateway
     -- (gateway.tunnel_gateway); a device resolves it via its IPsec gateway.
     -- See docs/valkey_spool.md.

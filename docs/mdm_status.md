@@ -305,6 +305,31 @@ authorization (no per-member execute/delegate re-check; the only surviving
   synthesized (public-looking) since the real ones lived in Valkey. Migrations:
   `migrate_gateway_enrich.sql`, `migrate_gateway_ipsec.sql`,
   `migrate_gateway_hostname.sql`.
+  **Gateway authorization is now ENFORCED** (mirrors devices): a new
+  `gateway.region_path ltree` (backfilled from the region catalog by name) is the
+  authz dimension; `authz_visible_gateway_ids` / `authz_list_gateways` /
+  `authz_can_gateway` (region-subtree + full-wildcard; no product/customer/site/
+  single_system/access_requirement) drive the list. The gateways page has the
+  device-style `My scope | All gateways` admin toggle + scope-signature L1
+  caching (`list:gw:*` / `count:gw:*`). Grants are authored via the Grants
+  builder's new **Gateways** resource type (region-only scope). Schema:
+  `migrate_gateway_authz.sql` (in `reload.sh` AFTER import, since the backfill
+  needs data; folded into `schema_global.sql` + `authz_fastpath.sql` for fresh
+  installs). NOTE: with enforcement live and no gateway grants yet, both admins
+  and non-admins see an empty scope list until a gateway grant exists -- admins
+  use the `All gateways` toggle. Open follow-up: gateway DETAIL is not point-gated
+  (mirrors devices; a `?sel=` outside scope still loads), and `region_path` is
+  name-matched (ambiguous names -> NULL -> reachable only via a wildcard grant).
+  **Legacy gateway grants now import correctly** (`load.py`): the router/gateway
+  maintainer roles `SRSConfiguration` (-> gateway CRUD), `RouterConfigFunc`,
+  `SRSOperation`, `router execute commands and view debug` (-> gateway view/edit)
+  now produce `resource_type='gateway'` region-subtree scopes instead of device
+  scopes (`GATEWAY_ROLES` + a role-aware branch in `stage_grants`; `SRS Manager`
+  stays a region/country-admin role). Spot-checked from `RDGRANTVIEWV1`: 45,949
+  legacy router grant rows -> ~2,125 distinct gateway grants across 15 grantee
+  groups (8 FL-only/region-ANY rows dropped). Takes effect on the next
+  `reload.sh` (TRUNCATE-and-reload); the live DB keeps the old device-typed rows
+  until then.
 - **Services** primary nav added (Infoproxy / E-Mail Relay / File Transfer) --
   placeholder page; the product-model page deep-links to
   `/services/infoproxy?product=<id>`.
