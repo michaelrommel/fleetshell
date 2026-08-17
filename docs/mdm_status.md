@@ -250,6 +250,45 @@ authorization (no per-member execute/delegate re-check; the only surviving
 
 ### Session recap (latest work, all in `fleetshell-portal` unless noted)
 
+- **Services catalog + Screen-Recording browser (BUILT)** -- the first cut of the
+  **service resource type** (feature entitlement) + the device **Recordings** tab.
+  - Schema `migrate_services_authz.sql` (folded into `schema_global.sql`; in
+    `reload.sh` after `migrate_authz_catalog.sql`). Fully ADDITIVE and idempotent
+    (new resource_type rows, new privileges, new `service` table + seed, new
+    CREATE-OR-REPLACE functions; touches nothing existing code reads -- safe to
+    apply to a DB a running older portal shares):
+    adds the `service` resource_type + CRUD verbs (no bespoke action verb), the `service` ltree
+    catalog table (`kind` root|category|service, stable `key` for seeded nodes),
+    and seeds the agreed tree (Global Services / Remote Access / Data Transfer /
+    Software Distribution -> functions incl. `screen_recording`). Resolution:
+    `authz_can_service(groups,verb,path)` (ltree subtree point-check, sibling of
+    `authz_can` for devices), `authz_can_service_key(groups,verb,key)`, and a
+    coarse `authz_has(groups,type,verb)` capability check.
+  - **Services > Service Catalog** is now the FIRST tab under Services
+    (`services/catalog/`, `ServiceTree.svelte` = a copy of `ProductTree`): a
+    Products-Tree-style browser/editor (add category/service, rename, delete with
+    child + grant-reference guards; shows grants scoped at/above a node).
+    `/services` now redirects here.
+  - **Grants builder** gained a third `Applies to` mode **Services** (subtree
+    `ScopePicker` over new `/api/administration/services`; constraint dimension
+    `service_path`, op `subtree`), and decodes service scopes in the grant list.
+  - **Device detail** gained a **Recordings** tab (next to Files), shown only
+    when the TWO-grant gate passes: `service:view` over `screen_recording`
+    AND `device:view` over that device (`recordingsAllowed()` in the loader;
+    re-enforced on every fetch in `api/devices/recordings`). The tab is a lazy S3
+    browser (device IP resolved server-side -> day -> session -> presigned ZIP).
+    Ported `s3.ts` from the old portal (+ `@aws-sdk/client-s3` /
+    `s3-request-presigner` pinned in `package.json`; needs `GUACD_S3_BUCKET`).
+  - Design decision (agreed): the Services tree is FEATURE ENTITLEMENT; the
+    device scope is REACH; a future data-class / PHI clearance layer (keyed to the
+    existing `data_class` catalog) is a separate orthogonal third gate, DEFERRED.
+  - TODO: the `service` writes in the catalog + grants are interim `is_admin`-
+    gated (replace with scoped `authz_can('service','edit'/'create')`); recording
+    PLAYBACK in-browser (`Guacamole.SessionRecording` over a presigned `.guac`);
+    the deferred PHI clearance gate.
+
+### Session recap (previous work, all in `fleetshell-portal` unless noted)
+
 - **Products** (`/products`): model tree + `AppEditor` for `product_model_app`
   (the app definitions a device inherits). App editor lets you add/remove any
   number of rows (no minimum); an app-less model shows an empty list.
@@ -493,6 +532,27 @@ See `docs/mdm_design.md` §5.1 — NULL-attribute = no match; graded
 `access_requirement` gating; region/product are ltree subtree scopes; grant
 inheritance is ancestor-or-self; grant-on-grant subset guard. These are
 correctness invariants; breaking them silently leaks authorization.
+
+### Authorization principle: `is_admin` is NOT god-mode
+
+Separate **administering the system** from **operating on the data**:
+
+- **Operational / sensitive functions** (device Recordings today; future
+  data-class / PHI access, `device:connect`, etc.) are gated on **real grants**
+  via `authz_can` / `authz_can_service`, and **deliberately ignore `is_admin`**.
+  A SystemAdmin/SuperUser sees NO recordings tab (and no PHI) unless a grant
+  confers it -- proven in practice: the tab correctly stayed hidden for an
+  is_admin persona that lacked `service:view`. **Do NOT "fix" a hidden
+  operational feature by making its gate honor `is_admin`** -- that reintroduces
+  god-mode and silently leaks access.
+- **Admin *section* management** (Products / Groups / Roles / Grants / catalog
+  writes) is still gated on the **interim `is_admin` flag** (scaffolding). Slice C
+  replaces this with scoped `authz_can(...)`. `is_admin` should shrink to a
+  **bootstrap capability** -- "may manage roles/grants/accounts" (so the first
+  grants can be assigned; avoids a chicken-and-egg lockout) -- and MUST NOT grow
+  back into implicit access to operational functions. Managing *who may view
+  recordings* is an admin act; *viewing a recording* (PHI) is an operational act
+  needing its own grant, even for the person who handed out the grants.
 
 ## Key facts
 

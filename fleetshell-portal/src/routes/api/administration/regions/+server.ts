@@ -9,10 +9,11 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 	const persona = await getPersona(locals.userId);
 	if (!persona?.is_admin) throw error(403, 'forbidden');
 	const q = (url.searchParams.get('q') ?? '').trim();
-	if (q.length < 2) return json({ items: [] });
 	const like = '%' + q + '%';
+	// Empty query = browse the top of the tree (lowest levels first).
+	const filter = q ? globalDb`AND name ILIKE ${like}` : globalDb``;
 	const items = await globalDb<{ path: string; name: string; iso: string | null; level: number }[]>`
 		SELECT path::text AS path, name, iso, level FROM region
-		WHERE name ILIKE ${like} ORDER BY level, name LIMIT 25`;
+		WHERE true ${filter} ORDER BY level, name LIMIT 25`;
 	return json({ items });
 };

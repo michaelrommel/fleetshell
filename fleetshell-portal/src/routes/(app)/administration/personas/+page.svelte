@@ -1,26 +1,23 @@
 <script lang="ts">
 	import { base } from '$app/paths';
+	import { tick } from 'svelte';
 	import { page as pageState } from '$app/state';
 	import { enhance } from '$app/forms';
 	import SplitPane from '$lib/components/SplitPane.svelte';
+	import ScopePicker from '$lib/components/ScopePicker.svelte';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 
 	let { data, form } = $props();
 	let confirmDelete = $state(false);
 
-	let groupQuery = $state('');
-	let groupResults = $state<{ group_id: string; label: string }[]>([]);
-	let searching = $state(false);
-
-	async function searchGroups() {
-		if (groupQuery.trim().length < 2) { groupResults = []; return; }
-		searching = true;
-		try {
-			const res = await fetch(`${base}/api/administration/groups?q=${encodeURIComponent(groupQuery.trim())}`);
-			groupResults = res.ok ? (await res.json()).groups : [];
-		} finally {
-			searching = false;
-		}
+	// Group-membership add: ScopePicker (action mode) hands the picked group to a
+	// hidden addMembership form, which persists it via use:enhance.
+	let pendingGroupId = $state('');
+	let addForm: HTMLFormElement;
+	async function addGroup(it: { key: string; label: string }) {
+		pendingGroupId = it.key;
+		await tick();               // flush the hidden input before submitting
+		addForm.requestSubmit();
 	}
 
 	// Build a URL preserving the current list state, overriding given params.
@@ -104,22 +101,18 @@
 				</ul>
 
 				<div class="add-member">
-					<input placeholder="Search group by label" bind:value={groupQuery} oninput={searchGroups} />
-					{#if searching}<span class="muted">...</span>{/if}
-					{#if groupResults.length}
-						<ul class="results">
-							{#each groupResults as g (g.group_id)}
-								<li>
-									<span>{g.label}</span>
-									<form method="POST" action="?/addMembership" use:enhance>
-										<input type="hidden" name="user_id" value={data.detail.user_id} />
-										<input type="hidden" name="group_id" value={g.group_id} />
-										<button type="submit" class="link-btn">Add</button>
-									</form>
-								</li>
-							{/each}
-						</ul>
-					{/if}
+					<ScopePicker
+						label="Add to group"
+						endpoint="/api/administration/groups"
+						resultsKey="groups"
+						placeholder="Search a group, or click to browse"
+						toItem={(g) => ({ key: g.group_id, label: g.label })}
+						excludeKeys={data.memberships.map((m) => m.group_id)}
+						onSelect={addGroup} />
+					<form bind:this={addForm} method="POST" action="?/addMembership" use:enhance class="hidden-form">
+						<input type="hidden" name="user_id" value={data.detail.user_id} />
+						<input type="hidden" name="group_id" value={pendingGroupId} />
+					</form>
 				</div>
 
 				<details class="grants-box">
@@ -235,6 +228,7 @@
 	.link-btn:hover { text-decoration: underline; }
 	.add-member { margin-top: 0.6rem; }
 	.add-member > input { width: 100%; }
+	.hidden-form { display: none; }
 	.results { list-style: none; padding: 0; margin: 0.4rem 0 0; display: flex; flex-direction: column; gap: 0.2rem; }
 	.results li { display: flex; align-items: center; justify-content: space-between; gap: 0.6rem; font-size: 0.82rem; }
 	.hint { color: var(--text-subtle); font-size: 0.78rem; margin: 0.4rem 0 0; }

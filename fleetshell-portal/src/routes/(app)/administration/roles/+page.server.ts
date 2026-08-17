@@ -5,7 +5,7 @@ import { globalDb } from '$lib/server/db';
 import { getPersona } from '$lib/server/identity';
 
 // Type rows (extensible) x fixed CRUD verbs (+ device:connect) = the matrix.
-const TYPES = ['device','gateway','product','customer','site','region','group','role','grant','account','persona'];
+const TYPES = ['device','gateway','product','customer','site','region','group','service','role','grant','account','persona'];
 const VERBS = ['create','view','edit','delete','connect'];
 
 async function requireAdmin(locals: App.Locals): Promise<void> {

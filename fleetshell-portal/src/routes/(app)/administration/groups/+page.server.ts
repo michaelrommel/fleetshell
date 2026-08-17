@@ -88,9 +88,27 @@ export const actions: Actions = {
 		await requireAdmin(locals);
 		const d = await request.formData();
 		const label = String(d.get('label') ?? '').trim();
-		const home_region = String(d.get('home_region') ?? 'eu-west-2').trim() || 'eu-west-2';
+		const parentId = String(d.get('parent_id') ?? '').trim();
 		if (!label) return fail(400, { error: 'Group label required.' });
-		// Flat group: single-segment ltree path from a fresh uuid (matches import).
+
+		// Sub-group: path = parent.path + a fresh opaque segment, parent_id set. The
+		// ltree path is what grant inheritance keys off (ancestor @> descendant), so
+		// appending under the parent makes the child inherit the parent's grants.
+		if (parentId) {
+			const [parent] = await globalDb<{ path: string; home_region: string }[]>`
+				SELECT path::text AS path, home_region FROM principal_group WHERE group_id = ${parentId}`;
+			if (!parent) return fail(404, { error: 'Parent group not found.' });
+			const [row] = await globalDb<{ group_id: string }[]>`
+				INSERT INTO principal_group (home_region, label, path, parent_id)
+				VALUES (${parent.home_region}, ${label},
+					(${parent.path + '.'} || 'g' || replace(gen_random_uuid()::text, '-', ''))::ltree,
+					${parentId}::uuid)
+				RETURNING group_id::text AS group_id`;
+			throw redirect(303, `${base}/administration/groups?sel=${encodeURIComponent(row.group_id)}`);
+		}
+
+		const home_region = String(d.get('home_region') ?? 'eu-west-2').trim() || 'eu-west-2';
+		// Flat (root) group: single-segment ltree path from a fresh uuid (matches import).
 		const [row] = await globalDb<{ group_id: string }[]>`
 			INSERT INTO principal_group (home_region, label, path)
 			VALUES (${home_region}, ${label}, ('g' || replace(gen_random_uuid()::text, '-', ''))::ltree)
@@ -137,6 +155,15 @@ export const actions: Actions = {
 		const d = await request.formData();
 		const group_id = String(d.get('group_id') ?? '');
 		if (!group_id) return fail(400, { error: 'Group required.' });
+		// Block deletion if it has sub-groups (would orphan them in the ltree).
+		const [node] = await globalDb<{ path: string }[]>`
+			SELECT path::text AS path FROM principal_group WHERE group_id = ${group_id}`;
+		if (node) {
+			const [{ n: children }] = await globalDb<{ n: number }[]>`
+				SELECT count(*)::int AS n FROM principal_group
+				WHERE path <@ ${node.path}::ltree AND path <> ${node.path}::ltree`;
+			if (children > 0) return fail(400, { error: `Has ${children} sub-group(s); delete or move them first.` });
+		}
 		// Grants on the group cascade (global). Membership is cross-DB (no FK), so
 		// clean the local rows explicitly.
 		await globalDb`DELETE FROM principal_group WHERE group_id = ${group_id}`;

@@ -84,9 +84,9 @@ done
 # Valkey, and the Secrets Manager ARNs incl. the SESSION_SECRET from STEP 0).
 # One line, no heredoc -- edit deploy_portal_taskdef.json to change anything.
 
-# aws ecs register-task-definition \
-#   --cli-input-json file://infrastructure/deploy_portal_taskdef.json \
-#   --region "${REGION}" --query 'taskDefinition.taskDefinitionArn' --output text
+aws ecs register-task-definition \
+  --cli-input-json file://deploy_portal_taskdef.json \
+  --region "${REGION}" --query 'taskDefinition.taskDefinitionArn' --output text
 
 # ---- RESULT (paste the new task-definition ARN, e.g. .../fleetshell-portal:7) ----
 # arn:aws:ecs:eu-west-2:295934382486:task-definition/fleetshell-portal:8

@@ -13,7 +13,7 @@ async function requireAdmin(locals: App.Locals): Promise<void> {
 type TreeNode = { group_id: string; label: string; parent_id: string | null; grant_count: number; member_count: number };
 type GrantRow = {
 	grant_id: string; role_name: string; resource_type: string; scope_kind: string;
-	region: string; product: string; customer: string; site: string; group_scope: string; single_label: string;
+	region: string; product: string; customer: string; site: string; group_scope: string; service_scope: string; single_label: string;
 };
 
 export const load: PageServerLoad = async ({ locals, url }) => {
@@ -58,6 +58,9 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 				  COALESCE((SELECT string_agg(gp.label, ', ') FROM authz_scope_constraint c
 				            JOIN principal_group gp ON gp.path = ANY(c.values::ltree[])
 				            WHERE c.scope_id = s.id AND c.dimension = 'group_path'), 'ANY') AS group_scope,
+				  COALESCE((SELECT string_agg(sv.name, ', ') FROM authz_scope_constraint c
+				            JOIN service sv ON sv.path = ANY(c.values::ltree[])
+				            WHERE c.scope_id = s.id AND c.dimension = 'service_path'), 'ANY') AS service_scope,
 				  COALESCE(s.label, '') AS single_label
 				FROM authz_grant g
 				JOIN authz_role r  ON r.id = g.role_id
@@ -78,18 +81,19 @@ export const actions: Actions = {
 		const role_id = String(d.get('role_id') ?? '');
 		const resource_type = String(d.get('resource_type') ?? 'device');
 		if (!group_id || !role_id) return fail(400, { error: 'Group and role required.' });
-		if (!['device', 'group'].includes(resource_type)) return fail(400, { error: 'Unsupported resource type.' });
+		if (!['device', 'group', 'service'].includes(resource_type)) return fail(400, { error: 'Unsupported resource type.' });
 
 		const regions = d.getAll('region').map(String).filter(Boolean);
 		const products = d.getAll('product').map(String).filter(Boolean);
 		const customers = d.getAll('customer').map(String).filter(Boolean);
 		const sites = d.getAll('site').map(String).filter(Boolean);
 		const groupPaths = d.getAll('grouppath').map(String).filter(Boolean);
+		const servicePaths = d.getAll('servicepath').map(String).filter(Boolean);
 
 		// One grant per COMBINATION (cartesian product of the picked dimensions), so
 		// multiple picks become multiple grant lines -- matches the legacy model and
 		// lets each line be revoked individually. Empty dimension = ANY (one slot).
-		type Combo = { region?: string; product?: string; customer?: string; site?: string; group?: string };
+		type Combo = { region?: string; product?: string; customer?: string; site?: string; group?: string; service?: string };
 		const orAny = (a: string[]): (string | undefined)[] => (a.length ? a : [undefined]);
 		const combos: Combo[] = [];
 		if (resource_type === 'device') {
@@ -98,6 +102,8 @@ export const actions: Actions = {
 					for (const customer of orAny(customers))
 						for (const site of orAny(sites))
 							combos.push({ region, product, customer, site });
+		} else if (resource_type === 'service') {
+			for (const service of orAny(servicePaths)) combos.push({ service });
 		} else {
 			for (const group of orAny(groupPaths)) combos.push({ group });
 		}
@@ -123,6 +129,7 @@ export const actions: Actions = {
 				if (combo.customer) cons.push({ dim: 'customer_id', op: 'in', vals: [combo.customer] });
 				if (combo.site) cons.push({ dim: 'site_id', op: 'in', vals: [combo.site] });
 				if (combo.group) cons.push({ dim: 'group_path', op: 'subtree', vals: [combo.group] });
+				if (combo.service) cons.push({ dim: 'service_path', op: 'subtree', vals: [combo.service] });
 				for (const c of cons) {
 					await sql`INSERT INTO authz_scope_constraint (scope_id, dimension, op, values)
 						VALUES (${scopeId}::uuid, ${c.dim}, ${c.op}, ${c.vals})`;

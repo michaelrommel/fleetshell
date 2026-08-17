@@ -30,7 +30,8 @@
         { "name": "LOCAL_DB_HOST",  "value": "fleetshell-local-euw2.cluster-cpgmocimewi5.eu-west-2.rds.amazonaws.com" },
         { "name": "LOCAL_DB_PORT",  "value": "5432" },
         { "name": "LOCAL_DB_NAME",  "value": "fleetshell_local" },
-        { "name": "VALKEY_URL",     "value": "rediss://clustercfg.dev-valkey-aeroftp.ak121m.memorydb.eu-west-2.amazonaws.com:6379" }
+        { "name": "VALKEY_URL",     "value": "rediss://clustercfg.dev-valkey-aeroftp.ak121m.memorydb.eu-west-2.amazonaws.com:6379" },
+        { "name": "GUACD_S3_BUCKET", "value": "dev-s3-fleetshell" }
       ],
       "secrets": [
         { "name": "CLIENT_CERT",        "valueFrom": "arn:aws:secretsmanager:eu-west-2:295934382486:secret:fleetshell/client-cert-Uhh4oy" },

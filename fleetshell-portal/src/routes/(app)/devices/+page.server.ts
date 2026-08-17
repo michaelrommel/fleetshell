@@ -3,7 +3,7 @@ import { fail, error, redirect } from '@sveltejs/kit';
 import { base } from '$app/paths';
 import { globalDb } from '$lib/server/db';
 import { getPersona } from '$lib/server/identity';
-import { resolveGroupIds } from '$lib/server/authz';
+import { resolveGroupIds, can, canService } from '$lib/server/authz';
 import { buildDeviceWhere } from '$lib/server/deviceQuery';
 import { spoolDeviceOnSave, deleteDeviceKey } from '$lib/server/device_spool';
 import { spoolGateway } from '$lib/server/gateway_spool';
@@ -26,7 +26,7 @@ type ListRow = {
 export const load: PageServerLoad = async ({ locals, url }) => {
 	if (!locals.userId) return { devices: [], total: 0, q: '', mode: 'scope', isAdmin: false,
 		page: 1, from: 0, to: 0, hasPrev: false, hasNext: false, prevCursor: null, nextCursor: null,
-		sel: null, isNew: false, detail: null };
+		sel: null, isNew: false, detail: null, canRecordings: false };
 	const persona = await getPersona(locals.userId);
 	const isAdmin = persona?.is_admin ?? false;
 
@@ -74,7 +74,8 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 		if (!groupIds.length) {
 			return { devices: [], total: 0, q, mode, isAdmin, page: 1, from: 0, to: 0,
 				hasPrev: false, hasNext: false, prevCursor: null, nextCursor: null,
-				sel, isNew, detail: await loadDetail(sel) };
+				sel, isNew, detail: await loadDetail(sel),
+				canRecordings: await recordingsAllowed(locals.userId, sel) };
 		}
 		fetched = await globalDb<ListRow[]>`SELECT ${cols}
 			FROM device d JOIN authz_visible_device_ids(${groupIds}::uuid[], 'view') v ON v.id = d.id ${joins}
@@ -96,8 +97,25 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 		prevCursor: rows.length ? rows[0].id : null,
 		nextCursor: rows.length ? rows[rows.length - 1].id : null,
 		sel, isNew, detail: await loadDetail(sel),
+		canRecordings: await recordingsAllowed(locals.userId, sel),
 	};
 };
+
+/**
+ * Two-grant gate for the device Recordings tab (see api/devices/recordings):
+ * service:connect over 'screen_recording' AND device:view over this device.
+ * Both are re-enforced in the API on every fetch; this only drives tab visibility.
+ */
+async function recordingsAllowed(userId: string | undefined, deviceId: string | null): Promise<boolean> {
+	if (!userId || !deviceId) return false;
+	const groupIds = await resolveGroupIds(userId);
+	if (!groupIds.length) return false;
+	const [entitled, reachable] = await Promise.all([
+		canService(groupIds, 'view', 'screen_recording'),
+		can(groupIds, 'view', deviceId),
+	]);
+	return entitled && reachable;
+}
 
 async function loadDetail(sel: string | null) {
 	if (!sel) return null;
@@ -212,8 +230,12 @@ export const actions: Actions = {
 			console.error('[spool] device update:', (e as Error).message);
 		}
 		const tab = String(d.get('tab') ?? '').trim();
-		const tabQ = tab ? `&tab=${encodeURIComponent(tab)}` : '';
-		throw redirect(303, `${base}/devices?sel=${encodeURIComponent(id)}${tabQ}`);
+		// Restore the list state (filter/mode/paging) carried from the page, then
+		// re-select this device (+ tab), so Save does not wipe the left-hand filter.
+		const params = new URLSearchParams(String(d.get('qs') ?? ''));
+		params.set('sel', id);
+		if (tab) params.set('tab', tab);
+		throw redirect(303, `${base}/devices?${params}`);
 	},
 
 	createDevice: async ({ request, locals }) => {
@@ -262,6 +284,9 @@ export const actions: Actions = {
 		} catch (e) {
 			console.error('[spool] device delete:', (e as Error).message);
 		}
-		throw redirect(303, `${base}/devices`);
+		// Keep the list filter/mode/paging; just drop the (now-gone) selection.
+		const params = new URLSearchParams(String(d.get('qs') ?? ''));
+		const qs = params.toString();
+		throw redirect(303, qs ? `${base}/devices?${qs}` : `${base}/devices`);
 	},
 };

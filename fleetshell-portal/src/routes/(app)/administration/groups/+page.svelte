@@ -53,6 +53,16 @@
 						<button type="submit">Save label</button>
 					</form>
 					<p class="region">Home region: <code>{data.detail.home_region}</code></p>
+
+					<details class="addchild">
+						<summary>Add sub-group</summary>
+						<form method="POST" action="?/createGroup" use:enhance class="rename">
+							<input type="hidden" name="parent_id" value={data.detail.group_id} />
+							<label>Sub-group label<input name="label" required /></label>
+							<button type="submit">Add sub-group</button>
+						</form>
+						<p class="hint">Created under this group; it inherits this group's grants.</p>
+					</details>
 				{/if}
 
 				<details class="grants-box">
@@ -171,6 +181,11 @@
 	input:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
 	button[type='submit']:not(.link-btn) { align-self: flex-start; background: var(--accent); color: var(--on-accent); border: none; border-radius: var(--radius); padding: 0.45rem 0.8rem; font: inherit; font-weight: 600; font-size: 0.85rem; cursor: pointer; }
 	button[type='submit']:not(.link-btn):hover { background: var(--accent-hover); }
+
+	.addchild { margin-top: 0.9rem; }
+	.addchild > summary { cursor: pointer; font-size: 0.82rem; color: var(--accent); user-select: none; list-style: none; }
+	.addchild > summary::-webkit-details-marker { display: none; }
+	.addchild[open] > summary { margin-bottom: 0.5rem; }
 
 	.grants-box { margin-top: 1.1rem; }
 	.grants-box > summary {

@@ -4,5 +4,5 @@ import type { PageLoad } from './$types';
 
 // /services has no landing page of its own -- open the first tab.
 export const load: PageLoad = () => {
-	throw redirect(307, `${base}/services/infoproxy`);
+	throw redirect(307, `${base}/services/catalog`);
 };

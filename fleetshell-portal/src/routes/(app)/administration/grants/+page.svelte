@@ -24,16 +24,17 @@
 
 	// Add-grant form state.
 	let roleId = $state('');
-	let resourceType = $state<'device' | 'group'>('device');
+	let resourceType = $state<'device' | 'group' | 'service'>('device');
 	let regions = $state<Chip[]>([]);
 	let products = $state<Chip[]>([]);
 	let customers = $state<Chip[]>([]);
 	let sites = $state<Chip[]>([]);
 	let groups = $state<Chip[]>([]);
+	let services = $state<Chip[]>([]);
 
 	function resetForm() {
 		roleId = ''; resourceType = 'device';
-		regions = []; products = []; customers = []; sites = []; groups = [];
+		regions = []; products = []; customers = []; sites = []; groups = []; services = [];
 	}
 </script>
 
@@ -58,6 +59,8 @@
 									<span class="kind">system</span> {g.single_label}
 								{:else if g.resource_type === 'group'}
 									<span class="kind">group</span> {g.group_scope}
+								{:else if g.resource_type === 'service'}
+									<span class="kind">service</span> {g.service_scope}
 								{:else}
 									{g.region} <span class="sep">|</span> {g.product} <span class="sep">|</span> {g.site === 'ANY' ? g.customer : `${g.customer} / ${g.site}`}
 								{/if}
@@ -86,6 +89,7 @@
 						<span class="plabel">Applies to</span>
 						<label class="radio"><input type="radio" name="resource_type" value="device" bind:group={resourceType} /> Devices</label>
 						<label class="radio"><input type="radio" name="resource_type" value="group" bind:group={resourceType} /> Groups</label>
+						<label class="radio"><input type="radio" name="resource_type" value="service" bind:group={resourceType} /> Services</label>
 					</div>
 
 					{#if resourceType === 'device'}
@@ -104,6 +108,11 @@
 						{#each customers as c (c.key)}<input type="hidden" name="customer" value={c.key} />{/each}
 						{#each sites as s (s.key)}<input type="hidden" name="site" value={s.key} />{/each}
 						<p class="hint">Empty dimension = ANY. Multiple picks create one grant per combination (e.g. 2 regions x 2 products = 4 grants). An attribute scope reaches only open devices unless it names a customer/site.</p>
+					{:else if resourceType === 'service'}
+						<ScopePicker label="Services (subtree)" endpoint="/api/administration/services"
+							toItem={(s) => ({ key: s.path, label: s.parent_name ? `${s.parent_name} / ${s.name}` : s.name })} bind:selected={services} />
+						{#each services as s (s.key)}<input type="hidden" name="servicepath" value={s.key} />{/each}
+						<p class="hint">Empty = all services. Each picked node becomes its own grant, covering that function and everything under it. Pair with a device grant to gate a function per device.</p>
 					{:else}
 						<ScopePicker label="Groups (subtree)" endpoint="/api/administration/groups" resultsKey="groups"
 							toItem={(g) => ({ key: g.path, label: g.label })} bind:selected={groups} />

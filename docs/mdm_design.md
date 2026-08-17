@@ -190,6 +190,15 @@ them or authorization silently leaks.
 - **Grant-on-grant needs the subset guard.** When creating a grant, the verbs
   and scope granted must be a subset of what the creator already holds
   ("can't grant what you don't hold") - enforced at write time, not by the check.
+- **`is_admin` is NOT god-mode.** Operational / sensitive functions (device
+  Recordings, future data-class / PHI, `device:connect`, ...) gate on REAL grants
+  (`authz_can` / `authz_can_service`) and MUST ignore `is_admin`. The interim
+  `is_admin` flag gates only admin SECTION management (Products / Groups / Roles /
+  Grants / catalog writes) as scaffolding for Slice C, and should shrink to a
+  bootstrap capability (manage roles/grants/accounts), never grow into implicit
+  operational access. Administering *who may view a recording* is an admin act;
+  *viewing* it (PHI) is an operational act needing its own grant. Do NOT make a
+  hidden operational feature visible by honoring `is_admin` in its gate.
 
 ## 6. Performance and caching
 

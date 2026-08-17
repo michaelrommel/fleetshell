@@ -11,12 +11,15 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 	if (!persona?.is_admin) throw error(403, 'forbidden');
 
 	const q = (url.searchParams.get('q') ?? '').trim();
-	if (q.length < 2) return json({ groups: [] });
-
+	// Empty query = browse the root groups (top of the tree; excludes legacy
+	// per-user grant holders).
+	const filter = q
+		? globalDb`AND label ILIKE ${'%' + q + '%'}`
+		: globalDb`AND parent_id IS NULL AND label NOT LIKE 'user:%'`;
 	const groups = await globalDb<{ group_id: string; label: string; path: string | null }[]>`
 		SELECT group_id, label, path::text AS path
 		FROM principal_group
-		WHERE label ILIKE ${'%' + q + '%'}
+		WHERE true ${filter}
 		ORDER BY label
 		LIMIT 25
 	`;

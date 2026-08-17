@@ -6,6 +6,7 @@
 	let { children }: { children: Snippet } = $props();
 
 	const tabs = [
+		{ href: '/services/catalog',       label: 'Service Catalog' },
 		{ href: '/services/infoproxy',     label: 'Infoproxy' },
 		{ href: '/services/email',         label: 'E-Mail' },
 		{ href: '/services/subscriptions', label: 'File Subscriptions' },

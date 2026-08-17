@@ -75,6 +75,37 @@ export async function can(
 }
 
 /**
+ * Feature-entitlement check for a portal service FUNCTION, identified by its
+ * stable catalog key (e.g. 'screen_recording'). Orthogonal to the device scope:
+ * a gated function ANDs this with `can(..., 'view', deviceId)`. See
+ * infrastructure/sql/migrate_services_authz.sql (authz_can_service).
+ */
+export async function canService(
+	groupIds: string[],
+	verb: string,
+	serviceKey: string,
+): Promise<boolean> {
+	if (groupIds.length === 0) return false;
+	const [row] = await globalDb<{ ok: boolean }[]>`
+		SELECT authz_can_service_key(${groupIds}::uuid[], ${verb}, ${serviceKey}) AS ok
+	`;
+	return row?.ok ?? false;
+}
+
+/** Coarse capability check: does the persona hold ANY grant of (type, verb)? */
+export async function authzHas(
+	groupIds: string[],
+	resourceType: string,
+	verb: string,
+): Promise<boolean> {
+	if (groupIds.length === 0) return false;
+	const [row] = await globalDb<{ ok: boolean }[]>`
+		SELECT authz_has(${groupIds}::uuid[], ${resourceType}, ${verb}) AS ok
+	`;
+	return row?.ok ?? false;
+}
+
+/**
  * Enumerate the device ids a set of groups may `verb`, capped. Used by the
  * Devices page 'My scope' mode to constrain a searchable/paginated query to the
  * authorized set. For very broad scopes (whole fleet) admins use 'All devices'

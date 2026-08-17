@@ -255,6 +255,20 @@ CREATE TABLE IF NOT EXISTS product_model_app (
 );
 CREATE INDEX IF NOT EXISTS ix_product_model_app_product ON product_model_app(product_id);
 
+-- The Services catalog (see migrate_services_authz.sql). Portal FUNCTIONS
+-- (Screen Recording, File Transfer, ...) as an ltree tree; grants scope over
+-- service SUBTREES via the 'service' resource_type. `key` is a stable machine
+-- handle for seeded nodes so code can gate on a well-known function.
+CREATE TABLE IF NOT EXISTS service (
+    id   uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    path ltree NOT NULL,
+    kind text  NOT NULL DEFAULT 'service'
+         CHECK (kind IN ('root','category','service')),
+    key  text UNIQUE,
+    name text NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS ix_service_path ON service USING gist (path);
+
 -- Data classification (see docs/data_classification.md + migrate_data_classification.sql).
 -- Fixed data-class catalog; modality-owned reusable Rule Sets; rules (filename
 -- regex + classes); assignments mapping a set to a product / family / modality.

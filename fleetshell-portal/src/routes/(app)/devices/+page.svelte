@@ -47,8 +47,18 @@
 	const newHref = $derived(withParams({ new: '1', sel: null }));
 	const cancelHref = $derived(withParams({ new: null, sel: null }));
 
+	// The current LIST state (filter / mode / pagination), minus the detail-panel
+	// params. Carried through Save/Delete as a hidden field so the redirect can
+	// restore the left-hand filter instead of resetting it.
+	const listQs = $derived.by(() => {
+		const u = new URLSearchParams(pageState.url.searchParams);
+		u.delete('sel'); u.delete('tab'); u.delete('new');
+		return u.toString();
+	});
+
 	// Detail-panel tabs (Connect is the daily driver, so it is the default).
-	const TABS = ['connect', 'files', 'manage'] as const;
+	// 'recordings' is only reachable when the two-grant gate passed (data.canRecordings).
+	const TABS = ['connect', 'files', 'recordings', 'manage'] as const;
 	const tab = $derived.by(() => {
 		const t = pageState.url.searchParams.get('tab');
 		return (TABS as readonly string[]).includes(t ?? '') ? (t as string) : 'connect';
@@ -68,6 +78,78 @@
 	const d = $derived(data.detail as Record<string, string | null> | null);
 	type App = { name: string; application: string; ports: string; guac: boolean; e2ecrypt: boolean; sni: string; path: string; drive: boolean; record: boolean; width?: number; height?: number; dpi?: number };
 	const apps = $derived((data.detail?.apps ?? []) as App[]);
+
+	// ---- Recordings browser (lazy; gated by data.canRecordings) ---------------
+	// S3 tree device -> day -> session; each level fetched on demand from
+	// /api/devices/recordings (which re-checks both grants on every call).
+	type RecSession = { session: string; sizeBytes: number; lastModified: string | null };
+	let recDays = $state<string[]>([]);
+	let recDay = $state<string | null>(null);
+	let recSessions = $state<RecSession[]>([]);
+	let recState = $state<'idle' | 'loading-days' | 'loading-sessions' | 'ready' | 'error'>('idle');
+	let recError = $state('');
+	let recBusy = $state('');           // session base being downloaded
+	let recLoadedFor = '';              // device id whose days are loaded
+
+	function fmtSize(n: number): string {
+		if (!n) return '';
+		const u = ['B', 'KB', 'MB', 'GB'];
+		let i = 0, v = n;
+		while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+		return `${v.toFixed(v < 10 && i > 0 ? 1 : 0)} ${u[i]}`;
+	}
+
+	async function loadRecDays() {
+		if (!d?.id) return;
+		recState = 'loading-days';
+		recError = ''; recDay = null; recSessions = [];
+		try {
+			const r = await fetch(`${base}/api/devices/recordings?device=${encodeURIComponent(d.id)}`);
+			if (!r.ok) throw new Error((await r.json().catch(() => ({}))).message || `HTTP ${r.status}`);
+			recDays = (await r.json()).days ?? [];
+			recLoadedFor = d.id;
+			recState = 'ready';
+		} catch (e) {
+			recError = e instanceof Error ? e.message : String(e);
+			recState = 'error';
+		}
+	}
+
+	async function openRecDay(day: string) {
+		if (!d?.id) return;
+		recDay = day; recState = 'loading-sessions'; recError = ''; recSessions = [];
+		try {
+			const r = await fetch(`${base}/api/devices/recordings?device=${encodeURIComponent(d.id)}&day=${encodeURIComponent(day)}`);
+			if (!r.ok) throw new Error((await r.json().catch(() => ({}))).message || `HTTP ${r.status}`);
+			recSessions = (await r.json()).sessions ?? [];
+			recState = 'ready';
+		} catch (e) {
+			recError = e instanceof Error ? e.message : String(e);
+			recState = 'error';
+		}
+	}
+
+	async function downloadRec(session: string) {
+		if (!d?.id || !recDay) return;
+		recBusy = session;
+		try {
+			const r = await fetch(`${base}/api/devices/recordings?device=${encodeURIComponent(d.id)}&day=${encodeURIComponent(recDay)}&session=${encodeURIComponent(session)}`);
+			if (!r.ok) throw new Error((await r.json().catch(() => ({}))).message || `HTTP ${r.status}`);
+			const { url } = await r.json();
+			if (url) window.location.href = url;
+		} catch (e) {
+			recError = e instanceof Error ? e.message : String(e);
+		} finally {
+			recBusy = '';
+		}
+	}
+
+	// Auto-load the day list when the tab opens or the device changes.
+	$effect(() => {
+		if (tab === 'recordings' && data.canRecordings && d?.id && recLoadedFor !== d.id) {
+			void loadRecDays();
+		}
+	});
 
 	// ---- Connect workflow -----------------------------------------------------
 	// Selectable copy of the inherited apps; target + gateway are resolved
@@ -459,6 +541,9 @@
 				<div class="tabs" role="tablist">
 					<a role="tab" aria-selected={tab === 'connect'} class:active={tab === 'connect'} href={tabHref('connect')}>Connect</a>
 					<a role="tab" aria-selected={tab === 'files'} class:active={tab === 'files'} href={tabHref('files')}>Files</a>
+					{#if data.canRecordings}
+						<a role="tab" aria-selected={tab === 'recordings'} class:active={tab === 'recordings'} href={tabHref('recordings')}>Recordings</a>
+					{/if}
 					<a role="tab" aria-selected={tab === 'manage'} class:active={tab === 'manage'} href={tabHref('manage')}>Manage</a>
 				</div>
 
@@ -529,10 +614,57 @@
 					{/if}
 				{:else if tab === 'files'}
 					<p class="muted files-stub">File browser (S3 <span class="mono">/clean/&lt;modality&gt;/&lt;product&gt;/&lt;partno&gt;/&lt;serial&gt;/</span>) is not wired yet.</p>
+				{:else if tab === 'recordings'}
+					{#if !data.canRecordings}
+						<p class="muted">You are not authorized to view recordings for this device.</p>
+					{:else}
+						<div class="rec">
+							<div class="rec-head">
+								<p class="muted">Session recordings (PHI-bearing). Access is logged.</p>
+								<button type="button" class="rec-refresh" onclick={loadRecDays} disabled={recState === 'loading-days'}>Refresh</button>
+							</div>
+							{#if recState === 'error'}
+								<p class="error">{recError}</p>
+							{/if}
+							{#if recState === 'loading-days'}
+								<p class="muted">Loading recording days…</p>
+							{:else}
+								<div class="rec-cols">
+									<div class="rec-days">
+										{#each recDays as day (day)}
+											<button type="button" class="rec-day" class:sel={day === recDay} onclick={() => openRecDay(day)}>{day}</button>
+										{:else}
+											<p class="muted">No recordings found for this device.</p>
+										{/each}
+									</div>
+									<div class="rec-sessions">
+										{#if recState === 'loading-sessions'}
+											<p class="muted">Loading sessions…</p>
+										{:else if recDay}
+											{#each recSessions as s (s.session)}
+												<div class="rec-session">
+													<span class="rec-name">{s.session}</span>
+													{#if s.sizeBytes}<span class="rec-size">{fmtSize(s.sizeBytes)}</span>{/if}
+													<button type="button" class="rec-dl" onclick={() => downloadRec(s.session)} disabled={recBusy === s.session}>
+														{recBusy === s.session ? 'Preparing…' : 'Download ZIP'}
+													</button>
+												</div>
+											{:else}
+												<p class="muted">No sessions on {recDay}.</p>
+											{/each}
+										{:else}
+											<p class="muted">Select a day to list its sessions.</p>
+										{/if}
+									</div>
+								</div>
+							{/if}
+						</div>
+					{/if}
 				{:else}
 					<form method="POST" action="?/updateDevice" use:enhance={toastEnhance('Device saved')}>
 						<input type="hidden" name="id" value={d.id} />
 						<input type="hidden" name="tab" value="manage" />
+						<input type="hidden" name="qs" value={listQs} />
 						{#key d.id}
 							{@render fields(d, canEdit)}
 						{/key}
@@ -555,6 +687,7 @@
 	<ConfirmDialog bind:open={confirmDelete} title="Delete device?" message={`Delete "${d.serial || d.id}"? This cannot be undone.`}>
 		<form method="POST" action="?/deleteDevice" use:enhance={toastEnhance('Device deleted', () => (confirmDelete = false))}>
 			<input type="hidden" name="id" value={d.id} />
+			<input type="hidden" name="qs" value={listQs} />
 			<button type="submit" class="act-delete">Delete</button>
 		</form>
 	</ConfirmDialog>
@@ -688,6 +821,32 @@
 	}
 	.tabs a:hover { color: var(--text); }
 	.tabs a.active { color: var(--text); border-bottom-color: var(--accent); }
+
+	/* Recordings tab */
+	.rec { display: flex; flex-direction: column; gap: 0.7rem; }
+	.rec-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+	.rec-head .muted { margin: 0; }
+	.rec-refresh { background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
+		border-radius: var(--radius); padding: 0.3rem 0.7rem; font: inherit; font-size: 0.82rem; cursor: pointer; }
+	.rec-refresh:hover:not(:disabled) { background: var(--surface-active); }
+	.rec-refresh:disabled { opacity: 0.5; cursor: default; }
+	.rec-cols { display: grid; grid-template-columns: 12rem 1fr; gap: 0.9rem; align-items: start; }
+	.rec-days { display: flex; flex-direction: column; gap: 0.2rem; max-height: 22rem; overflow-y: auto; }
+	.rec-day { text-align: left; background: none; color: var(--text); border: 1px solid transparent;
+		border-radius: var(--radius); padding: 0.35rem 0.55rem; font: inherit; font-size: 0.85rem;
+		font-variant-numeric: tabular-nums; cursor: pointer; }
+	.rec-day:hover { background: var(--surface-2); }
+	.rec-day.sel { background: var(--surface-active); box-shadow: inset 2px 0 0 var(--accent); font-weight: 600; }
+	.rec-sessions { display: flex; flex-direction: column; gap: 0.35rem; min-width: 0; }
+	.rec-session { display: flex; align-items: center; gap: 0.7rem; padding: 0.4rem 0.55rem;
+		background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
+	.rec-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+		font-size: 0.85rem; font-variant-numeric: tabular-nums; }
+	.rec-size { flex: none; color: var(--text-muted); font-size: 0.78rem; }
+	.rec-dl { flex: none; background: var(--accent); color: var(--accent-fg, #fff); border: none;
+		border-radius: var(--radius); padding: 0.3rem 0.7rem; font: inherit; font-size: 0.8rem; cursor: pointer; }
+	.rec-dl:hover:not(:disabled) { filter: brightness(1.08); }
+	.rec-dl:disabled { opacity: 0.6; cursor: default; }
 	.files-stub { padding: 1.5rem 0; }
 	h4 { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-subtle); margin: 1.2rem 0 0.5rem; }
 
