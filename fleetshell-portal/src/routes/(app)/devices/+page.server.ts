@@ -3,7 +3,8 @@ import { fail, error, redirect } from '@sveltejs/kit';
 import { base } from '$app/paths';
 import { globalDb } from '$lib/server/db';
 import { getPersona } from '$lib/server/identity';
-import { resolveGroupIds, can, canService } from '$lib/server/authz';
+import { resolveGroupIds, can, canService, scopeSignature } from '$lib/server/authz';
+import { cacheGet, cacheSet, hashKey, authzGen, l1Ttl } from '$lib/server/cache';
 import { buildDeviceWhere } from '$lib/server/deviceQuery';
 import { spoolDeviceOnSave, deleteDeviceKey } from '$lib/server/device_spool';
 import { spoolGateway } from '$lib/server/gateway_spool';
@@ -26,7 +27,7 @@ type ListRow = {
 export const load: PageServerLoad = async ({ locals, url }) => {
 	if (!locals.userId) return { devices: [], total: 0, q: '', mode: 'scope', isAdmin: false,
 		page: 1, from: 0, to: 0, hasPrev: false, hasNext: false, prevCursor: null, nextCursor: null,
-		sel: null, isNew: false, detail: null, canRecordings: false };
+		sel: null, isNew: false, detail: null, canRecordings: false, listMs: 0, listCached: null, detailMs: null };
 	const persona = await getPersona(locals.userId);
 	const isAdmin = persona?.is_admin ?? false;
 
@@ -66,21 +67,40 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 	// 'all' (admin) reads the table directly on the id PK. Only the page query
 	// runs here -- the total is threaded via the URL or fetched by the client.
 	let fetched: ListRow[];
+	let listCached: boolean | null = null; // null = uncacheable branch ('all' mode)
+	const tList = performance.now();
 	if (mode === 'all') {
 		fetched = await globalDb<ListRow[]>`SELECT ${cols} FROM device d ${joins}
 			WHERE ${where} ${cursorFrag} ORDER BY ${order} LIMIT ${PAGE_SIZE + 1}`;
 	} else {
 		const groupIds = await resolveGroupIds(locals.userId);
 		if (!groupIds.length) {
+			const det = await loadDetailTimed(sel);
 			return { devices: [], total: 0, q, mode, isAdmin, page: 1, from: 0, to: 0,
 				hasPrev: false, hasNext: false, prevCursor: null, nextCursor: null,
-				sel, isNew, detail: await loadDetail(sel),
-				canRecordings: await recordingsAllowed(locals.userId, sel) };
+				sel, isNew, detail: det.detail,
+				canRecordings: await recordingsAllowed(locals.userId, sel),
+				listMs: 0, listCached: null, detailMs: det.ms };
 		}
-		fetched = await globalDb<ListRow[]>`SELECT ${cols}
-			FROM device d JOIN authz_visible_device_ids(${groupIds}::uuid[], 'view') v ON v.id = d.id ${joins}
-			WHERE ${where} ${cursorFrag} ORDER BY ${order} LIMIT ${PAGE_SIZE + 1}`;
+		const sig = await scopeSignature(groupIds, 'view');
+		const g = await authzGen();
+		const cur = before ? `b:${before}` : after ? `a:${after}` : 'first';
+		// L1 scope-signature page cache: users sharing the same visible set (same
+		// signature) collapse onto one cached page -- the login-herd killer.
+		const l1key = `list:dev:${g}:${sig}:${hashKey(q)}:${cur}`;
+		const cached = await cacheGet<ListRow[]>(l1key);
+		if (cached) {
+			fetched = cached;
+			listCached = true;
+		} else {
+			fetched = await globalDb<ListRow[]>`SELECT ${cols}
+				FROM device d JOIN authz_visible_device_ids(${groupIds}::uuid[], 'view') v ON v.id = d.id ${joins}
+				WHERE ${where} ${cursorFrag} ORDER BY ${order} LIMIT ${PAGE_SIZE + 1}`;
+			await cacheSet(l1key, fetched, await l1Ttl());
+			listCached = false;
+		}
 	}
+	const listMs = Math.round(performance.now() - tList);
 
 	const extra = fetched.length > PAGE_SIZE;
 	let rows: ListRow[] = fetched.slice(0, PAGE_SIZE);
@@ -91,13 +111,15 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 	const from = (page - 1) * PAGE_SIZE + (rows.length ? 1 : 0);
 	const to = (page - 1) * PAGE_SIZE + rows.length;
 
+	const det = await loadDetailTimed(sel);
 	return {
 		devices: rows, total, q, mode, isAdmin, page, from, to,
 		hasPrev, hasNext,
 		prevCursor: rows.length ? rows[0].id : null,
 		nextCursor: rows.length ? rows[rows.length - 1].id : null,
-		sel, isNew, detail: await loadDetail(sel),
+		sel, isNew, detail: det.detail,
 		canRecordings: await recordingsAllowed(locals.userId, sel),
+		listMs, listCached, detailMs: det.ms,
 	};
 };
 
@@ -115,6 +137,15 @@ async function recordingsAllowed(userId: string | undefined, deviceId: string | 
 		can(groupIds, 'view', deviceId),
 	]);
 	return entitled && reachable;
+}
+
+// Load the device detail and time it (the detail pane is fetched once per page
+// load; tab switches are client-side, so this figure is final for the pane).
+async function loadDetailTimed(sel: string | null): Promise<{ detail: Awaited<ReturnType<typeof loadDetail>>; ms: number | null }> {
+	if (!sel) return { detail: null, ms: null };
+	const t = performance.now();
+	const detail = await loadDetail(sel);
+	return { detail, ms: Math.round(performance.now() - t) };
 }
 
 async function loadDetail(sel: string | null) {

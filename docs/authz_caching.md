@@ -125,6 +125,44 @@ with RDS Proxy and a reader, a few-hundred-query burst drains in well under a
 second. The design holds - the discipline is in pagination, counting, and
 pooling, not in the authorization model.
 
+## 10a. Implementation (fleetshell-portal)
+
+Built as a fail-open layer over the existing Valkey client. A broken/absent
+Valkey is always a cache MISS -- it never breaks a request, only removes the
+speed-up. Toggle the whole thing off with `AUTHZ_CACHE=false` (A/B testing).
+
+- `src/lib/server/cache.ts` -- primitives: `cacheGet/cacheSet/cacheDel`,
+  `hashKey`, and the global generation `authzGen()` / `bumpAuthzGen()`.
+- `src/lib/server/authz.ts`
+  - `resolveGroupIds(userId)` is now L0-cached: key `authz:groups:{userId}`,
+    TTL 600s. `invalidateUserGroups(userId)` purges it.
+  - `scopeSignature(groupIds, verb[, type])` -- L0 scope-signature: a digest of
+    the effective scope-id SET (from `authz_effective_scopes`), keyed
+    `authz:sig:{g}:{type}:{verb}:{hash(sortedGroupIds)}`, TTL 600s.
+- L1 result pages / counts (keyed by the signature), TTL 45s:
+  - devices page load (scope mode): `list:dev:{g}:{sig}:{hash(q)}:{cursor}`.
+  - `deviceQuery.countDevices`: `count:dev:{g}:{sig|all}:{hash(q)}`.
+
+**Generation `g`.** One counter `authz:gen` (INCR = logical flush) is embedded in
+every signature/page/count key. Grant, role-privilege, and group-delete mutations
+call `bumpAuthzGen()`; group-membership add/remove calls `invalidateUserGroups()`
+(the groupIds hash then rotates the signature key on its own -- no global flush).
+Device attribute edits ride the L1 TTL. `authzGen()` is memoized in-process
+for 5s to avoid a GET per request. Invalidation is wired in the admin actions:
+`administration/{grants,roles,groups,personas}/+page.server.ts`.
+
+**Runtime tuning (Settings page).** The `enabled` flag + both TTLs are stored in
+the Valkey hash `authz:cfg` and edited under **Settings -> Authorization cache**
+(admin-only). `cache.ts` reads them via `getCacheConfig()` (memoized 5s). The env
+`AUTHZ_CACHE=false` is a hard kill switch that overrides the runtime flag.
+**Flush cache now** on the same page calls `bumpAuthzGen()`.
+
+**Timing chip.** The Devices pager shows a muted `list Nms / count Nms` chip; a
+`•` after a number means that query was served from cache (L1 hit). The list time
+comes from the page load (`data.listMs`/`listCached`); the count time from the
+`/devices/count` response (`ms`/`cached`). Use it to confirm cache behaviour and
+spot regressions at a glance.
+
 ## 11. Validated benchmark (192k devices, ~1M grant rows, Serverless v2 0.5 ACU)
 
 Measured with the real anonymized import. The list query is served by

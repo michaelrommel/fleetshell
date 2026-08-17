@@ -3,6 +3,7 @@ import { fail, error, redirect } from '@sveltejs/kit';
 import { base } from '$app/paths';
 import { localDb, globalDb } from '$lib/server/db';
 import { getPersona } from '$lib/server/identity';
+import { invalidateUserGroups } from '$lib/server/authz';
 
 const PAGE_SIZE = 50;
 
@@ -197,6 +198,7 @@ export const actions: Actions = {
 			INSERT INTO group_membership (group_id, user_id, added_by)
 			VALUES (${group_id}::uuid, ${user_id}, ${locals.userId ?? null})
 			ON CONFLICT (group_id, user_id) DO NOTHING`;
+		await invalidateUserGroups(user_id);
 		throw redirect(303, `${base}/administration/personas?sel=${encodeURIComponent(user_id)}`);
 	},
 
@@ -206,6 +208,7 @@ export const actions: Actions = {
 		const user_id = String(d.get('user_id') ?? '');
 		const group_id = String(d.get('group_id') ?? '');
 		await localDb`DELETE FROM group_membership WHERE user_id = ${user_id} AND group_id = ${group_id}::uuid`;
+		await invalidateUserGroups(user_id);
 		throw redirect(303, `${base}/administration/personas?sel=${encodeURIComponent(user_id)}`);
 	},
 
@@ -224,6 +227,7 @@ export const actions: Actions = {
 		}
 		// group_membership + non-primary account_persona links cascade.
 		await localDb`DELETE FROM app_user WHERE user_id = ${user_id}`;
+		await invalidateUserGroups(user_id);
 		throw redirect(303, `${base}/administration/personas`);
 	},
 };

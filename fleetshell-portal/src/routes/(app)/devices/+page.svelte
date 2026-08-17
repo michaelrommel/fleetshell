@@ -18,16 +18,18 @@
 	// when the filter changes (data.total === null) the client fetches it once.
 	let fetchedCount = $state<number | null>(null);
 	let countLoading = $state(false);
+	let countMs = $state<number | null>(null);
+	let countCached = $state(false);
 	const effectiveTotal = $derived(data.total ?? fetchedCount);
 	$effect(() => {
 		const qq = data.q, mm = data.mode;
-		if (data.total !== null) { fetchedCount = null; countLoading = false; return; }
-		countLoading = true; fetchedCount = null;
+		if (data.total !== null) { fetchedCount = null; countLoading = false; countMs = null; return; }
+		countLoading = true; fetchedCount = null; countMs = null;
 		const p = new URLSearchParams({ q: qq });
 		if (mm === 'all') p.set('mode', 'all');
 		fetch(`${base}/devices/count?${p}`)
 			.then((r) => (r.ok ? r.json() : { total: null }))
-			.then((j) => { fetchedCount = j.total ?? null; countLoading = false; })
+			.then((j) => { fetchedCount = j.total ?? null; countMs = j.ms ?? null; countCached = !!j.cached; countLoading = false; })
 			.catch(() => { countLoading = false; });
 	});
 	function pageLink(dir: 'prev' | 'next'): string {
@@ -512,6 +514,10 @@
 				{data.from}–{data.to} of
 				{#if effectiveTotal !== null}{effectiveTotal.toLocaleString()}{:else}<span class="spin" title="counting…">⟳</span>{/if}
 			</span>
+			<span class="perf" title="query timings (• = served from cache)">
+				<span class:cached={data.listCached}>list {data.listMs}ms{#if data.listCached}•{/if}</span>
+				{#if countMs !== null}<span class:cached={countCached}>count {countMs}ms{#if countCached}•{/if}</span>{/if}
+			</span>
 			<a class="pg" class:disabled={!data.hasNext} href={data.hasNext ? pageLink('next') : '#'}>Next ›</a>
 		</div>
 	{/snippet}
@@ -671,6 +677,9 @@
 						{#if canEdit}
 							<div class="actions-bar">
 								<button type="button" class="act-delete" onclick={() => (confirmDelete = true)}>Delete device</button>
+								{#if data.detailMs !== null}
+									<span class="perf bar" title="detail query timing (loaded once; tab switches are client-side)">detail {data.detailMs}ms</span>
+								{/if}
 								<button type="submit" class="act-primary">Save device</button>
 							</div>
 						{/if}
@@ -804,6 +813,9 @@
 	.pg { color: var(--accent); text-decoration: none; font-size: 0.82rem; }
 	.pg.disabled { color: var(--text-subtle); pointer-events: none; }
 	.range { color: var(--text-subtle); font-size: 0.78rem; }
+	.perf { display: inline-flex; align-items: center; gap: 0.5rem; color: var(--text-subtle); font-size: 0.7rem; font-variant-numeric: tabular-nums; border: 1px solid var(--border); border-radius: 999px; padding: 0.15rem 0.6rem; }
+	.perf .cached { color: var(--accent); }
+	.perf.bar { margin-right: auto; }
 	.spin { display: inline-block; animation: spin 0.9s linear infinite; }
 	@keyframes spin { to { transform: rotate(360deg); } }
 

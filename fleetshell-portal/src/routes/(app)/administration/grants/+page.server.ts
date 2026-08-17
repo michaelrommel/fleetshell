@@ -3,6 +3,7 @@ import { fail, error, redirect } from '@sveltejs/kit';
 import { base } from '$app/paths';
 import { globalDb, localDb } from '$lib/server/db';
 import { getPersona } from '$lib/server/identity';
+import { bumpAuthzGen } from '$lib/server/cache';
 
 async function requireAdmin(locals: App.Locals): Promise<void> {
 	if (!locals.userId) throw redirect(303, `${base}/login`);
@@ -139,6 +140,7 @@ export const actions: Actions = {
 					        ${resource_type}, ${verbs})`;
 			}
 		});
+		await bumpAuthzGen(); // new grant -> flush signature/page/count caches
 		throw redirect(303, `${base}/administration/grants?sel=${encodeURIComponent(group_id)}`);
 	},
 
@@ -158,6 +160,7 @@ export const actions: Actions = {
 					AND NOT EXISTS (SELECT 1 FROM authz_grant g WHERE g.scope_id = s.id)`;
 			}
 		});
+		await bumpAuthzGen(); // grant removed -> flush signature/page/count caches
 		throw redirect(303, group_id ? `${base}/administration/grants?sel=${encodeURIComponent(group_id)}` : `${base}/administration/grants`);
 	},
 };

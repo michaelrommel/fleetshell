@@ -3,6 +3,8 @@ import { fail, error, redirect } from '@sveltejs/kit';
 import { base } from '$app/paths';
 import { globalDb, localDb } from '$lib/server/db';
 import { getPersona } from '$lib/server/identity';
+import { invalidateUserGroups } from '$lib/server/authz';
+import { bumpAuthzGen } from '$lib/server/cache';
 
 const MEMBER_LIMIT = 50;
 
@@ -138,6 +140,7 @@ export const actions: Actions = {
 			INSERT INTO group_membership (group_id, user_id, added_by)
 			VALUES (${group_id}::uuid, ${user_id}, ${locals.userId ?? null})
 			ON CONFLICT (group_id, user_id) DO NOTHING`;
+		await invalidateUserGroups(user_id);
 		throw redirect(303, `${base}/administration/groups?sel=${encodeURIComponent(group_id)}`);
 	},
 
@@ -147,6 +150,7 @@ export const actions: Actions = {
 		const group_id = String(d.get('group_id') ?? '');
 		const user_id = String(d.get('user_id') ?? '');
 		await localDb`DELETE FROM group_membership WHERE group_id = ${group_id}::uuid AND user_id = ${user_id}`;
+		await invalidateUserGroups(user_id);
 		throw redirect(303, `${base}/administration/groups?sel=${encodeURIComponent(group_id)}`);
 	},
 
@@ -166,8 +170,12 @@ export const actions: Actions = {
 		}
 		// Grants on the group cascade (global). Membership is cross-DB (no FK), so
 		// clean the local rows explicitly.
+		const members = await localDb<{ user_id: string }[]>`
+			SELECT user_id FROM group_membership WHERE group_id = ${group_id}::uuid`;
 		await globalDb`DELETE FROM principal_group WHERE group_id = ${group_id}`;
 		await localDb`DELETE FROM group_membership WHERE group_id = ${group_id}::uuid`;
+		for (const m of members) await invalidateUserGroups(m.user_id);
+		await bumpAuthzGen(); // grants on the group were deleted -> flush sig/page caches
 		throw redirect(303, `${base}/administration/groups`);
 	},
 };

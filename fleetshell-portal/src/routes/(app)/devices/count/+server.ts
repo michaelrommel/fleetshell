@@ -12,6 +12,6 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 	const isAdmin = persona?.is_admin ?? false;
 	const q = (url.searchParams.get('q') ?? '').trim();
 	const mode = isAdmin && url.searchParams.get('mode') === 'all' ? 'all' : 'scope';
-	const total = await countDevices(locals.userId, mode, q);
-	return json({ total });
+	const { total, ms, cached } = await countDevices(locals.userId, mode, q);
+	return json({ total, ms, cached });
 };

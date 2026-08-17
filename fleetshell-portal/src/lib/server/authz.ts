@@ -9,11 +9,13 @@
 // and exclusion invariants in mdm_design.md section 5.1 live inside those SQL
 // functions, so this layer stays thin.
 //
-// TODO (docs/authz_caching.md):
-//   L0 - cache resolveGroupIds + derived scope-signature in Valkey (5-15 min).
-//   L1 - cache listDevices pages keyed by scope-signature (30-60 s).
+// Caching (docs/authz_caching.md):
+//   L0 - resolveGroupIds + scopeSignature are cached in Valkey (fail-open).
+//   L1 - listDevices pages / counts are cached at the call sites (devices page,
+//        deviceQuery) keyed by the scope-signature this module derives.
 
 import { globalDb, localDb } from './db';
+import { cacheGet, cacheSet, cacheDel, hashKey, authzGen, l0Ttl } from './cache';
 
 export type Device = {
 	id: string;
@@ -32,12 +34,51 @@ export type Device = {
 
 export type Cursor = { updatedAt: string; id: string };
 
-/** Step 1 (REGIONAL): resolve a user to the group_ids they belong to. */
+/** Step 1 (REGIONAL): resolve a user to the group_ids they belong to (L0 cached). */
 export async function resolveGroupIds(userId: string): Promise<string[]> {
+	const key = `authz:groups:${userId}`;
+	const hit = await cacheGet<string[]>(key);
+	if (hit) return hit;
 	const rows = await localDb<{ group_id: string }[]>`
 		SELECT group_id FROM group_membership WHERE user_id = ${userId}
 	`;
-	return rows.map((r) => r.group_id);
+	const ids = rows.map((r) => r.group_id);
+	await cacheSet(key, ids, await l0Ttl());
+	return ids;
+}
+
+/** Invalidate a user's cached group_ids (call on group-membership change). */
+export async function invalidateUserGroups(userId: string): Promise<void> {
+	await cacheDel(`authz:groups:${userId}`);
+}
+
+/**
+ * L0 scope-signature: a stable digest of the effective scope-id SET a group set
+ * resolves to for (resourceType, verb). Many users share the exact same set, so
+ * the signature is the natural key for the L1 result-page cache -- 300 users in
+ * one group collapse to one signature (docs/authz_caching.md section 4). The
+ * signature is itself cached, keyed by the sorted groupIds hash + the global
+ * authz generation (so a grant/role/scope edit rotates it via bumpAuthzGen()).
+ */
+export async function scopeSignature(
+	groupIds: string[],
+	verb: string,
+	resourceType = 'device',
+): Promise<string> {
+	if (groupIds.length === 0) return 'none';
+	const g = await authzGen();
+	const gh = hashKey(...[...groupIds].sort());
+	const key = `authz:sig:${g}:${resourceType}:${verb}:${gh}`;
+	const hit = await cacheGet<string>(key);
+	if (hit) return hit;
+	const rows = await globalDb<{ scope_id: string }[]>`
+		SELECT scope_id::text AS scope_id
+		FROM authz_effective_scopes(${groupIds}::uuid[], ${resourceType}, ${verb})
+		ORDER BY scope_id
+	`;
+	const sig = hashKey('sig', ...rows.map((r) => r.scope_id));
+	await cacheSet(key, sig, await l0Ttl());
+	return sig;
 }
 
 /** Step 2 (GLOBAL): keyset-paginated list of devices the groups may `verb`. */

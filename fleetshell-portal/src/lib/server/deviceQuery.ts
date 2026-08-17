@@ -5,7 +5,10 @@
 // page load (list) and /devices/count (total) stay in lockstep.
 
 import { globalDb } from './db';
-import { resolveGroupIds } from './authz';
+import { resolveGroupIds, scopeSignature } from './authz';
+import { cacheGet, cacheSet, hashKey, authzGen, l1Ttl } from './cache';
+
+export type CountResult = { total: number; ms: number; cached: boolean };
 
 // Bare terms hit the most-used fields; `qualifier:value` restricts to one; ANDed.
 export const QUALIFIERS: Record<string, string[]> = {
@@ -43,18 +46,30 @@ export function buildDeviceWhere(query: string) {
  * (~800ms; materializes the visible-id set), so callers compute it only when
  * the filter changes -- the page threads the result through pagination links.
  */
-export async function countDevices(userId: string, mode: 'scope' | 'all', q: string): Promise<number> {
+export async function countDevices(userId: string, mode: 'scope' | 'all', q: string): Promise<CountResult> {
 	const where = buildDeviceWhere(q);
+	const t0 = performance.now();
 	if (mode === 'all') {
+		const g = await authzGen();
+		const key = `count:dev:${g}:all:${hashKey(q)}`;
+		const hit = await cacheGet<number>(key);
+		if (hit !== undefined) return { total: hit, ms: Math.round(performance.now() - t0), cached: true };
 		const [{ total }] = await globalDb<{ total: number }[]>`
 			SELECT count(*)::int AS total FROM device d WHERE ${where}`;
-		return total;
+		await cacheSet(key, total, await l1Ttl());
+		return { total, ms: Math.round(performance.now() - t0), cached: false };
 	}
 	const groupIds = await resolveGroupIds(userId);
-	if (!groupIds.length) return 0;
+	if (!groupIds.length) return { total: 0, ms: Math.round(performance.now() - t0), cached: false };
+	const sig = await scopeSignature(groupIds, 'view');
+	const g = await authzGen();
+	const key = `count:dev:${g}:${sig}:${hashKey(q)}`;
+	const hit = await cacheGet<number>(key);
+	if (hit !== undefined) return { total: hit, ms: Math.round(performance.now() - t0), cached: true };
 	const [{ total }] = await globalDb<{ total: number }[]>`
 		SELECT count(*)::int AS total
 		FROM device d JOIN authz_visible_device_ids(${groupIds}::uuid[], 'view') v ON v.id = d.id
 		WHERE ${where}`;
-	return total;
+	await cacheSet(key, total, await l1Ttl());
+	return { total, ms: Math.round(performance.now() - t0), cached: false };
 }

@@ -3,6 +3,7 @@ import { fail, error, redirect } from '@sveltejs/kit';
 import { base } from '$app/paths';
 import { globalDb } from '$lib/server/db';
 import { getPersona } from '$lib/server/identity';
+import { bumpAuthzGen } from '$lib/server/cache';
 
 // Type rows (extensible) x fixed CRUD verbs (+ device:connect) = the matrix.
 const TYPES = ['device','gateway','product','customer','site','region','group','service','role','grant','account','persona'];
@@ -102,6 +103,7 @@ export const actions: Actions = {
 					SELECT ${id}, unnest(${priv}::uuid[])`;
 			}
 		});
+		await bumpAuthzGen(); // role privileges changed -> flush signature/page/count caches
 		throw redirect(303, `${base}/administration/roles?sel=${encodeURIComponent(id)}`);
 	},
 
