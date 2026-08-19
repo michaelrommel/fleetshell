@@ -38,7 +38,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use russh::client;
-use russh::keys::PublicKey;
+use russh::keys::{Algorithm, HashAlg, PublicKey};
 use russh::{cipher, kex, mac, ChannelMsg, Preferred};
 use std::borrow::Cow;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -72,33 +72,72 @@ pub struct SshParams {
 /// Build the russh algorithm preference list.
 ///
 /// In strict mode this is russh's modern default.  In compat mode the legacy
-/// algorithms russh compiles in (but excludes from its defaults) are *appended*
-/// after the strong ones: `diffie-hellman-group{1,14}-sha1` and
-/// `-group-exchange-sha1` for KEX, `aes{128,192,256}-cbc` and `3des-cbc` for
-/// ciphers, and `hmac-sha1(-etm)` for MACs.  Because they are last, a capable
-/// device still negotiates strong crypto; only a weak-only device falls back.
+/// algorithms that old devices (e.g. ancient Cisco IOS) require are moved to
+/// the *front* of each preference list so they are actually offered even when
+/// the peer's own list is short or it stops at the first mismatch.  A capable
+/// device still negotiates strong crypto because the modern defaults follow
+/// right after; a weak-only device now finds a match at the head of the list.
+///
+/// Legacy heads:
+/// - KEX:     `diffie-hellman-group-exchange-sha1`, `diffie-hellman-group14-sha1`
+/// - host key: `ssh-rsa` (RSA/SHA-1) -- forced ahead of `rsa-sha2-*` because old
+///   Cisco IOS advertises `rsa-sha2-256/512` in its KEXINIT but then signs the
+///   exchange hash with plain `ssh-rsa` (SHA-1), which makes russh reject the
+///   signature (`WrongServerSig`) when it verifies with SHA-2.  Negotiating
+///   `ssh-rsa` up front makes the hash match.
+/// - ciphers: `aes256-ctr`, `aes256-cbc`
+/// - MACs:    `hmac-sha2-512`, `hmac-sha2-256`
 fn preferred_algorithms(compat: bool) -> Preferred {
 	let base = Preferred::DEFAULT;
 	if !compat {
 		return base;
 	}
 
-	let mut kexes: Vec<kex::Name> = base.kex.to_vec();
-	kexes.extend_from_slice(&[kex::DH_G14_SHA1, kex::DH_G1_SHA1, kex::DH_GEX_SHA1]);
+	// Prepend the legacy-friendly algorithms, then the modern defaults, then
+	// the remaining weak fallbacks russh compiles in.  `dedup_front` keeps the
+	// first occurrence so an algorithm listed both up front and in the base
+	// list appears only once, at its preferred (front) position.
+	fn dedup_front<T: PartialEq + Clone>(front: &[T], base: &[T], tail: &[T]) -> Vec<T> {
+		let mut out: Vec<T> = Vec::new();
+		for item in front.iter().chain(base.iter()).chain(tail.iter()) {
+			if !out.contains(item) {
+				out.push(item.clone());
+			}
+		}
+		out
+	}
 
-	let mut ciphers: Vec<cipher::Name> = base.cipher.to_vec();
-	ciphers.extend_from_slice(&[
-		cipher::AES_256_CBC,
-		cipher::AES_192_CBC,
-		cipher::AES_128_CBC,
-		cipher::TRIPLE_DES_CBC,
-	]);
+	let kexes = dedup_front(
+		&[kex::DH_GEX_SHA1, kex::DH_G14_SHA1],
+		&base.kex,
+		&[kex::DH_G1_SHA1],
+	);
 
-	let mut macs: Vec<mac::Name> = base.mac.to_vec();
-	macs.extend_from_slice(&[mac::HMAC_SHA1_ETM, mac::HMAC_SHA1]);
+	// Force ssh-rsa (SHA-1) ahead of rsa-sha2-* for the exchange-hash signature.
+	let keys = dedup_front(
+		&[Algorithm::Rsa { hash: None }],
+		&base.key,
+		&[
+			Algorithm::Rsa { hash: Some(HashAlg::Sha256) },
+			Algorithm::Rsa { hash: Some(HashAlg::Sha512) },
+		],
+	);
+
+	let ciphers = dedup_front(
+		&[cipher::AES_256_CTR, cipher::AES_256_CBC],
+		&base.cipher,
+		&[cipher::AES_192_CBC, cipher::AES_128_CBC, cipher::TRIPLE_DES_CBC],
+	);
+
+	let macs = dedup_front(
+		&[mac::HMAC_SHA512, mac::HMAC_SHA256],
+		&base.mac,
+		&[mac::HMAC_SHA1_ETM, mac::HMAC_SHA1],
+	);
 
 	Preferred {
 		kex:     Cow::Owned(kexes),
+		key:     Cow::Owned(keys),
 		cipher:  Cow::Owned(ciphers),
 		mac:     Cow::Owned(macs),
 		..base

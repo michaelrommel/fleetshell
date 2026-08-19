@@ -555,7 +555,7 @@ See §7 Open work items — Client below.
 | HTTP parsing | httparse 1 (transform mode) |
 | Serialisation | serde + serde_json |
 | Logging | tracing + tracing-subscriber |
-| SSH (direct mode) | russh 0.62 (ring backend, no aws-lc-rs) |
+| SSH (direct mode) | russh 0.62 (ring backend, no aws-lc-rs; `rsa` feature for RSA/`ssh-rsa` host-key verify) |
 | Build target | `x86_64-unknown-linux-musl` |
 
 ### Configuration (environment variables)
@@ -628,7 +628,7 @@ After `200 CONNECTED`: raw byte pipe.
 | `recording.rs` | `RecordingMeta` struct; `write_job_file()`; `new_recording_name()` (ms timestamp + atomic seq); `now_ms()` |
 | `handler.rs` | Parse → auth → SSH-direct / probe / guac / transform/e2e; builds `RecordingMeta`; writes job file on session end (both Case 1: guacd-closed and Case 2: park-grace expired) |
 | `health.rs` | HTTP health-check; probes at DEBUG only |
-| `ssh.rs` | Direct SSH via `russh`: `SshParams`, `AcceptAllKeys` handler, PTY alloc, shell, framed relay loop |
+| `ssh.rs` | Direct SSH via `russh`: `SshParams`, `AcceptAllKeys` handler, PTY alloc, shell, framed relay loop; `preferred_algorithms(compat)` prepends legacy KEX/cipher/MAC + `ssh-rsa` host key when `ssh_compat` set |
 | `tls.rs` | `build_acceptor()` — PEM files or rcgen self-signed |
 | `transform.rs` | HTTP/1.1 proxy; `TransformHook` trait; `NoopHook`; `SkipServerVerification` |
 | `bin/guacrecord.rs` | Post-processor binary: inotify watch on `jobs/`; runs `guacenc`; extracts keystrokes; writes `.keys.txt`, `.srt`, `.meta.json`, `.zip`; uploads to S3 via OpenDAL |
@@ -665,6 +665,34 @@ bypasses guacd entirely and speaks SSH natively via `russh`.
 - Initial PTY cols/rows: `cols = (width / 8).max(40)`, `rows = (height / 16).max(10)`.
 - When `e2ecrypt: true` for `application:"ssh"`, falls through to raw TCP
   passthrough so a native SSH client can connect through the tunnel unmolested.
+
+**Legacy/compat algorithms (`ssh_compat` JWT claim).** When the tunnel JWT
+carries `ssh_compat: true`, `preferred_algorithms(compat=true)` in `ssh.rs`
+*prepends* legacy-friendly algorithms to the **front** of each russh preference
+list (deduped against the modern defaults, which still follow right behind, so a
+capable device negotiates strong crypto and only a weak-only device falls back):
+- **KEX:** `diffie-hellman-group-exchange-sha1`, `diffie-hellman-group14-sha1`
+  (then modern defaults, then `diffie-hellman-group1-sha1`)
+- **host key:** `ssh-rsa` (RSA/SHA-1) forced ahead of `rsa-sha2-*` -- old Cisco
+  IOS advertises `rsa-sha2-256/512` but signs the exchange hash with plain
+  `ssh-rsa`, which russh would otherwise reject as `WrongServerSig`
+- **ciphers:** `aes256-ctr`, `aes256-cbc` (then defaults, then
+  `aes192-cbc`/`aes128-cbc`/`3des-cbc`)
+- **MACs:** `hmac-sha2-512`, `hmac-sha2-256` (then defaults, then
+  `hmac-sha1-etm`/`hmac-sha1`)
+
+  The claim originates from the SSH app's **Legacy/compat** checkbox
+  (`product_model_app.ssh_compat`), is forwarded by the `/devices` page to
+  `POST /api/tunnel/sign`, embedded in the JWT, and logged by the gateway as
+  `ssh_compat=...` at JWT verification and `compat=...` at the SSH connect.
+
+**Cargo feature requirement.** The gateway pulls russh with
+`default-features = false`, which drops russh's default `rsa` feature. `rsa`
+must be re-added explicitly (`features = ["ring", "des", "rsa"]`) so `ssh-key`
+can verify RSA host-key signatures. `ssh-key`'s `ssh-rsa` (RSA/SHA-1) verify arm
+is gated on **both** `ssh-key/rsa` and `ssh-key/sha1`; russh already enables
+`ssh-key/sha1`, so adding `rsa` completes the pair. Without it, RSA host keys
+fail with `signature::Error { unsupported algorithm: ssh-rsa }`.
 
 ### Guacamole mode
 
@@ -860,6 +888,9 @@ JWT claim matches automatically without extra env vars.
 - [x] `relay_guac()` expanded debug: per-direction byte counts, EOF/error
       distinction, explicit `flush()` after client writes, iteration counter
 - [x] Direct SSH mode: `ssh.rs` (russh 0.62) — PTY, shell, framed relay, all SSH modes
+- [x] SSH legacy/compat: `ssh_compat` JWT claim prepends legacy KEX/cipher/MAC +
+      `ssh-rsa` host-key algorithm; russh `rsa` feature enables `ssh-rsa`/SHA-1
+      host-key verification for old Cisco IOS
 - [x] Session recording: `record` JWT claim, `recording.rs`, `guacrecord` binary,
       S3 upload via OpenDAL, `.guac`/`.m4v`/`.keys.txt`/`.srt`/`.zip`/`.meta.json`
 - [ ] Concrete `TransformHook`: rewrite `Host:` header, inject auth headers

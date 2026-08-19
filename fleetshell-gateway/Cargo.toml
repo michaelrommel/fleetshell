@@ -45,7 +45,13 @@ tracing-subscriber  = { version = "0.3", features = ["env-filter", "fmt"] }
 # of this gateway (avoids pulling in aws-lc-rs).  The "des" feature adds the
 # legacy 3des-cbc cipher, offered only when a session opts into SSH compat mode
 # (ssh_compat JWT claim) for ancient field devices.
-russh       = { version = "0.62", default-features = false, features = ["ring", "des"] }
+# The "rsa" feature enables ssh-key's RSA verifier so the gateway can validate
+# RSA host-key signatures - including the legacy `ssh-rsa` (RSA/SHA-1) scheme
+# old Cisco IOS uses.  ssh-key's ssh-rsa verify arm is gated on both `rsa` and
+# `sha1`; russh already enables ssh-key/sha1, so adding `rsa` completes it.
+# Without this (default-features=false drops russh's default `rsa`), RSA host
+# keys fail with "unsupported algorithm: ssh-rsa".
+russh       = { version = "0.62", default-features = false, features = ["ring", "des", "rsa"] }
 
 # ── Error handling ───────────────────────────────────────────────────────────
 thiserror   = "1"
