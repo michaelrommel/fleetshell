@@ -31,17 +31,15 @@
         { "name": "LOCAL_DB_PORT",  "value": "5432" },
         { "name": "LOCAL_DB_NAME",  "value": "fleetshell_local" },
         { "name": "VALKEY_URL",     "value": "rediss://clustercfg.dev-valkey-aeroftp.ak121m.memorydb.eu-west-2.amazonaws.com:6379" },
-        { "name": "GUACD_S3_BUCKET", "value": "dev-s3-fleetshell" }
+        { "name": "GUACD_S3_BUCKET", "value": "dev-s3-fleetshell" },
+        { "name": "GLOBAL_DB_SECRET_ARN", "value": "arn:aws:secretsmanager:eu-west-2:295934382486:secret:fleetshell/global/master-x3Pexj" },
+        { "name": "LOCAL_DB_SECRET_ARN",  "value": "arn:aws:secretsmanager:eu-west-2:295934382486:secret:rds!cluster-4a19c703-8dc1-4f23-8d36-326d9ca0f398-I6Wbu0" }
       ],
       "secrets": [
         { "name": "CLIENT_CERT",        "valueFrom": "arn:aws:secretsmanager:eu-west-2:295934382486:secret:fleetshell/client-cert-Uhh4oy" },
         { "name": "CLIENT_KEY",         "valueFrom": "arn:aws:secretsmanager:eu-west-2:295934382486:secret:fleetshell/client-key-OvOAuj" },
         { "name": "JWT_SECRET",         "valueFrom": "arn:aws:secretsmanager:eu-west-2:295934382486:secret:aerotrack/auth_secret-zTocUO" },
-        { "name": "SESSION_SECRET",     "valueFrom": "arn:aws:secretsmanager:eu-west-2:295934382486:secret:fleetshell/portal/session-secret-K8vmuH" },
-        { "name": "GLOBAL_DB_USER",     "valueFrom": "arn:aws:secretsmanager:eu-west-2:295934382486:secret:fleetshell/global/master-x3Pexj:username::" },
-        { "name": "GLOBAL_DB_PASSWORD", "valueFrom": "arn:aws:secretsmanager:eu-west-2:295934382486:secret:fleetshell/global/master-x3Pexj:password::" },
-        { "name": "LOCAL_DB_USER",      "valueFrom": "arn:aws:secretsmanager:eu-west-2:295934382486:secret:rds!cluster-4a19c703-8dc1-4f23-8d36-326d9ca0f398-I6Wbu0:username::" },
-        { "name": "LOCAL_DB_PASSWORD",  "valueFrom": "arn:aws:secretsmanager:eu-west-2:295934382486:secret:rds!cluster-4a19c703-8dc1-4f23-8d36-326d9ca0f398-I6Wbu0:password::" }
+        { "name": "SESSION_SECRET",     "valueFrom": "arn:aws:secretsmanager:eu-west-2:295934382486:secret:fleetshell/portal/session-secret-K8vmuH" }
       ],
       "logConfiguration": {
         "logDriver": "awslogs",

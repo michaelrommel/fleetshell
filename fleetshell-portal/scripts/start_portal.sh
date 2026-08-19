@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
 
-export PORTAL_USERNAME=demo
-export PORTAL_PASSWORD=bratwurst13
 export JWT_SECRET="change-me-in-production"
 #export DOWNLOAD_VNC_VIEWER=123
 #export DOWNLOAD_TEAMVIEWER_CLIENT=123

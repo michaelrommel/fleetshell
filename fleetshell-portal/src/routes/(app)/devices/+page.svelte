@@ -85,7 +85,7 @@
 
 	const canEdit = $derived(data.isAdmin);
 	const d = $derived(data.detail as Record<string, string | null> | null);
-	type App = { name: string; application: string; ports: string; guac: boolean; e2ecrypt: boolean; sni: string; path: string; drive: boolean; record: boolean; width?: number; height?: number; dpi?: number };
+	type App = { name: string; application: string; ports: string; guac: boolean; e2ecrypt: boolean; sni: string; path: string; drive: boolean; record: boolean; ssh_compat?: boolean; width?: number; height?: number; dpi?: number };
 	const apps = $derived((data.detail?.apps ?? []) as App[]);
 
 	// ---- Recordings browser (lazy; gated by data.canRecordings) ---------------
@@ -401,12 +401,18 @@
 		const rows = selectedRows();
 		const allPorts = rows.map((r) => r.ports).filter(Boolean).join(',');
 		const record = rows.find((r) => r.guac && guacApplicable(r))?.record ?? false;
+		// ssh_compat only affects the gateway's direct-SSH (russh) path:
+		// application="ssh", not guac, not e2ecrypt. Forward it from any such
+		// selected row so the minted JWT carries the ssh_compat claim.
+		const sshCompat = rows.some(
+			(r) => r.application === 'ssh' && !r.guac && !r.e2ecrypt && !!r.ssh_compat
+		);
 
 		let token: string;
 		try {
 			const res = await fetch(`${base}/api/tunnel/sign`, {
 				method: 'POST', headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ deviceId: d?.id, ports: allPorts, record }),
+				body: JSON.stringify({ deviceId: d?.id, ports: allPorts, record, ssh_compat: sshCompat }),
 			});
 			if (!res.ok) {
 				if (res.status === 401) { window.location.href = `${base}/login`; return; }

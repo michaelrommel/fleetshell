@@ -39,6 +39,26 @@ set -euo pipefail
 # NOTE: the local RDS-managed secret + the global secret both use the AWS-managed
 # aws/secretsmanager KMS key, so the execution role's SecretsManagerReadWrite is
 # sufficient -- no extra kms:Decrypt policy is required.
+#
+# RUNTIME DB-SECRET FETCH (rotation-safe): the DB passwords are NO LONGER injected
+# via `secrets`/valueFrom (which ECS resolves only once at task start, so a
+# rotated secret silently breaks the running container -- the "password
+# authentication failed for user fsadmin" incident). Instead the task def now
+# passes GLOBAL_DB_SECRET_ARN / LOCAL_DB_SECRET_ARN as plain env vars and the
+# portal (src/lib/server/db.ts + secrets.ts) fetches the password from Secrets
+# Manager at runtime via a dynamic postgres.js `password` callback, refreshing on
+# rotation with no restart. This runtime call uses the TASK ROLE
+# (ecsTaskExecutionRoleWithSSM), NOT the execution role -- so the TASK ROLE must
+# hold secretsmanager:GetSecretValue on BOTH:
+#   arn:...:secret:fleetshell/global/master-x3Pexj
+#   arn:...:secret:rds!cluster-4a19c703-...-I6Wbu0
+# (plus kms:Decrypt if either is ever moved to a CMK). Attach e.g.:
+#   aws iam put-role-policy --role-name ecsTaskExecutionRoleWithSSM \
+#     --policy-name fleetshell-db-secret-read --policy-document '{
+#       "Version":"2012-10-17","Statement":[{"Effect":"Allow",
+#       "Action":"secretsmanager:GetSecretValue","Resource":[
+#         "arn:aws:secretsmanager:eu-west-2:295934382486:secret:fleetshell/global/master-x3Pexj",
+#         "arn:aws:secretsmanager:eu-west-2:295934382486:secret:rds!cluster-4a19c703-8dc1-4f23-8d36-326d9ca0f398-I6Wbu0"]}]}'
 
 export AWS_PAGER=""
 REGION="eu-west-2"
