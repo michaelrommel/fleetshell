@@ -39,7 +39,8 @@ use std::sync::Arc;
 
 use russh::client;
 use russh::keys::PublicKey;
-use russh::ChannelMsg;
+use russh::{cipher, kex, mac, ChannelMsg, Preferred};
+use std::borrow::Cow;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tracing::{debug, info, warn};
 
@@ -59,6 +60,49 @@ pub struct SshParams {
 	pub cols: u32,
 	/// Initial PTY rows.
 	pub rows: u32,
+	/// When `true`, offer legacy key-exchange, cipher and MAC algorithms in
+	/// addition to the modern defaults, so old/insecure field devices can
+	/// negotiate.  Strong algorithms remain first in the preference list; the
+	/// weak set is only reached when the device supports nothing better.
+	pub compat: bool,
+}
+
+// ── Algorithm negotiation ─────────────────────────────────────────────────────
+
+/// Build the russh algorithm preference list.
+///
+/// In strict mode this is russh's modern default.  In compat mode the legacy
+/// algorithms russh compiles in (but excludes from its defaults) are *appended*
+/// after the strong ones: `diffie-hellman-group{1,14}-sha1` and
+/// `-group-exchange-sha1` for KEX, `aes{128,192,256}-cbc` and `3des-cbc` for
+/// ciphers, and `hmac-sha1(-etm)` for MACs.  Because they are last, a capable
+/// device still negotiates strong crypto; only a weak-only device falls back.
+fn preferred_algorithms(compat: bool) -> Preferred {
+	let base = Preferred::DEFAULT;
+	if !compat {
+		return base;
+	}
+
+	let mut kexes: Vec<kex::Name> = base.kex.to_vec();
+	kexes.extend_from_slice(&[kex::DH_G14_SHA1, kex::DH_G1_SHA1, kex::DH_GEX_SHA1]);
+
+	let mut ciphers: Vec<cipher::Name> = base.cipher.to_vec();
+	ciphers.extend_from_slice(&[
+		cipher::AES_256_CBC,
+		cipher::AES_192_CBC,
+		cipher::AES_128_CBC,
+		cipher::TRIPLE_DES_CBC,
+	]);
+
+	let mut macs: Vec<mac::Name> = base.mac.to_vec();
+	macs.extend_from_slice(&[mac::HMAC_SHA1_ETM, mac::HMAC_SHA1]);
+
+	Preferred {
+		kex:     Cow::Owned(kexes),
+		cipher:  Cow::Owned(ciphers),
+		mac:     Cow::Owned(macs),
+		..base
+	}
 }
 
 // ── Host-key handler ──────────────────────────────────────────────────────────
@@ -110,7 +154,13 @@ where
 	info!(%peer, %target, username = %params.username, "SSH: connecting");
 
 	// ── 1. TCP connect + SSH handshake ────────────────────────────────────────
-	let config = Arc::new(client::Config::default());
+	let config = Arc::new(client::Config {
+		preferred: preferred_algorithms(params.compat),
+		..client::Config::default()
+	});
+	if params.compat {
+		info!(%peer, %target, "SSH: legacy/compat algorithms enabled");
+	}
 	let mut session = client::connect(config, target.as_str(), AcceptAllKeys)
 		.await
 		.map_err(|e| format!("SSH connect to {target} failed: {e}"))?;

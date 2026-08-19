@@ -40,10 +40,12 @@ tracing-subscriber  = { version = "0.3", features = ["env-filter", "fmt"] }
 
 # ── SSH client (direct SSH handler, bypasses guacd) ────────────────────────
 # russh is a pure-Rust async SSH implementation.  No separate russh-keys
-# needed in 0.62 — key types come from the ssh-key crate re-exported by russh.
+# needed in 0.62 - key types come from the ssh-key crate re-exported by russh.
 # The "ring" feature forces the ring crypto backend, consistent with the rest
-# of this gateway (avoids pulling in aws-lc-rs).
-russh       = { version = "0.62", default-features = false, features = ["ring"] }
+# of this gateway (avoids pulling in aws-lc-rs).  The "des" feature adds the
+# legacy 3des-cbc cipher, offered only when a session opts into SSH compat mode
+# (ssh_compat JWT claim) for ancient field devices.
+russh       = { version = "0.62", default-features = false, features = ["ring", "des"] }
 
 # ── Error handling ───────────────────────────────────────────────────────────
 thiserror   = "1"

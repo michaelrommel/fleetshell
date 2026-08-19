@@ -14,6 +14,10 @@ RUN mkdir -p /workspace/test-guac/src && \
 	printf '[package]\nname = "test-guac"\nversion = "0.1.0"\nedition = "2021"\n' \
 		> /workspace/test-guac/Cargo.toml && \
 	echo 'fn main() {}' > /workspace/test-guac/src/main.rs
+RUN mkdir -p /workspace/squid-infoproxy/src && \
+	printf '[package]\nname = "squid-infoproxy"\nversion = "0.1.0"\nedition = "2021"\n' \
+		> /workspace/squid-infoproxy/Cargo.toml && \
+	echo 'fn main() {}' > /workspace/squid-infoproxy/src/main.rs
 RUN apk add --no-cache musl-dev openssl-dev openssl-libs-static protoc
 RUN cargo build --release -p fleetshell-gateway --target x86_64-unknown-linux-musl
 

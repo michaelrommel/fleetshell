@@ -51,6 +51,13 @@ pub struct Claims {
     /// When `true`, the gateway should record this session to
     /// `GUACD_RECORDING_PATH/<target>/`.  Absent (or `false`) = no recording.
     pub record: Option<bool>,
+    /// When `true`, the direct-SSH (russh) handler additionally offers legacy
+    /// key-exchange, cipher and MAC algorithms (e.g. `diffie-hellman-group1-sha1`,
+    /// `aes*-cbc`, `hmac-sha1`) so ancient/insecure field devices can connect.
+    /// Strong algorithms are still preferred; the weak set is only a fallback.
+    /// Absent (or `false`) = strict, modern-only negotiation. No effect on the
+    /// guacd or e2e paths.
+    pub ssh_compat: Option<bool>,
 }
 
 // ── Errors ────────────────────────────────────────────────────────────────────

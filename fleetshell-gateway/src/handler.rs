@@ -213,9 +213,10 @@ where
                 ports  = %claims.ports,
                 gw     = ?claims.gw,
                 record = ?claims.record,
+                ssh_compat = ?claims.ssh_compat,
                 "JWT verified and connection authorised"
             );
-            (claims.record.unwrap_or(false), claims.sub)
+            (claims.record.unwrap_or(false), claims.ssh_compat.unwrap_or(false), claims.sub)
         }
         Err(e) => {
             // Distinguish between a bad/expired token (401) and a valid token
@@ -235,7 +236,7 @@ where
             return;
         }
     };
-    let (jwt_record, jwt_sub) = jwt_record;
+    let (jwt_record, jwt_ssh_compat, jwt_sub) = jwt_record;
 
     // ── 4b. Direct SSH mode (application="ssh", guac:false, e2ecrypt:false) ──────────
     //
@@ -257,6 +258,7 @@ where
             password: payload.password.clone().unwrap_or_default(),
             cols:     payload.width.map(|w| w / 8).unwrap_or(220).max(40),
             rows:     payload.height.map(|h| h / 16).unwrap_or(50).max(10),
+            compat:   jwt_ssh_compat,
         };
 
         info!(
@@ -266,7 +268,8 @@ where
             username = %params.username,
             cols     = params.cols,
             rows     = params.rows,
-            "direct SSH mode — bypassing guacd"
+            compat   = params.compat,
+            "direct SSH mode - bypassing guacd"
         );
 
         send_line(&mut writer_half, b"200 CONNECTED\n").await;
