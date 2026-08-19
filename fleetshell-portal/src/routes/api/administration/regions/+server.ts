@@ -12,8 +12,13 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 	const like = '%' + q + '%';
 	// Empty query = browse the top of the tree (lowest levels first).
 	const filter = q ? globalDb`AND name ILIKE ${like}` : globalDb``;
-	const items = await globalDb<{ path: string; name: string; iso: string | null; level: number }[]>`
-		SELECT path::text AS path, name, iso, level FROM region
-		WHERE true ${filter} ORDER BY level, name LIMIT 25`;
+	// `display` = the ancestor-name breadcrumb (World root dropped, level >= 2), e.g.
+	// "North America / United States / Alabama" -- used as the picker label.
+	const items = await globalDb<{ path: string; name: string; iso: string | null; level: number; display: string }[]>`
+		SELECT r.path::text AS path, r.name, r.iso, r.level,
+		       COALESCE(NULLIF((SELECT string_agg(a.name, ' / ' ORDER BY nlevel(a.path))
+		                          FROM region a WHERE a.path @> r.path AND a.level >= 2), ''), r.name) AS display
+		FROM region r
+		WHERE true ${filter} ORDER BY r.level, r.name LIMIT 25`;
 	return json({ items });
 };

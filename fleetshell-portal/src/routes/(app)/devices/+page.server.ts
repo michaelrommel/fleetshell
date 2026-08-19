@@ -153,7 +153,7 @@ async function loadDetail(sel: string | null) {
 	const [d] = await globalDb<Record<string, unknown>[]>`
 		SELECT d.id::text AS id, d.serial, d.functional_location, d.technical_ident, d.host_hw_id,
 		       d.order_number, d.ip_address, d.ip_real, d.contact, d.city, d.hospital_name, d.software_version,
-		       d.access_requirement, d.country_iso, d.nat_mode, d.internal_use, d.dpa, d.dmy,
+		       d.access_requirement, d.country_iso, d.internal_use, d.dpa, d.dmy,
 		       d.notify_on_access, d.notify_on_disconnect, d.notification_info_active, d.notify_pseudonymized,
 		       d.notification_address, d.display_before_connect, d.additional_info,
 		       d.product_path::text AS product_path, d.region_path::text AS region_path,
@@ -163,7 +163,7 @@ async function loadDetail(sel: string | null) {
 		       (SELECT md.name FROM product md WHERE md.path = subltree(d.product_path, 0, 2)) AS modality_name,
 		       reg.name AS region_name, cu.name AS customer_name, si.name AS site_name,
 		       gw.hostname AS gateway_dns, COALESCE(gw.name, gw.hostname) AS gateway_name, gw.hospital AS gateway_label,
-		       gw.tunnel_gateway AS gateway_tunnel
+		       gw.tunnel_gateway AS gateway_tunnel, gw.nat_mode AS gateway_nat_mode
 		FROM device d
 		LEFT JOIN product m        ON m.path = d.product_path
 		LEFT JOIN product_model pm ON pm.product_id = m.id
@@ -177,7 +177,7 @@ async function loadDetail(sel: string | null) {
 	// Per-device override (device_app) is a later slice; read-only for now.
 	const apps = await globalDb<Record<string, unknown>[]>`
 		SELECT pma.name, pma.application, pma.ports, pma.guac, pma.e2ecrypt, pma.sni, pma.path,
-		       pma.width, pma.height, pma.dpi, pma.drive, pma.record
+		       pma.width, pma.height, pma.dpi, pma.drive, pma.record, pma.ssh_compat
 		FROM product_model_app pma
 		JOIN product m ON m.id = pma.product_id
 		WHERE m.path = ${d.product_path as string}::ltree
@@ -210,7 +210,6 @@ function editFields(d: FormData) {
 		product_path: orNull(d.get('product_path')),
 		region_path: orNull(d.get('region_path')),
 		gateway_id: orNull(d.get('gateway_id')),
-		nat_mode: String(d.get('nat_mode')) === 'platform' ? 'platform' : 'customer',
 		internal_use: internalUse === 'STD' || internalUse === 'NIU' ? internalUse : null,
 		dpa: d.get('dpa') === 'on',
 		dmy: d.get('dmy') === 'on',
@@ -248,7 +247,7 @@ export const actions: Actions = {
 				region_path = ${f.region_path}::ltree,
 				country_iso = (SELECT iso FROM region WHERE path = ${f.region_path}::ltree),
 				gateway_id = ${f.gateway_id}::uuid,
-				nat_mode = ${f.nat_mode}, internal_use = ${f.internal_use}, dpa = ${f.dpa}, dmy = ${f.dmy},
+				internal_use = ${f.internal_use}, dpa = ${f.dpa}, dmy = ${f.dmy},
 				notify_on_access = ${f.notify_on_access}, notify_on_disconnect = ${f.notify_on_disconnect},
 				notification_info_active = ${f.notification_info_active}, notify_pseudonymized = ${f.notify_pseudonymized},
 				notification_address = ${f.notification_address}, display_before_connect = ${f.display_before_connect},
@@ -276,7 +275,7 @@ export const actions: Actions = {
 		const [row] = await globalDb<{ id: string }[]>`
 			INSERT INTO device (serial, functional_location, technical_ident, host_hw_id, order_number,
 				ip_address, ip_real, contact, hospital_name, city, software_version, access_requirement,
-				product_path, modality, region_path, country_iso, gateway_id, nat_mode, internal_use, dpa, dmy,
+				product_path, modality, region_path, country_iso, gateway_id, internal_use, dpa, dmy,
 				notify_on_access, notify_on_disconnect, notification_info_active, notify_pseudonymized,
 				notification_address, display_before_connect, additional_info)
 			VALUES (${f.serial}, ${f.functional_location}, ${f.technical_ident}, ${f.host_hw_id}, ${f.order_number},
@@ -285,7 +284,7 @@ export const actions: Actions = {
 				(SELECT md.name FROM product md WHERE md.path = subltree(${f.product_path}::ltree, 0, 2)),
 				${f.region_path}::ltree,
 				(SELECT iso FROM region WHERE path = ${f.region_path}::ltree),
-				${f.gateway_id}::uuid, ${f.nat_mode}, ${f.internal_use}, ${f.dpa}, ${f.dmy},
+				${f.gateway_id}::uuid, ${f.internal_use}, ${f.dpa}, ${f.dmy},
 				${f.notify_on_access}, ${f.notify_on_disconnect}, ${f.notification_info_active}, ${f.notify_pseudonymized},
 				${f.notification_address}, ${f.display_before_connect}, ${f.additional_info})
 			RETURNING id::text AS id`;

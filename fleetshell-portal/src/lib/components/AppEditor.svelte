@@ -13,6 +13,7 @@
 	type Row = {
 		name: string; ports: string; application: string; guac: boolean; e2ecrypt: boolean;
 		sni: string; path: string; width: number; height: number; dpi: number; drive: boolean; record: boolean;
+		ssh_compat: boolean;
 	};
 	let { productId, apps, canEdit }:
 		{ productId: string; apps: Partial<Row>[]; canEdit: boolean } = $props();
@@ -22,7 +23,7 @@
 			name: a.name ?? '', ports: a.ports ?? '', application: a.application ?? 'https',
 			guac: a.guac ?? false, e2ecrypt: a.e2ecrypt ?? false, sni: a.sni ?? '', path: a.path ?? '/',
 			width: a.width ?? 1920, height: a.height ?? 1080, dpi: a.dpi ?? 96,
-			drive: a.drive ?? false, record: a.record ?? false,
+			drive: a.drive ?? false, record: a.record ?? false, ssh_compat: a.ssh_compat ?? false,
 		};
 	}
 	function blank(): Row { return seed({}); }
@@ -37,12 +38,16 @@
 		return (r.application === 'http' || r.application === 'https' || r.application === 'expert-i') && !r.e2ecrypt;
 	}
 	function showGuacParams(r: Row) { return r.guac && guacApplicable(r); }
+	// SSH direct (russh) mode: application=ssh, not routed through guacd, not e2e.
+	// This is the only mode where ssh_compat has any effect on the gateway.
+	function showSshParams(r: Row) { return r.application === 'ssh' && !r.guac && !r.e2ecrypt; }
 	function showPathParam(r: Row) { return r.application === 'http' || r.application === 'https' || r.application === 'expert-i'; }
 	function onAppChange(r: Row) {
 		if (guacApplicable(r)) { if (!r.guac && r.application !== 'ssh') r.e2ecrypt = true; }
 		else { r.guac = false; r.e2ecrypt = false; }
 		if (r.application !== 'rdp') r.drive = false;
 		if (!guacApplicable(r)) r.record = false;
+		if (r.application !== 'ssh') r.ssh_compat = false;
 	}
 	function addRow() { rows = [...rows, blank()]; }
 	function removeRow(i: number) { rows = rows.filter((_, idx) => idx !== i); }
@@ -113,6 +118,15 @@
 					</label>
 				</div>
 			{/if}
+			{#if showSshParams(row)}
+				<div class="port-row-ssh">
+					<span class="guac-param-label">SSH</span>
+					<label class="ssh-param-compat" title="Offer legacy KEX/cipher/MAC algorithms (diffie-hellman-group1-sha1, aes-cbc, 3des-cbc, hmac-sha1) for old/insecure devices. Strong crypto is still preferred.">
+						<input type="checkbox" class="check-input" bind:checked={row.ssh_compat} disabled={!canEdit} /> Legacy/compat algorithms
+					</label>
+					<span class="guac-param-hint">only for insecure legacy devices</span>
+				</div>
+			{/if}
 		{/each}
 		{#if canEdit}
 			<button type="button" class="pr-add" onclick={addRow}>+ Add application</button>
@@ -162,6 +176,7 @@
 	.pr-add:hover { background: var(--surface-2); }
 
 	.port-row-path, .port-row-guac { display: flex; align-items: center; gap: 8px; padding: 6px 10px 6px 26px; border-top: 1px dashed var(--border); flex-wrap: wrap; box-shadow: inset 3px 0 0 var(--border); }
+	.port-row-ssh { display: flex; align-items: center; gap: 8px; padding: 6px 10px 6px 26px; border-top: 1px dashed var(--border); flex-wrap: wrap; box-shadow: inset 3px 0 0 var(--border); background: color-mix(in srgb, var(--accent) 10%, transparent); }
 	.port-row-path { background: color-mix(in srgb, var(--accent) 6%, transparent); }
 	.port-row-guac { background: color-mix(in srgb, var(--accent) 10%, transparent); }
 	.path-param-label, .guac-param-label { font-size: 0.68rem; font-weight: 600; color: var(--accent); text-transform: uppercase; letter-spacing: 0.05em; white-space: nowrap; }
@@ -177,6 +192,7 @@
 	.guac-param-drive { margin-left: auto; color: var(--accent); }
 	.guac-param-drive:has(input:disabled) { opacity: 0.4; cursor: not-allowed; }
 	.guac-param-record { margin-left: 12px; color: var(--danger); }
+	.ssh-param-compat { display: flex; align-items: center; gap: 5px; font-size: 0.68rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; white-space: nowrap; cursor: pointer; color: var(--accent); }
 
 	.save { background: var(--accent); color: var(--on-accent); border: none; border-radius: var(--radius); padding: 0.45rem 0.85rem; font: inherit; font-weight: 600; font-size: 0.85rem; cursor: pointer; }
 	.save:hover { background: var(--accent-hover); }

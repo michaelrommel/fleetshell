@@ -5,7 +5,9 @@
 	import { enhance } from '$app/forms';
 	import SplitPane from '$lib/components/SplitPane.svelte';
 	import IpsecEditor from '$lib/components/IpsecEditor.svelte';
+	import EntityPicker from '$lib/components/EntityPicker.svelte';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
+	import { searchHotkey } from '$lib/searchHotkey';
 	import { toastEnhance } from '$lib/toast.svelte';
 
 	let { data, form } = $props();
@@ -28,8 +30,14 @@
 	}
 	function setMode(m: string) { return withParams({ mode: m, after: null, before: null, page: null, sel: null }); }
 	let searchInput: HTMLInputElement;
-	function doSearch() {
-		goto(withParams({ q: searchInput.value.trim() || null, after: null, before: null, page: null }), { keepFocus: true, noScroll: true });
+	let searching = $state(false);
+	async function doSearch() {
+		searching = true;
+		try {
+			await goto(withParams({ q: searchInput.value.trim() || null, after: null, before: null, page: null }), { keepFocus: true, noScroll: true });
+		} finally {
+			searching = false;
+		}
 	}
 	function clearSearch() {
 		searchInput.value = ''; searchInput.focus();
@@ -56,10 +64,10 @@
 			</div>
 		</div>
 
-		<form method="GET" action={`${base}/gateways`} class="searchbar" onsubmit={(e) => { e.preventDefault(); doSearch(); }}>
+		<form method="GET" action={`${base}/gateways`} class="searchbar" class:searching onsubmit={(e) => { e.preventDefault(); doSearch(); }}>
 			<div class="search-wrap">
-				<input name="q" value={data.q} bind:this={searchInput} placeholder="name / hospital / city / IP  ·  name: hosp: city: ip:" autocomplete="off" spellcheck="false" />
-				{#if data.q}<button type="button" class="in-clear" onclick={clearSearch} aria-label="Clear search">✕</button>{/if}
+				<input name="q" value={data.q} bind:this={searchInput} use:searchHotkey placeholder="name / hospital / city / IP  ·  name: hosp: city: ip:" autocomplete="off" spellcheck="false" />
+				{#if searching}<span class="search-spin" aria-label="Searching" role="status"></span>{:else if data.q}<button type="button" class="in-clear" onclick={clearSearch} aria-label="Clear search">✕</button>{/if}
 			</div>
 			<button type="submit">Search</button>
 		</form>
@@ -124,6 +132,12 @@
 					<input type="hidden" name="id" value={g.id} />
 					{@render editFields(g, canEdit)}
 					<h4>Tunnel / IPsec</h4>
+					<label class="natmode">NAT mode
+						<select name="nat_mode" value={g.nat_mode ?? 'customer'} disabled={!canEdit}>
+							<option value="customer">Customer — device addresses already unique in our view (no backend translation)</option>
+							<option value="backend">Backend — we translate ip_real → global (VPP NAT44)</option>
+						</select>
+					</label>
 					{#key g.id}
 						<IpsecEditor publicIp={g.public_ip} psk={g.psk}
 							ipsec={data.detail?.ipsec ?? null} disabled={!canEdit} />
@@ -177,12 +191,16 @@
 		<label>Hostname (dynamic IP)<input name="hostname" value={x?.hostname ?? ''} disabled={!edit} placeholder="gw.customer.example.com" /></label>
 		<label>Hospital<input name="hospital" value={x?.hospital ?? ''} disabled={!edit} /></label>
 		<label>City<input name="city" value={x?.city ?? ''} disabled={!edit} /></label>
-		<label>Region<input name="region" value={x?.region ?? ''} disabled={!edit} required /></label>
-		<label>Country<input name="country" value={x?.country ?? ''} disabled={!edit} /></label>
+		<div class="field">
+			<span class="flabel">Region</span>
+			{#key x?.id ?? 'new'}
+				<EntityPicker api="/api/administration/regions" name="region" idField="name" labelField="display"
+					value={x?.region ?? null} label={x?.region ?? null} disabled={!edit} placeholder="search region..." />
+			{/key}
+		</div>
 		<label>Gateway model<input name="gateway_model" value={x?.gateway_model ?? ''} disabled={!edit} /></label>
 		<label>Connection type<input name="connection_type" value={x?.connection_type ?? ''} disabled={!edit} /></label>
 		<label>Operational state<input name="operational_state" value={x?.operational_state ?? ''} disabled={!edit} /></label>
-		<label>NAT type<input name="nat_type" value={x?.nat_type ?? ''} disabled={!edit} /></label>
 		<label>Admin IP<input name="admin_ip" value={x?.admin_ip ?? ''} disabled={!edit} /></label>
 		<label>Admin IP 2<input name="admin_ip2" value={x?.admin_ip2 ?? ''} disabled={!edit} /></label>
 		<label>Tunnel Gateway (Connect)<input name="tunnel_gateway" value={x?.tunnel_gateway ?? ''} disabled={!edit} placeholder="atlanta-01" /></label>
@@ -209,6 +227,9 @@
 	.searchbar input:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
 	.in-clear { position: absolute; right: 0.35rem; top: 50%; transform: translateY(-50%); background: none; border: none; color: var(--text-subtle); cursor: pointer; font-size: 0.8rem; line-height: 1; padding: 0.2rem; border-radius: var(--radius); }
 	.in-clear:hover { color: var(--text); }
+	.search-spin { position: absolute; right: 0.55rem; top: 50%; width: 0.85rem; height: 0.85rem; margin-top: -0.45rem; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: search-spin 0.6s linear infinite; pointer-events: none; }
+	.searchbar.searching input { cursor: progress; }
+	@keyframes search-spin { to { transform: rotate(360deg); } }
 	.searchbar > button { background: var(--accent); color: var(--on-accent); border: none; border-radius: var(--radius); padding: 0.45rem 0.8rem; font: inherit; font-weight: 600; font-size: 0.83rem; cursor: pointer; }
 
 	.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
@@ -247,9 +268,12 @@
 
 	.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0.6rem 0.9rem; }
 	label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.76rem; color: var(--text-muted); }
-	input { background: var(--bg-app); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.4rem 0.55rem; font: inherit; font-size: 0.84rem; }
-	input:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
-	input:disabled { color: var(--text-muted); opacity: 0.85; }
+	.field { display: flex; flex-direction: column; gap: 0.25rem; }
+	.field .flabel { font-size: 0.76rem; color: var(--text-muted); }
+	input, select { background: var(--bg-app); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.4rem 0.55rem; font: inherit; font-size: 0.84rem; }
+	input:focus-visible, select:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+	input:disabled, select:disabled { color: var(--text-muted); opacity: 0.85; }
+	.natmode { margin-top: 0.2rem; }
 
 	.devs { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.25rem; }
 	.devs li { display: flex; align-items: baseline; gap: 0.6rem; font-size: 0.83rem; }

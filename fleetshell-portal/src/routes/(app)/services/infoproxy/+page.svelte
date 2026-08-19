@@ -19,6 +19,7 @@
 	import ScopePicker from '$lib/components/ScopePicker.svelte';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import SplitPane from '$lib/components/SplitPane.svelte';
+	import { searchHotkey } from '$lib/searchHotkey';
 
 	let { data, form } = $props();
 	const canEdit = $derived(data.isAdmin);
@@ -137,7 +138,7 @@
 		{#snippet left()}
 		<aside class="list-pane">
 			<form class="searchbar" onsubmit={(e) => e.preventDefault()}>
-				<input placeholder="Search collections…" value={data.q}
+				<input placeholder="Search collections…" value={data.q} use:searchHotkey
 					oninput={(e) => { const v = (e.currentTarget as HTMLInputElement).value;
 						clearTimeout((window as any).__ipT); (window as any).__ipT = setTimeout(() => location.assign(href({ q: v || null, sel: null })), 300); }} />
 				{#if canEdit}<a class="new-btn" href={href({ new: '1', sel: null })}>+ New</a>{/if}

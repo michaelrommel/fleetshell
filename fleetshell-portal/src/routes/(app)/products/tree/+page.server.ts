@@ -20,7 +20,7 @@ type Detail = { id: string; path: string; kind: string; name: string; family: st
 type Model = { partno: string | null; serial_from: string | null; serial_to: string | null; is_host_computer: boolean };
 type AppRow = {
 	id: string; name: string; application: string; ports: string; guac: boolean; e2ecrypt: boolean;
-	sni: string; path: string; width: number; height: number; dpi: number; drive: boolean; record: boolean; sort_order: number;
+	sni: string; path: string; width: number; height: number; dpi: number; drive: boolean; record: boolean; ssh_compat: boolean; sort_order: number;
 };
 
 /** Parse an optional integer field; '' -> null, non-integer -> throws marker. */
@@ -65,7 +65,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 			model ??= { partno: null, serial_from: null, serial_to: null, is_host_computer: false };
 			apps = await globalDb<AppRow[]>`
 				SELECT id::text AS id, name, application, ports, guac, e2ecrypt, sni, path,
-				       width, height, dpi, drive, record, sort_order
+				       width, height, dpi, drive, record, ssh_compat, sort_order
 				FROM product_model_app WHERE product_id = ${sel}
 				ORDER BY sort_order, name`;
 		}
@@ -188,7 +188,7 @@ export const actions: Actions = {
 
 		const rows: {
 			name: string; application: string; ports: string; guac: boolean; e2ecrypt: boolean;
-			sni: string; path: string; width: number; height: number; dpi: number; drive: boolean; record: boolean; sort_order: number;
+			sni: string; path: string; width: number; height: number; dpi: number; drive: boolean; record: boolean; ssh_compat: boolean; sort_order: number;
 		}[] = [];
 		for (const r of raw as Record<string, unknown>[]) {
 			const application = String(r.application ?? '');
@@ -209,6 +209,8 @@ export const actions: Actions = {
 				dpi: Number(r.dpi) || 96,
 				drive: guac && application === 'rdp' && !!r.drive,
 				record: guac && !!r.record,
+				// ssh_compat only applies to SSH direct (russh) mode: not guac, not e2e.
+				ssh_compat: application === 'ssh' && !guac && !e2ecrypt && !!r.ssh_compat,
 				sort_order: rows.length,
 			});
 		}
@@ -218,9 +220,9 @@ export const actions: Actions = {
 			for (const a of rows) {
 				await sql`
 					INSERT INTO product_model_app
-						(product_id, name, application, ports, guac, e2ecrypt, sni, path, width, height, dpi, drive, record, sort_order)
+						(product_id, name, application, ports, guac, e2ecrypt, sni, path, width, height, dpi, drive, record, ssh_compat, sort_order)
 					VALUES (${productId}, ${a.name}, ${a.application}, ${a.ports}, ${a.guac}, ${a.e2ecrypt}, ${a.sni}, ${a.path},
-						${a.width}, ${a.height}, ${a.dpi}, ${a.drive}, ${a.record}, ${a.sort_order})`;
+						${a.width}, ${a.height}, ${a.dpi}, ${a.drive}, ${a.record}, ${a.ssh_compat}, ${a.sort_order})`;
 			}
 		});
 		throw redirect(303, `${base}/products/tree?sel=${encodeURIComponent(productId)}`);

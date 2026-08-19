@@ -11,11 +11,15 @@
 	type Item = Record<string, string>;
 	let {
 		api, name, idField, labelField,
-		value = null, label = null, disabled = false, placeholder = 'search...', extraParams = {},
+		value = null, label = null, disabled = false, placeholder = 'search...', extraParams = {}, onPick, trailing,
 	}: {
 		api: string; name: string; idField: string; labelField: string;
 		value?: string | null; label?: string | null; disabled?: boolean; placeholder?: string;
 		extraParams?: Record<string, string>;
+		/** Notified with the full chosen item (or null on clear) for host-side reactions. */
+		onPick?: (item: Item | null) => void;
+		/** Optional trailing content (e.g. a jump link) shown after Change; gets the current id. */
+		trailing?: import('svelte').Snippet<[string | null]>;
 	} = $props();
 
 	// Seeded ONCE from props; the host remounts via {#key} when the underlying
@@ -39,10 +43,22 @@
 		curValue = it[idField];
 		curLabel = it[labelField] ?? it[idField];
 		editing = false; query = ''; results = [];
+		onPick?.(it);
 	}
 	function startEdit() { editing = true; query = ''; results = []; }
 	function cancel() { editing = false; query = ''; results = []; }
-	function clear() { curValue = null; curLabel = null; }
+	function clear() { curValue = null; curLabel = null; onPick?.(null); }
+	// Esc closes the open dropdown list first; a second Esc leaves edit mode.
+	// stopPropagation so it does not also bubble to any host-level Esc handler
+	// (e.g. the SplitPane detail overlay).
+	function onSearchKeydown(e: KeyboardEvent) {
+		if (e.key === 'Escape') {
+			e.preventDefault();
+			e.stopPropagation();
+			if (results.length) results = [];
+			else cancel();
+		}
+	}
 </script>
 
 <div class="picker">
@@ -51,7 +67,7 @@
 	{#if editing}
 		<div class="edit">
 			<input class="search" {placeholder} bind:value={query} oninput={search}
-			       autocomplete="off" spellcheck="false" />
+			       onkeydown={onSearchKeydown} autocomplete="off" spellcheck="false" />
 			<button type="button" class="mini" onclick={cancel} aria-label="Cancel">✕</button>
 			{#if results.length}
 				<ul class="results">
@@ -72,6 +88,7 @@
 				{#if curValue}<button type="button" class="mini clear" onclick={clear} aria-label="Clear">✕</button>{/if}
 				<button type="button" class="mini" onclick={startEdit}>Change</button>
 			{/if}
+			{@render trailing?.(curValue)}
 		</div>
 	{/if}
 </div>

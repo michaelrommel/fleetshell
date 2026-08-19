@@ -28,6 +28,8 @@ const HEADER_B64URL = b64url(Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JW
  *   ports  - port spec string (comma/range format, same as the tunnel request)
  *   gw     - gateway identifier (optional cross-gateway replay guard)
  *   record - when true, instructs the gateway to record the session (optional)
+ *   ssh_compat - when true, the gateway's direct-SSH (russh) handler also offers
+ *                legacy KEX/cipher/MAC algorithms for old devices (optional)
  */
 export function issueTunnelToken(
 	sub: string,
@@ -37,6 +39,7 @@ export function issueTunnelToken(
 	secret: string,
 	ttlSeconds = 24 * 60 * 60,
 	record = false,
+	sshCompat = false,
 ): string {
 	const now = Math.floor(Date.now() / 1000);
 	const claims: Record<string, unknown> = {
@@ -47,8 +50,9 @@ export function issueTunnelToken(
 		ports,
 		gw,
 	};
-	// Only embed 'record' when true, to keep the token compact.
+	// Only embed optional claims when set, to keep the token compact.
 	if (record) claims['record'] = true;
+	if (sshCompat) claims['ssh_compat'] = true;
 	const payload = b64url(Buffer.from(JSON.stringify(claims)));
 	const unsigned = `${HEADER_B64URL}.${payload}`;
 	const sig = b64url(hmacSha256(unsigned, secret));

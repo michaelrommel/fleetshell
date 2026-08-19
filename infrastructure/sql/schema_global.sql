@@ -149,7 +149,6 @@ CREATE TABLE IF NOT EXISTS gateway (
     connection_type   text,                -- CONNECTIONTYPE decoded (e.g. 'Internet with IPSec')
     operational_state text,                -- OPERATIONALSTATE decoded (e.g. 'Access Allowed')
     static_ip         text,                -- STATICIP
-    nat_type          text,                -- NATTYPE
     admin_ip          text,                -- IPADDRESSADM1 (anonymized)
     admin_ip2         text,                -- IPADDRESSADM2 (anonymized)
     country           text,                -- COUNTRYNAME
@@ -165,6 +164,14 @@ CREATE TABLE IF NOT EXISTS gateway (
     -- (one per AWS region; a device resolves it via this gateway). See
     -- docs/valkey_spool.md.
     tunnel_gateway    text,
+    -- Per-site NAT ownership (drives the fleetipsec:nat spool + the ipsecnode
+    -- data plane). 'customer' = addresses already unique in our view
+    -- (internal_ip = global_ip = device.ip_address); ipsecnode forwards straight
+    -- through with NO VPP NAT44. 'backend' = WE translate
+    -- (internal_ip = device.ip_real); ipsecnode installs the per-site VPP VRF +
+    -- NAT44. The entire installed base is 'customer'. See docs/valkey_spool.md.
+    nat_mode          text NOT NULL DEFAULT 'customer'
+                      CHECK (nat_mode IN ('customer','backend')),
     -- Customer-view IPs for the three backend roles -> fleetipsec:nat backend_nat
     -- {access_server,sd_server,em_server}; real IPs live in ipsecnode.toml.
     backend_access_ip text,
@@ -257,6 +264,7 @@ CREATE TABLE IF NOT EXISTS product_model_app (
     dpi         int  NOT NULL DEFAULT 96,
     drive       boolean NOT NULL DEFAULT false,
     record      boolean NOT NULL DEFAULT false,
+    ssh_compat  boolean NOT NULL DEFAULT false, -- ssh direct (russh): offer legacy algos
     sort_order  int  NOT NULL DEFAULT 0,
     params      jsonb                        -- G-full: extra udp ports, teamviewer options
 );
@@ -282,6 +290,7 @@ CREATE TABLE IF NOT EXISTS device_app (
     dpi         int  NOT NULL DEFAULT 96,
     drive       boolean NOT NULL DEFAULT false,
     record      boolean NOT NULL DEFAULT false,
+    ssh_compat  boolean NOT NULL DEFAULT false, -- ssh direct (russh): offer legacy algos
     sort_order  int  NOT NULL DEFAULT 0,
     params      jsonb
 );
@@ -483,11 +492,6 @@ CREATE TABLE IF NOT EXISTS device (
     ip_real            text,              -- REALIPADDRESS (secondary)
     contact            text,              -- CONTACT (PII; anonymized)
     city               text,              -- CITY (anonymized; shared map with gateway city)
-    -- NAT ownership for the fleetipsec:nat spool: 'customer' = customer already
-    -- NATs (internal_ip = global_ip = ip_address); 'platform' = we NAT
-    -- (internal_ip = ip_real). See docs/valkey_spool.md.
-    nat_mode           text NOT NULL DEFAULT 'customer'
-                       CHECK (nat_mode IN ('customer','platform')),
     -- contract flags spooled into systems:by-ip `contracts` (comma-joined):
     --   internal_use = 'STD'|'NIU'|NULL, plus independent dpa / dmy toggles.
     internal_use       text CHECK (internal_use IN ('STD','NIU')),

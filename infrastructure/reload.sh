@@ -31,6 +31,7 @@ psql "$GLOBAL_WRITER_URL" -f sql/migrate_infoproxy.sql
 psql "$GLOBAL_WRITER_URL" -f sql/migrate_device_gateway_spool.sql
 psql "$GLOBAL_WRITER_URL" -f sql/migrate_device_service_key.sql
 psql "$GLOBAL_WRITER_URL" -f sql/migrate_device_app.sql
+psql "$GLOBAL_WRITER_URL" -f sql/migrate_ssh_compat.sql
 psql "$GLOBAL_WRITER_URL" -f sql/migrate_authz_catalog.sql
 psql "$GLOBAL_WRITER_URL" -f sql/migrate_services_authz.sql
 

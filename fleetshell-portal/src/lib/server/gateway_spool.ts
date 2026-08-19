@@ -18,8 +18,11 @@
 //     "collapse" quirk is dropped). `customer_id` is NOT spooled (ipsecnode never
 //     reads it).
 //   * device_nat[].internal_ip is the real SNAT/DNAT source and is REQUIRED;
-//     global_ip = device.ip_address. Per device.nat_mode: 'platform' -> ip_real,
-//     'customer' -> ip_address (identity).
+//     global_ip = device.ip_address. Per the SITE's gateway.nat_mode: 'backend'
+//     -> ip_real (we translate), 'customer' -> ip_address (identity, no VPP NAT).
+//   * nat_mode is emitted on BOTH the site and nat records so each ipsecnode
+//     consumer reads it from the record it already fetches (credentials.rs from
+//     :site, vpp.rs from :nat). 'customer' => VPP bypass; 'backend' => VPP NAT44.
 //   * backend_nat is OMITTED when none of the three IPs is set (ipsecnode treats
 //     it as an Option and installs no backend DNAT roles).
 
@@ -35,12 +38,13 @@ type GatewayRow = {
 	public_ip: string | null;
 	psk: string | null;
 	ipsec: Record<string, unknown> | null;
+	nat_mode: string;
 	backend_access_ip: string | null;
 	backend_sd_ip: string | null;
 	backend_em_ip: string | null;
 };
 
-type DeviceNatRow = { ip_address: string | null; ip_real: string | null; nat_mode: string };
+type DeviceNatRow = { ip_address: string | null; ip_real: string | null };
 
 /** Coerce a jsonb value into a string array (missing -> []). */
 function strArray(v: unknown): string[] {
@@ -62,7 +66,7 @@ function numArray(v: unknown): number[] {
  * the stored record is filled with the same default the IpsecEditor shows. An
  * explicitly-empty value is respected (e.g. esp_pfs = [] -> no PFS).
  */
-export function buildSiteRecord(ipsec: unknown): Record<string, unknown> {
+export function buildSiteRecord(ipsec: unknown, natMode: string): Record<string, unknown> {
 	// Tolerate a legacy double-encoded row (jsonb string) by parsing it once.
 	let s: Record<string, unknown> = {};
 	if (typeof ipsec === 'string') {
@@ -74,6 +78,7 @@ export function buildSiteRecord(ipsec: unknown): Record<string, unknown> {
 	const out: Record<string, unknown> = {
 		ike_version: Number(s.ike_version) === 1 ? 1 : 2,
 		static_ip: staticIp,
+		nat_mode: natMode === 'backend' ? 'backend' : 'customer',
 	};
 	if (typeof s.ike_identity === 'string' && s.ike_identity.trim()) out.ike_identity = s.ike_identity.trim();
 	if (!staticIp && typeof s.dyndns_password === 'string' && s.dyndns_password) out.dyndns_password = s.dyndns_password;
@@ -86,18 +91,20 @@ export function buildSiteRecord(ipsec: unknown): Record<string, unknown> {
 	const espAuth = s.esp_auth === undefined ? ['none'] : strArray(s.esp_auth); if (espAuth.length) out.esp_auth = espAuth;
 	const espPfs = s.esp_pfs === undefined ? [14] : numArray(s.esp_pfs); if (espPfs.length) out.esp_pfs = espPfs;
 	const remoteTs = strArray(s.remote_ts); if (remoteTs.length) out.remote_ts = remoteTs;
+	const localTs = strArray(s.local_ts); if (localTs.length) out.local_ts = localTs;
 	return out;
 }
 
 /** Build the NAT record from the gateway's attached devices + backend IPs. */
 export function buildNatRecord(gw: GatewayRow, devices: DeviceNatRow[]): Record<string, unknown> {
+	const backendMode = gw.nat_mode === 'backend';
 	const device_nat: { internal_ip: string; global_ip: string }[] = [];
 	for (const d of devices) {
 		const global_ip = (d.ip_address ?? '').trim();
 		if (!global_ip) continue;                                   // no global IP -> nothing to route
-		// platform NAT: our side translates ip_real -> global_ip; customer NAT:
-		// identity (customer already NATted, internal == global).
-		const internal_ip = d.nat_mode === 'platform' ? ((d.ip_real ?? '').trim() || global_ip) : global_ip;
+		// backend NAT: our side translates ip_real -> global_ip; customer NAT:
+		// identity (customer already NATted / addresses unique, internal == global).
+		const internal_ip = backendMode ? ((d.ip_real ?? '').trim() || global_ip) : global_ip;
 		device_nat.push({ internal_ip, global_ip });
 	}
 
@@ -106,7 +113,10 @@ export function buildNatRecord(gw: GatewayRow, devices: DeviceNatRow[]): Record<
 	if (gw.backend_sd_ip) backend.sd_server = gw.backend_sd_ip;
 	if (gw.backend_em_ip) backend.em_server = gw.backend_em_ip;
 
-	const rec: Record<string, unknown> = { device_nat };
+	const rec: Record<string, unknown> = {
+		nat_mode: backendMode ? 'backend' : 'customer',
+		device_nat,
+	};
 	if (Object.keys(backend).length) rec.backend_nat = backend;    // omit when unset
 	return rec;
 }
@@ -124,19 +134,19 @@ export async function deleteGatewayKeys(publicIp: string): Promise<void> {
  */
 export async function spoolGateway(gatewayId: string): Promise<string | null> {
 	const [gw] = await globalDb<GatewayRow[]>`
-		SELECT id::text AS id, public_ip, psk, ipsec,
+		SELECT id::text AS id, public_ip, psk, ipsec, nat_mode,
 		       backend_access_ip, backend_sd_ip, backend_em_ip
 		FROM gateway WHERE id = ${gatewayId}`;
 	if (!gw || !gw.public_ip) return null;
 	const ip = gw.public_ip;
 
 	const devices = await globalDb<DeviceNatRow[]>`
-		SELECT ip_address, ip_real, nat_mode FROM device WHERE gateway_id = ${gatewayId}`;
+		SELECT ip_address, ip_real FROM device WHERE gateway_id = ${gatewayId}`;
 
 	const redis = await getRedisClient();
 	if (gw.psk) await redis.set(`${PSK_PREFIX}${ip}`, gw.psk);
 	else await redis.unlink(`${PSK_PREFIX}${ip}`);
-	await redis.set(`${SITE_PREFIX}${ip}`, JSON.stringify(buildSiteRecord(gw.ipsec)));
+	await redis.set(`${SITE_PREFIX}${ip}`, JSON.stringify(buildSiteRecord(gw.ipsec, gw.nat_mode)));
 	await redis.set(`${NAT_PREFIX}${ip}`, JSON.stringify(buildNatRecord(gw, devices)));
 	return ip;
 }

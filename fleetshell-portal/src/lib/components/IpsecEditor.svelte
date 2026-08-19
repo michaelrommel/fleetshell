@@ -9,7 +9,7 @@
 	type Ipsec = {
 		ike_version?: number; ike_identity?: string; static_ip?: boolean; dyndns_password?: string;
 		ike_enc?: string[]; ike_auth?: string[]; ike_dh?: number[];
-		esp_enc?: string[]; esp_auth?: string[]; esp_pfs?: number[]; remote_ts?: string[];
+		esp_enc?: string[]; esp_auth?: string[]; esp_pfs?: number[]; remote_ts?: string[]; local_ts?: string[];
 	};
 	let { publicIp = null, psk = null, ipsec = null, disabled = false, isCreate = false }:
 		{ publicIp?: string | null; psk?: string | null; ipsec?: Ipsec | null; disabled?: boolean; isCreate?: boolean } = $props();
@@ -29,6 +29,7 @@
 	// svelte-ignore state_referenced_locally
 	let pskVal = $state(psk ?? '');
 	let showPsk = $state(false);
+	let showDyn = $state(false);
 	let ike_version = $state(Number(s.ike_version) === 1 ? 1 : 2);
 	let ike_identity = $state(s.ike_identity ?? '');
 	let static_ip = $state(s.static_ip ?? true);
@@ -40,6 +41,7 @@
 	let esp_auth = $state<string[]>(s.esp_auth ?? ['none']);
 	let esp_pfs = $state<number[]>(s.esp_pfs ?? [14]);
 	let remote_ts_text = $state((s.remote_ts ?? []).join('\n'));
+	let local_ts_text = $state((s.local_ts ?? []).join('\n'));
 
 	function toggleStr(arr: string[], v: string) { return arr.includes(v) ? arr.filter((x) => x !== v) : [...arr, v]; }
 	function toggleNum(arr: number[], v: number) { return arr.includes(v) ? arr.filter((x) => x !== v) : [...arr, v]; }
@@ -50,6 +52,7 @@
 		...(!static_ip && dyndns_password ? { dyndns_password } : {}),
 		ike_enc, ike_auth, ike_dh, esp_enc, esp_auth, esp_pfs,
 		remote_ts: remote_ts_text.split('\n').map((l) => l.trim()).filter(Boolean),
+		local_ts: local_ts_text.split('\n').map((l) => l.trim()).filter(Boolean),
 	}));
 </script>
 
@@ -71,23 +74,23 @@
 	<label><span class="lbl">IKE identity <span class="opt">(optional)</span></span>
 		<input class="mono" bind:value={ike_identity} disabled={disabled} placeholder="10.5.0.1" /></label>
 	<div class="field">
+		<!-- Always visible (deactivated for static-IP gateways) to avoid a layout
+		     reflow when the IP type toggles. In production the DynDNS password would
+		     come from the source WEBDNSPWID / WEBDNSPWPW (not in this dev dump). -->
+		<span>DynDNS password</span>
+		<span class="psk-row">
+			{#if showDyn}<input class="mono" bind:value={dyndns_password} disabled={disabled || static_ip} />
+			{:else}<input class="mono" type="password" bind:value={dyndns_password} disabled={disabled || static_ip} />{/if}
+			<button type="button" class="mini" onclick={() => (showDyn = !showDyn)}>{showDyn ? 'hide' : 'show'}</button>
+		</span>
+	</div>
+	<div class="field">
 		<span>IP type</span>
 		<div class="radio-row">
 			<label><input type="radio" value={true} bind:group={static_ip} disabled={disabled} /> Static</label>
 			<label><input type="radio" value={false} bind:group={static_ip} disabled={disabled} /> Dynamic</label>
 		</div>
 	</div>
-	{#if !static_ip}
-		<div class="field">
-			<!-- In production the DynDNS password would come from the source
-			     WEBDNSPWID / WEBDNSPWPW (not imported into this dev dump). -->
-			<span>DynDNS password</span>
-			<span class="psk-row">
-				{#if showPsk}<input class="mono" bind:value={dyndns_password} disabled={disabled} />
-				{:else}<input class="mono" type="password" bind:value={dyndns_password} disabled={disabled} />{/if}
-			</span>
-		</div>
-	{/if}
 	<div class="field">
 		<span>IKE version</span>
 		<div class="radio-row">
@@ -107,9 +110,19 @@
 {@render chips('Authentication', ESP_AUTH, esp_auth, (v) => (esp_auth = toggleStr(esp_auth, v as string)))}
 {@render chips('PFS (DH group)', DH_GROUPS, esp_pfs, (v) => (esp_pfs = toggleNum(esp_pfs, v as number)), 'No chips = no PFS.')}
 
-<h4>Tunnel rules (remote traffic selectors)</h4>
-<textarea class="ts mono" rows="4" bind:value={remote_ts_text} disabled={disabled}
-          placeholder={"10.67.0.0/16\n141.67.0.0/16\n10.14.3.5/32"}></textarea>
+<h4>Tunnel rules (traffic selectors)</h4>
+<div class="ts-grid">
+	<div class="ts-col">
+		<span class="ts-head">Remote <span class="opt">(customer subnets)</span></span>
+		<textarea class="ts mono" rows="4" bind:value={remote_ts_text} disabled={disabled}
+		          placeholder={"10.67.0.0/16\n141.67.0.0/16\n10.14.3.5/32"}></textarea>
+	</div>
+	<div class="ts-col">
+		<span class="ts-head">Local <span class="opt">(VPN-node side)</span></span>
+		<textarea class="ts mono" rows="4" bind:value={local_ts_text} disabled={disabled}
+		          placeholder={"10.5.0.0/16\n10.14.3.5/32"}></textarea>
+	</div>
+</div>
 <span class="hint">One CIDR per line. Empty = catch-all (0.0.0.0/0).</span>
 
 {#snippet chips(label: string, opts: (string | number)[], sel: (string | number)[], toggle: (v: string | number) => void, hint?: string)}
@@ -149,5 +162,8 @@
 	.chip.on { background: color-mix(in srgb, var(--accent) 20%, var(--bg-app)); border-color: var(--accent); color: var(--accent); font-weight: 700; }
 	.chip:disabled { cursor: default; opacity: 0.7; }
 	.ts { width: 100%; resize: vertical; }
+	.ts-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.9rem; }
+	.ts-col { display: flex; flex-direction: column; gap: 0.25rem; }
+	.ts-head { font-size: 0.76rem; color: var(--text-muted); }
 	.hint { color: var(--text-subtle); font-size: 0.73rem; }
 </style>

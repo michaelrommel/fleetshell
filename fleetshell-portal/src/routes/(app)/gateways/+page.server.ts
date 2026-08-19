@@ -26,17 +26,34 @@ async function requireAdmin(locals: App.Locals): Promise<void> {
 	if (!persona?.is_admin) throw error(403, 'forbidden');
 }
 
-function likeFrag(cols: string[], val: string) {
+// Substring match (default) OR case-insensitive exact match (quoted term).
+function matchFrag(cols: string[], val: string, exact: boolean) {
 	let e = globalDb`FALSE`;
-	for (const c of cols) e = globalDb`${e} OR g.${globalDb(c)} ILIKE ${val}`;
+	for (const c of cols) {
+		e = exact
+			? globalDb`${e} OR lower(g.${globalDb(c)}) = lower(${val})`
+			: globalDb`${e} OR g.${globalDb(c)} ILIKE ${'%' + val + '%'}`;
+	}
 	return globalDb`(${e})`;
 }
+// Split honoring double-quoted spans (may contain spaces + a leading qualifier,
+// e.g. `name:"exact value"` or `"exact value"`). A quoted VALUE means exact match.
+function splitTokens(query: string): string[] {
+	return query.match(/(?:[a-zA-Z]+:)?"[^"]*"|\S+/g) ?? [];
+}
+function unquote(s: string): { value: string; exact: boolean } {
+	return s.length >= 2 && s.startsWith('"') && s.endsWith('"')
+		? { value: s.slice(1, -1), exact: true }
+		: { value: s, exact: false };
+}
 function buildWhere(query: string) {
-	const tokens = query.trim().split(/\s+/).filter(Boolean);
+	const tokens = splitTokens(query.trim());
 	const frags = tokens.map((t) => {
-		const m = t.match(/^([a-zA-Z]+):(.*)$/);
+		const m = t.match(/^([a-zA-Z]+):([\s\S]*)$/);
 		const cols = m && QUALIFIERS[m[1].toLowerCase()];
-		return cols ? likeFrag(cols, '%' + m![2] + '%') : likeFrag(BARE_COLS, '%' + t + '%');
+		if (cols) { const u = unquote(m![2]); return matchFrag(cols, u.value, u.exact); }
+		const u = unquote(t);
+		return matchFrag(BARE_COLS, u.value, u.exact);
 	});
 	if (!frags.length) return globalDb`TRUE`;
 	let w = frags[0];
@@ -149,7 +166,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 		const tDetail = performance.now();
 		[detail] = await globalDb<Record<string, unknown>[]>`
 			SELECT id::text AS id, hostname, region, hospital, name, city, gateway_model, connection_type,
-			       operational_state, static_ip, nat_type, admin_ip, admin_ip2, country,
+			       operational_state, static_ip, nat_mode, admin_ip, admin_ip2, country,
 			       public_ip, psk, ipsec, tunnel_gateway, backend_access_ip, backend_sd_ip, backend_em_ip
 			FROM gateway WHERE id = ${sel}`;
 		if (detail) {
@@ -187,10 +204,9 @@ function fields(d: FormData) {
 		gateway_model: orNull(d.get('gateway_model')),
 		connection_type: orNull(d.get('connection_type')),
 		operational_state: orNull(d.get('operational_state')),
-		nat_type: orNull(d.get('nat_type')),
+		nat_mode: String(d.get('nat_mode')) === 'backend' ? 'backend' : 'customer',
 		admin_ip: orNull(d.get('admin_ip')),
 		admin_ip2: orNull(d.get('admin_ip2')),
-		country: orNull(d.get('country')),
 		tunnel_gateway: orNull(d.get('tunnel_gateway')),
 		backend_access_ip: orNull(d.get('backend_access_ip')),
 		backend_sd_ip: orNull(d.get('backend_sd_ip')),
@@ -216,6 +232,17 @@ function ipsecFields(d: FormData): { public_ip: string | null; psk: string | nul
 	return { public_ip, psk, ipsec };
 }
 
+// Resolve a region NAME to its id-based ltree path. Matches the deterministic
+// pick used by the authz backfill (migrate_gateway_authz.sql): coarsest level,
+// then lowest id, for the rare duplicate-name case. NULL when unresolved.
+async function resolveRegionPath(name: string): Promise<string | null> {
+	if (!name) return null;
+	const [r] = await globalDb<{ path: string }[]>`
+		SELECT path::text AS path FROM region
+		WHERE name = ${name} ORDER BY level, id LIMIT 1`;
+	return r?.path ?? null;
+}
+
 export const actions: Actions = {
 	updateGateway: async ({ request, locals }) => {
 		await requireAdmin(locals);
@@ -227,13 +254,14 @@ export const actions: Actions = {
 		if ('error' in sec) return fail(400, sec);
 		const [prev] = await globalDb<{ public_ip: string | null }[]>`
 			SELECT public_ip FROM gateway WHERE id = ${id}`;
+		const region_path = await resolveRegionPath(f.region);
 		await globalDb`
 			UPDATE gateway SET hostname = ${f.hostname}, region = ${f.region}, hospital = ${f.hospital},
 				name = ${f.name}, city = ${f.city}, gateway_model = ${f.gateway_model},
 				connection_type = ${f.connection_type}, operational_state = ${f.operational_state},
-				nat_type = ${f.nat_type},
-				admin_ip = ${f.admin_ip}, admin_ip2 = ${f.admin_ip2}, country = ${f.country},
-				tunnel_gateway = ${f.tunnel_gateway},
+				nat_mode = ${f.nat_mode},
+				admin_ip = ${f.admin_ip}, admin_ip2 = ${f.admin_ip2},
+				tunnel_gateway = ${f.tunnel_gateway}, region_path = ${region_path}::ltree,
 				backend_access_ip = ${f.backend_access_ip}, backend_sd_ip = ${f.backend_sd_ip}, backend_em_ip = ${f.backend_em_ip},
 				public_ip = ${sec.public_ip}, psk = ${sec.psk}, ipsec = ${sec.ipsec === null ? null : globalDb.json(sec.ipsec as Parameters<typeof globalDb.json>[0])}
 			WHERE id = ${id}`;
@@ -252,14 +280,15 @@ export const actions: Actions = {
 		if (!f.region) return fail(400, { error: 'Region is required.' });
 		const sec = ipsecFields(d);
 		if ('error' in sec) return fail(400, sec);
+		const region_path = await resolveRegionPath(f.region);
 		const [row] = await globalDb<{ id: string }[]>`
 			INSERT INTO gateway (hostname, region, hospital, name, city, gateway_model, connection_type,
-				operational_state, nat_type, admin_ip, admin_ip2, country, public_ip, psk, ipsec,
-				tunnel_gateway, backend_access_ip, backend_sd_ip, backend_em_ip)
+				operational_state, nat_mode, admin_ip, admin_ip2, public_ip, psk, ipsec,
+				tunnel_gateway, region_path, backend_access_ip, backend_sd_ip, backend_em_ip)
 			VALUES (${f.hostname}, ${f.region}, ${f.hospital}, ${f.name}, ${f.city}, ${f.gateway_model},
-				${f.connection_type}, ${f.operational_state}, ${f.nat_type},
-				${f.admin_ip}, ${f.admin_ip2}, ${f.country}, ${sec.public_ip}, ${sec.psk}, ${sec.ipsec === null ? null : globalDb.json(sec.ipsec as Parameters<typeof globalDb.json>[0])},
-				${f.tunnel_gateway}, ${f.backend_access_ip}, ${f.backend_sd_ip}, ${f.backend_em_ip})
+				${f.connection_type}, ${f.operational_state}, ${f.nat_mode},
+				${f.admin_ip}, ${f.admin_ip2}, ${sec.public_ip}, ${sec.psk}, ${sec.ipsec === null ? null : globalDb.json(sec.ipsec as Parameters<typeof globalDb.json>[0])},
+				${f.tunnel_gateway}, ${region_path}::ltree, ${f.backend_access_ip}, ${f.backend_sd_ip}, ${f.backend_em_ip})
 			RETURNING id::text AS id`;
 		try {
 			await spoolGatewayOnSave(row.id, null);

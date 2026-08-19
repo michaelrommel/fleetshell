@@ -107,7 +107,8 @@ A gateway with no `public_ip` is skipped (nothing to key on).
 ### `fleetipsec:site:<ip>` — JSON SiteRecord (crypto)
 Built from `gateway.ipsec` (authored via `IpsecEditor`):
 ```json
-{ "ike_version": 2, "static_ip": true, "ike_identity": "…", "dyndns_password": "…",
+{ "ike_version": 2, "static_ip": true, "nat_mode": "customer", "ike_identity": "…",
+  "dyndns_password": "…",
   "ike_enc": ["aes256"], "ike_auth": ["sha256"], "ike_dh": [14],
   "esp_enc": ["aes256gcm"], "esp_auth": ["none"], "esp_pfs": [14],
   "remote_ts": ["10.0.0.0/24"] }
@@ -119,17 +120,29 @@ Verified against ipsecnode:
 - **`customer_id` is NOT spooled** — ipsecnode never reads it. (`gateway.name` is
   the human handle, kept in Aurora only.)
 - `dyndns_password` is only emitted for dynamic-IP gateways (`static_ip=false`).
+- **`nat_mode`** (`customer`|`backend`) is emitted here too — see the note below
+  the `:nat` record. ipsecnode's `credentials.rs` reads it from the `:site`
+  record it already fetches.
 
 ### `fleetipsec:nat:<ip>` — JSON NAT record
 ```json
-{ "device_nat": [ { "internal_ip": "10.67.1.5", "global_ip": "198.51.100.5" } ],
+{ "nat_mode": "customer",
+  "device_nat": [ { "internal_ip": "10.67.1.5", "global_ip": "198.51.100.5" } ],
   "backend_nat": { "access_server": "10.67.250.250", "sd_server": "…", "em_server": "…" } }
 ```
+- **`nat_mode`** (`customer`|`backend`) = the per-**gateway** (per-site) NAT
+  ownership flag. It was moved off the old per-device `device.nat_mode`
+  (`customer`|`platform`) to **`gateway.nat_mode`** (`customer`|`backend`): the
+  VPP-vs-bypass decision is uniform for a whole tunnel, so it belongs on the
+  site, not the device. The value is emitted on **both** this `:nat` record and
+  the `:site` record (above) so each ipsecnode consumer reads it from the record
+  it already fetches (`vpp.rs` from `:nat`, `credentials.rs` from `:site`).
+  `customer` => VPP bypass; `backend` => VPP NAT44.
 - `device_nat[]` = one entry per attached device with an IP. `global_ip =
-  device.ip_address`; `internal_ip` depends on **`device.nat_mode`**:
+  device.ip_address`; `internal_ip` depends on the gateway's **`nat_mode`**:
   - `customer` (default): customer already NATs → `internal_ip = global_ip`
     (identity; VPP mapping is a no-op but the /32 route is still advertised).
-  - `platform`: we NAT → `internal_ip = device.ip_real` (falls back to
+  - `backend`: we NAT → `internal_ip = device.ip_real` (falls back to
     `ip_address` if `ip_real` is empty).
   `internal_ip` is the real SNAT/DNAT source in ipsecnode (`vpp.rs`) and is
   required — never null.
@@ -155,8 +168,14 @@ plain per-gateway field (may later be hoisted to a region-level default).
 
 `infrastructure/sql/migrate_device_gateway_spool.sql` (folded into
 `schema_global.sql`, in `reload.sh`):
-- `device.nat_mode` (`customer`|`platform`, default `customer`)
 - `device.internal_use` (`STD`|`NIU`|NULL), `device.dpa`, `device.dmy`
 - `gateway.tunnel_gateway`, `gateway.backend_access_ip` / `backend_sd_ip` /
   `backend_em_ip`
 - drops `device.tunnel_gateway`
+
+`infrastructure/sql/migrate_gateway_nat_mode.sql` (also folded into
+`schema_global.sql`) moves NAT ownership from device to gateway:
+- adds `gateway.nat_mode` (`customer`|`backend`, default `customer`); backfilled
+  to `backend` for any gateway that had a device with the old `platform` flag
+- drops the constant/unused legacy `gateway.nat_type`
+- drops `device.nat_mode` (superseded by the per-site gateway flag)

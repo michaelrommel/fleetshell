@@ -11,7 +11,7 @@
  * hold `device:connect` on the device via its grants -- OR be an interim admin.
  * This is server-authoritative; the UI hint is not trusted.
  *
- * Request  { deviceId: string, ports: string, record?: boolean }
+ * Request  { deviceId: string, ports: string, record?: boolean, ssh_compat?: boolean }
  * Response { token: string, target: string, gateway: string }
  */
 import { error, json } from '@sveltejs/kit';
@@ -25,7 +25,7 @@ import type { RequestHandler } from './$types';
 export const POST: RequestHandler = async ({ request, locals }) => {
 	if (!locals.userId) error(401, 'Unauthorized');
 
-	let body: { deviceId?: string; ports?: string; record?: boolean };
+	let body: { deviceId?: string; ports?: string; record?: boolean; ssh_compat?: boolean };
 	try {
 		body = await request.json();
 	} catch {
@@ -35,6 +35,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 	const deviceId = String(body.deviceId ?? '').trim();
 	const ports = String(body.ports ?? '').trim();
 	const record = body.record === true;
+	const sshCompat = body.ssh_compat === true;
 	if (!deviceId) error(400, 'Missing field: deviceId');
 	if (!ports) error(400, 'Missing field: ports');
 
@@ -63,7 +64,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 	if (!dev.gateway) error(409, 'Device has no tunnel gateway configured (set it on its IPsec gateway)');
 
 	const secret = env.JWT_SECRET ?? 'change-me-in-production';
-	const token = issueTunnelToken(locals.userId, dev.target, ports, dev.gateway, secret, undefined, record);
+	const token = issueTunnelToken(locals.userId, dev.target, ports, dev.gateway, secret, undefined, record, sshCompat);
 
 	return json({ token, target: dev.target, gateway: dev.gateway });
 };

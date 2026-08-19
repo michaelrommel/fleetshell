@@ -3,6 +3,7 @@
 	import { page as pageState } from '$app/state';
 	import { enhance } from '$app/forms';
 	import SplitPane from '$lib/components/SplitPane.svelte';
+	import { searchHotkey } from '$lib/searchHotkey';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import ContactsEditor from '$lib/components/ContactsEditor.svelte';
 	import SiteMembershipEditor from '$lib/components/SiteMembershipEditor.svelte';
@@ -39,7 +40,7 @@
 <SplitPane storageKey="customers" defaultLeft={40}>
 	{#snippet left()}
 		<form class="searchbar" onsubmit={(e) => { e.preventDefault(); doSearch(); }}>
-			<input placeholder="Search customers (name, country, city)" bind:value={search} />
+			<input placeholder="Search customers (name, country, city)" bind:value={search} use:searchHotkey />
 			<button type="submit">Search</button>
 			{#if canEdit}<a class="new-btn" href={newCustHref}>+ New</a>{/if}
 		</form>

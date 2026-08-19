@@ -16,24 +16,44 @@ export const QUALIFIERS: Record<string, string[]> = {
 	fl:   ['functional_location'],
 	ip:   ['ip_address', 'ip_real'],
 	tid:  ['technical_ident'],
-	host: ['host_hw_id'],
-	ord:  ['order_number'],
+	c:    ['country_iso'],
+	city: ['city'],
+	hosp: ['hospital_name'],
 };
 const BARE_COLS = ['serial', 'functional_location', 'ip_address', 'ip_real'];
 
-function likeFrag(cols: string[], val: string) {
+// Substring match (default) OR case-insensitive exact match (quoted term).
+function matchFrag(cols: string[], val: string, exact: boolean) {
 	let e = globalDb`FALSE`;
-	for (const c of cols) e = globalDb`${e} OR d.${globalDb(c)} ILIKE ${val}`;
+	for (const c of cols) {
+		e = exact
+			? globalDb`${e} OR lower(d.${globalDb(c)}) = lower(${val})`
+			: globalDb`${e} OR d.${globalDb(c)} ILIKE ${'%' + val + '%'}`;
+	}
 	return globalDb`(${e})`;
+}
+
+// Split honoring double-quoted spans (which may contain spaces + a leading
+// qualifier, e.g. `sn:"exact value"` or `"exact value"`). A quoted VALUE means
+// exact match; everything else stays a substring search.
+function splitTokens(query: string): string[] {
+	return query.match(/(?:[a-zA-Z]+:)?"[^"]*"|\S+/g) ?? [];
+}
+function unquote(s: string): { value: string; exact: boolean } {
+	return s.length >= 2 && s.startsWith('"') && s.endsWith('"')
+		? { value: s.slice(1, -1), exact: true }
+		: { value: s, exact: false };
 }
 
 /** Parse the query into a SQL WHERE fragment (aliased `d`). Empty -> TRUE. */
 export function buildDeviceWhere(query: string) {
-	const tokens = query.trim().split(/\s+/).filter(Boolean);
+	const tokens = splitTokens(query.trim());
 	const frags = tokens.map((t) => {
-		const m = t.match(/^([a-zA-Z]+):(.*)$/);
+		const m = t.match(/^([a-zA-Z]+):([\s\S]*)$/);
 		const cols = m && QUALIFIERS[m[1].toLowerCase()];
-		return cols ? likeFrag(cols, '%' + m![2] + '%') : likeFrag(BARE_COLS, '%' + t + '%');
+		if (cols) { const u = unquote(m![2]); return matchFrag(cols, u.value, u.exact); }
+		const u = unquote(t);
+		return matchFrag(BARE_COLS, u.value, u.exact);
 	});
 	if (!frags.length) return globalDb`TRUE`;
 	let w = frags[0];

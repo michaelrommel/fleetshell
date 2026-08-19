@@ -8,6 +8,7 @@
 	import ContractsChips from '$lib/components/ContractsChips.svelte';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import { CLIENT_API_BASE } from '$lib/client-api';
+	import { searchHotkey } from '$lib/searchHotkey';
 	import { toastEnhance } from '$lib/toast.svelte';
 
 	let { data, form } = $props();
@@ -68,8 +69,14 @@
 	const tabHref = (t: string) => withParams({ tab: t });
 	function setMode(m: string) { return withParams({ mode: m, after: null, before: null, page: null, sel: null }); }
 	let searchInput: HTMLInputElement;
-	function doSearch() {
-		goto(withParams({ q: searchInput.value.trim() || null, after: null, before: null, page: null, n: null }), { keepFocus: true, noScroll: true });
+	let searching = $state(false);
+	async function doSearch() {
+		searching = true;
+		try {
+			await goto(withParams({ q: searchInput.value.trim() || null, after: null, before: null, page: null, n: null }), { keepFocus: true, noScroll: true });
+		} finally {
+			searching = false;
+		}
 	}
 	function clearSearch() {
 		searchInput.value = ''; searchInput.focus();
@@ -160,6 +167,29 @@
 	let portRows = $state<PortRow[]>([]);
 	let username = $state('');
 	let password = $state('');
+	// NAT-mode context + global-uniqueness probe for the left IP (Manage tab).
+	let gwNatMode = $state<string | null>(null);
+	let leftIp = $state('');
+	let ipInUse = $state(false);
+	let ipCheckSeq = 0;
+	let ipCheckTimer: ReturnType<typeof setTimeout> | undefined;
+	async function checkIpUnique() {
+		const ip = leftIp.trim();
+		const seq = ++ipCheckSeq;
+		if (!ip) { ipInUse = false; return; }
+		try {
+			const p = new URLSearchParams({ ip });
+			if (d?.id) p.set('exclude', d.id);
+			const res = await fetch(`${base}/api/devices/ip-in-use?${p}`);
+			const j = await res.json();
+			if (seq === ipCheckSeq) ipInUse = !!j.inUse;
+		} catch { /* ignore transient errors */ }
+	}
+	function onLeftIpInput(e: Event) {
+		leftIp = (e.target as HTMLInputElement).value;
+		clearTimeout(ipCheckTimer);
+		ipCheckTimer = setTimeout(checkIpUnique, 350);
+	}
 	let lastDeviceId = '';
 	$effect(() => {
 		const id = d?.id ?? '';
@@ -168,6 +198,10 @@
 		portRows = apps.map((a) => ({ ...a, selected: false }));
 		username = '';
 		password = '';
+		gwNatMode = (d?.gateway_nat_mode as string | null) ?? null;
+		leftIp = d?.ip_address ?? '';
+		ipInUse = false;
+		checkIpUnique();
 		resetConnect();
 	});
 
@@ -478,11 +512,11 @@
 			</div>
 		</div>
 
-		<form method="GET" action={`${base}/devices`} class="searchbar" onsubmit={(e) => { e.preventDefault(); doSearch(); }}>
+		<form method="GET" action={`${base}/devices`} class="searchbar" class:searching onsubmit={(e) => { e.preventDefault(); doSearch(); }}>
 			{#if data.mode === 'all'}<input type="hidden" name="mode" value="all" />{/if}
 			<div class="search-wrap">
-				<input name="q" value={data.q} bind:this={searchInput} placeholder="serial / functional location / IP  ·  sn: fl: ip: tid: host: ord:" autocomplete="off" spellcheck="false" />
-				{#if data.q}<button type="button" class="in-clear" onclick={clearSearch} aria-label="Clear search">✕</button>{/if}
+				<input name="q" value={data.q} bind:this={searchInput} use:searchHotkey placeholder="serial / functional location / IP  ·  sn: fl: ip: tid: c: city: hosp:" autocomplete="off" spellcheck="false" />
+				{#if searching}<span class="search-spin" aria-label="Searching" role="status"></span>{:else if data.q}<button type="button" class="in-clear" onclick={clearSearch} aria-label="Clear search">✕</button>{/if}
 			</div>
 			<button type="submit">Search</button>
 		</form>
@@ -558,7 +592,7 @@
 						<p class="muted">No applications defined on this device's model.</p>
 					{:else}
 						{#if !hasTunnelGw}
-							<p class="warn-box">⚠ No <strong>Tunnel Gateway</strong> is set on this device. Connections are blocked until one is configured in the <a href={tabHref('manage')}>Manage</a> tab.</p>
+							<p class="warn-box">⚠ No <strong>Tunnel Gateway</strong> is set. Connections are blocked until one is configured on the gateway{#if d?.gateway_id} {' '}<a href={`${base}/gateways?sel=${d.gateway_id}`}>{d.gateway_name ?? 'this gateway'}</a>.{:else}. Assign an IPsec gateway in the <a href={tabHref('manage')}>Manage</a> tab first.{/if}</p>
 						{/if}
 						<form class="connect-form" onsubmit={onConnect}>
 							<div class="capps">
@@ -705,27 +739,48 @@
 {#snippet fields(x: Record<string, string | null> | null, edit: boolean)}
 	<div class="grid2">
 		<label>Serial<input name="serial" value={x?.serial ?? ''} disabled={!edit} /></label>
+		<div class="field">
+			<span class="flabel">Product model</span>
+			<EntityPicker api="/api/administration/models" name="product_path" idField="path" labelField="display"
+				value={x?.product_path ?? null} label={x?.model_name ?? null} disabled={!edit} placeholder="search model..." />
+			{#if x?.model_partno}<span class="partno-note">Part no <span class="mono">{x.model_partno}</span></span>{/if}
+		</div>
 		<label>Functional location<input name="functional_location" value={x?.functional_location ?? ''} disabled={!edit} /></label>
 		<label>Technical ident<input name="technical_ident" value={x?.technical_ident ?? ''} disabled={!edit} /></label>
 		<label>Host / hardware ID<input name="host_hw_id" value={x?.host_hw_id ?? ''} disabled={!edit} /></label>
 		<label>Order number<input name="order_number" value={x?.order_number ?? ''} disabled={!edit} /></label>
+		<label>Hospital<input name="hospital_name" value={x?.hospital_name ?? ''} disabled={!edit} /></label>
 		<label>Software version<input name="software_version" value={x?.software_version ?? ''} disabled={!edit} /></label>
-		<label>IP address<input name="ip_address" value={x?.ip_address ?? ''} disabled={!edit} /></label>
-		<label>IP (real)<input name="ip_real" value={x?.ip_real ?? ''} disabled={!edit} /></label>
+		<div class="field">
+			<span class="flabel">Region</span>
+			<EntityPicker api="/api/administration/regions" name="region_path" idField="path" labelField="name"
+				value={x?.region_path ?? null} label={x?.region_name ?? null} disabled={!edit} placeholder="search region..." />
+		</div>
+		<label>City<input name="city" value={x?.city ?? ''} disabled={!edit} /></label>
+		<div class="field">
+			<span class="flabel">IPsec gateway</span>
+			<EntityPicker api="/api/administration/gateways" name="gateway_id" idField="id" labelField="name"
+				value={x?.gateway_id ?? null} label={x?.gateway_name ?? null} disabled={!edit}
+				placeholder="search gateway..." onPick={(it) => (gwNatMode = (it?.nat_mode ?? null))}>
+				{#snippet trailing(gwId)}
+					{#if gwId}<a class="gw-jump" href={`${base}/gateways?sel=${gwId}`} title="Open this gateway" aria-label="Open this gateway"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="7" y1="17" x2="17" y2="7"/><polyline points="7 7 17 7 17 17"/></svg></a>{/if}
+				{/snippet}
+			</EntityPicker>
+		</div>
 		<label>Access requirement
 			<select name="access_requirement" value={x?.access_requirement ?? 'open'} disabled={!edit}>
 				<option value="open">open</option><option value="device">device</option>
 				<option value="customer">customer</option><option value="site">site</option>
 			</select>
 		</label>
-		<label>NAT mode
-			<select name="nat_mode" value={x?.nat_mode ?? 'customer'} disabled={!edit}>
-				<option value="customer">customer (customer NATs)</option>
-				<option value="platform">platform (we NAT via ip_real)</option>
-			</select>
+		<label>
+			<span class="lbl-chip">IP address{#if ipInUse}<span class="iptag warning" title="This IP is already used on another device (global uniqueness)">WARNING</span>{/if}</span>
+			<input name="ip_address" value={x?.ip_address ?? ''} disabled={!edit} oninput={onLeftIpInput} />
 		</label>
-		<label>Hospital<input name="hospital_name" value={x?.hospital_name ?? ''} disabled={!edit} /></label>
-		<label>City<input name="city" value={x?.city ?? ''} disabled={!edit} /></label>
+		<label>
+			<span class="lbl-chip">IP (real){#if gwNatMode === 'customer'}<span class="iptag informative">INFORMATIVE</span>{:else if gwNatMode === 'backend'}<span class="iptag translated">TRANSLATED</span>{/if}</span>
+			<input name="ip_real" value={x?.ip_real ?? ''} disabled={!edit} />
+		</label>
 	</div>
 	<label class="full">Contact<input name="contact" value={x?.contact ?? ''} disabled={!edit} /></label>
 	{#key x?.id ?? 'new'}
@@ -746,32 +801,12 @@
 	<label class="full">Additional info (annotations)<textarea name="additional_info" rows="2" disabled={!edit}>{x?.additional_info ?? ''}</textarea></label>
 
 	<h4>Relations</h4>
-	<div class="rel-cols">
-		<div class="rel">
-			<span class="rlabel">Region</span>
-			<EntityPicker api="/api/administration/regions" name="region_path" idField="path" labelField="name"
-				value={x?.region_path ?? null} label={x?.region_name ?? null} disabled={!edit} placeholder="search region..." />
-			<span class="rlabel">Product model</span>
-			<EntityPicker api="/api/administration/models" name="product_path" idField="path" labelField="display"
-				value={x?.product_path ?? null} label={x?.model_name ?? null} disabled={!edit} placeholder="search model..." />
-			{#if x?.model_partno}
-				<span class="rlabel"></span>
-				<span class="partno-note">Part no <span class="mono">{x.model_partno}</span></span>
-			{/if}
-			<span class="rlabel">IPSec Gateway</span>
-			<EntityPicker api="/api/administration/gateways" name="gateway_id" idField="id" labelField="name"
-				value={x?.gateway_id ?? null} label={x?.gateway_name ?? null} disabled={!edit} placeholder="search gateway..." />
-		</div>
-		<div class="rel">
-			<span class="rlabel">Customer</span>
-			<span class="rval" class:unset={!x?.customer_name}>{x?.customer_name ?? 'not assigned'}</span>
-			<span class="rlabel">Site</span>
-			<span class="rval" class:unset={!x?.site_name}>{x?.site_name ?? 'not assigned'}</span>
-			<span class="rel-note">Derived from site membership · manage in <a href={`${base}/customers`}>Customers / Sites</a></span>
-			<span class="rlabel">Tunnel Gateway</span>
-			<span class="rval" class:unset={!x?.gateway_tunnel}>{x?.gateway_tunnel ?? 'set on the IPsec gateway'}</span>
-			<span class="rel-note">The Connect gateway is a property of the IPsec gateway (one per region){#if x?.gateway_id}, edited on <a href={`${base}/gateways?sel=${x.gateway_id}`}>{x?.gateway_name ?? 'this gateway'}</a>.{:else}. Assign an IPsec gateway above, then set it in <a href={`${base}/gateways`}>Gateways</a>.{/if}</span>
-		</div>
+	<div class="rel-grid">
+		<span class="rlabel">Customer</span>
+		<span class="rval" class:unset={!x?.customer_name}>{x?.customer_name ?? 'not assigned'}</span>
+		<span class="rlabel">Site</span>
+		<span class="rval" class:unset={!x?.site_name}>{x?.site_name ?? 'not assigned'}</span>
+		<span class="rel-note">Derived from site membership · manage in <a href={`${base}/customers`}>Customers / Sites</a></span>
 	</div>
 {/snippet}
 
@@ -792,6 +827,9 @@
 	.searchbar input:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
 	.in-clear { position: absolute; right: 0.35rem; top: 50%; transform: translateY(-50%); background: none; border: none; color: var(--text-subtle); cursor: pointer; font-size: 0.8rem; line-height: 1; padding: 0.2rem; border-radius: var(--radius); }
 	.in-clear:hover { color: var(--text); }
+	.search-spin { position: absolute; right: 0.55rem; top: 50%; width: 0.85rem; height: 0.85rem; margin-top: -0.45rem; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: search-spin 0.6s linear infinite; pointer-events: none; }
+	.searchbar.searching input { cursor: progress; }
+	@keyframes search-spin { to { transform: rotate(360deg); } }
 	.searchbar > button { background: var(--accent); color: var(--on-accent); border: none; border-radius: var(--radius); padding: 0.45rem 0.8rem; font: inherit; font-weight: 600; font-size: 0.83rem; cursor: pointer; }
 
 	.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
@@ -875,14 +913,13 @@
 	label.chk input { flex: none; width: 15px; height: 15px; }
 	label.full { margin-top: 0.6rem; }
 
-	.rel-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem 1.4rem; align-items: start; }
-	.rel { display: grid; grid-template-columns: 7rem 1fr; gap: 0.5rem 0.8rem; align-items: start; align-content: start; }
+	.rel-grid { display: grid; grid-template-columns: 7rem 1fr 7rem 1fr; gap: 0.5rem 0.9rem; align-items: center; }
 	.rlabel { align-self: center; font-size: 0.76rem; color: var(--text-muted); }
-	.rval { align-self: center; font-size: 0.84rem; color: var(--text); padding: 0.4rem 0; }
+	.rval { align-self: center; font-size: 0.84rem; color: var(--text); }
 	.rval.unset { color: var(--text-subtle); font-style: italic; }
-	.rel-note { grid-column: 1 / -1; font-size: 0.72rem; color: var(--text-subtle); }
+	.rel-note { grid-column: 1 / -1; font-size: 0.72rem; color: var(--text-subtle); margin-bottom: 0.2rem; }
 	.rel-note a { color: var(--accent); }
-	.partno-note { align-self: center; font-size: 0.76rem; color: var(--text-subtle); }
+	.partno-note { font-size: 0.72rem; color: var(--text-subtle); }
 
 	/* Connect tab */
 	.connect-form { display: flex; flex-direction: column; gap: 0.9rem; }
@@ -913,4 +950,20 @@
 	.warn-box a { color: var(--accent); }
 
 	.error { color: var(--danger); font-size: 0.85rem; margin: 0 0 0.8rem; }
+
+	/* Manage tab: field wrapper (label-on-top, matches the plain <label> fields). */
+	.field { display: flex; flex-direction: column; gap: 0.25rem; }
+	.field .flabel { font-size: 0.76rem; color: var(--text-muted); }
+	.gw-jump { flex: none; display: inline-flex; align-items: center; justify-content: center;
+		background: none; border: 1px solid var(--border); color: var(--text-muted);
+		border-radius: var(--radius); padding: 0.2rem 0.35rem; text-decoration: none; }
+	.gw-jump:hover { color: var(--text); border-color: var(--text-subtle); }
+	/* IP label rows: field label + a compact status chip on one line. */
+	.lbl-chip { display: flex; align-items: center; gap: 0.4rem; min-height: 1.05rem; }
+	.iptag { padding: 0.12rem 0.55rem; border-radius: 14px; font-size: 0.64rem; font-weight: 700;
+		letter-spacing: 0.04em; font-family: var(--mono, monospace); border: 1px solid var(--border); line-height: 1.25; }
+	.iptag.informative { background: var(--bg-app); color: var(--text-muted); }
+	.iptag.translated, .iptag.warning { color: #b45309;
+		background: color-mix(in srgb, #f59e0b 14%, transparent);
+		border-color: color-mix(in srgb, #f59e0b 45%, transparent); }
 </style>

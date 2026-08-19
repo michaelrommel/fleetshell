@@ -19,6 +19,16 @@ const orNull = (v: FormDataEntryValue | null): string | null => {
 	return s === '' ? null : s;
 };
 
+// Search fragment over name/country/city. Substring by default; a fully
+// double-quoted query switches to a case-insensitive EXACT match.
+function customerWhere(q: string) {
+	const exact = q.length >= 2 && q.startsWith('"') && q.endsWith('"');
+	const val = exact ? q.slice(1, -1) : q;
+	return exact
+		? globalDb`(lower(c.name) = lower(${val}) OR lower(c.country) = lower(${val}) OR lower(c.city) = lower(${val}))`
+		: globalDb`(c.name ILIKE ${'%' + val + '%'} OR c.country ILIKE ${'%' + val + '%'} OR c.city ILIKE ${'%' + val + '%'})`;
+}
+
 export const load: PageServerLoad = async ({ locals, url }) => {
 	if (!locals.userId) throw redirect(303, `${base}/login`);
 	const persona = await getPersona(locals.userId);
@@ -32,7 +42,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 
 	const [countries, variants] = await Promise.all([listCountries(), listVariants()]);
 
-	const like = '%' + q + '%';
+	const where = customerWhere(q);
 	const [rows, cnt] = await Promise.all([
 		q
 			? globalDb<{ id: string; name: string; country: string; city: string | null; site_count: number; device_count: number }[]>`
@@ -40,7 +50,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 				  (SELECT count(*) FROM customer_site s WHERE s.customer_id = c.id)::int AS site_count,
 				  (SELECT count(*) FROM device d WHERE d.customer_id = c.id)::int AS device_count
 				FROM customer c
-				WHERE c.name ILIKE ${like} OR c.country ILIKE ${like} OR c.city ILIKE ${like}
+				WHERE ${where}
 				ORDER BY c.name LIMIT ${LIST_LIMIT}`
 			: globalDb<{ id: string; name: string; country: string; city: string | null; site_count: number; device_count: number }[]>`
 				SELECT c.id::text AS id, c.name, c.country, c.city,
@@ -49,7 +59,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 				FROM customer c ORDER BY c.name LIMIT ${LIST_LIMIT}`,
 		globalDb<{ total: number }[]>`
 			SELECT count(*)::int AS total FROM customer c
-			${q ? globalDb`WHERE c.name ILIKE ${like} OR c.country ILIKE ${like} OR c.city ILIKE ${like}` : globalDb``}`,
+			${q ? globalDb`WHERE ${where}` : globalDb``}`,
 	]);
 
 	// Customer detail + its sites.
