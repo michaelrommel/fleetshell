@@ -1,6 +1,20 @@
 <script lang="ts">
 	import { base } from '$app/paths';
+	import { onMount } from 'svelte';
 	import { GITHUB_RELEASE_URL } from '$lib/downloads';
+
+	// Easter egg: type "kickass" on this page. Remove this block + static/easter.js to revert.
+	onMount(() => {
+		const s = document.createElement('script');
+		s.id = 'easter-egg-script';
+		s.src = `${base}/easter.js`;
+		s.async = true;
+		document.head.appendChild(s);
+		return () => {
+			(window as unknown as { __easterEggTeardown?: () => void }).__easterEggTeardown?.();
+			s.remove();
+		};
+	});
 
 	// Enrollment phase state machine:
 	//   front -> install -> getting-id -> enrolling -> probe-wait
