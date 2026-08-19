@@ -3,7 +3,7 @@ import { fail, error, redirect } from '@sveltejs/kit';
 import { base } from '$app/paths';
 import { globalDb } from '$lib/server/db';
 import { getPersona } from '$lib/server/identity';
-import { resolveGroupIds, can, canService, scopeSignature } from '$lib/server/authz';
+import { resolveGroupIds, scopeSignature } from '$lib/server/authz';
 import { cacheGet, cacheSet, hashKey, authzGen, l1Ttl } from '$lib/server/cache';
 import { buildDeviceWhere } from '$lib/server/deviceQuery';
 import { spoolDeviceOnSave, deleteDeviceKey } from '$lib/server/device_spool';
@@ -24,16 +24,37 @@ type ListRow = {
 	customer_name: string | null; gateway: string | null; city: string | null; partno: string | null;
 };
 
-export const load: PageServerLoad = async ({ locals, url }) => {
+export const load: PageServerLoad = async ({ locals, url, setHeaders }) => {
+	// Per-segment timing -> Server-Timing header (visible in DevTools > Network >
+	// Timing). The detail pill only covers loadDetail; this attributes the REST of
+	// the load (persona, authz, list, recordings) so the true hot path is visible.
+	const marks: Array<[string, number]> = [];
+	const timed = async <T>(name: string, fn: () => Promise<T>): Promise<T> => {
+		const t = performance.now();
+		try {
+			return await fn();
+		} finally {
+			marks.push([name, performance.now() - t]);
+		}
+	};
+	const emitTiming = () =>
+		setHeaders({ 'Server-Timing': marks.map(([n, ms]) => `${n};dur=${ms.toFixed(1)}`).join(', ') });
+
 	if (!locals.userId) return { devices: [], total: 0, q: '', mode: 'scope', isAdmin: false,
 		page: 1, from: 0, to: 0, hasPrev: false, hasNext: false, prevCursor: null, nextCursor: null,
-		sel: null, isNew: false, detail: null, canRecordings: false, listMs: 0, listCached: null, detailMs: null };
-	const persona = await getPersona(locals.userId);
+		sel: null, isNew: false, detail: null, listMs: 0, listCached: null, detailMs: null };
+
+	// Detail depends only on `sel` (GLOBAL plane) and is independent of the list /
+	// authz chain -- kick it off NOW so it runs concurrently with persona + list
+	// (#2 parallelization). Awaited near the end.
+	const sel = url.searchParams.get('sel');
+	const detailP = loadDetailTimed(sel);
+
+	const persona = await timed('persona', () => getPersona(locals.userId!));
 	const isAdmin = persona?.is_admin ?? false;
 
 	const q = (url.searchParams.get('q') ?? '').trim();
 	const mode = isAdmin && url.searchParams.get('mode') === 'all' ? 'all' : 'scope';
-	const sel = url.searchParams.get('sel');
 	const isNew = isAdmin && url.searchParams.get('new') === '1';
 	const page = Math.max(1, Number(url.searchParams.get('page') ?? '1') || 1);
 	const after = url.searchParams.get('after');
@@ -73,16 +94,17 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 		fetched = await globalDb<ListRow[]>`SELECT ${cols} FROM device d ${joins}
 			WHERE ${where} ${cursorFrag} ORDER BY ${order} LIMIT ${PAGE_SIZE + 1}`;
 	} else {
-		const groupIds = await resolveGroupIds(locals.userId);
+		const groupIds = await timed('groups', () => resolveGroupIds(locals.userId!));
 		if (!groupIds.length) {
-			const det = await loadDetailTimed(sel);
+			const det = await detailP;
+			if (det.ms != null) marks.push(['detail', det.ms]);
+			emitTiming();
 			return { devices: [], total: 0, q, mode, isAdmin, page: 1, from: 0, to: 0,
 				hasPrev: false, hasNext: false, prevCursor: null, nextCursor: null,
 				sel, isNew, detail: det.detail,
-				canRecordings: await recordingsAllowed(locals.userId, sel),
 				listMs: 0, listCached: null, detailMs: det.ms };
 		}
-		const sig = await scopeSignature(groupIds, 'view');
+		const sig = await timed('sig', () => scopeSignature(groupIds, 'view'));
 		const g = await authzGen();
 		const cur = before ? `b:${before}` : after ? `a:${after}` : 'first';
 		// L1 scope-signature page cache: users sharing the same visible set (same
@@ -101,6 +123,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 		}
 	}
 	const listMs = Math.round(performance.now() - tList);
+	marks.push([mode === 'all' ? 'list_all' : listCached ? 'list_cache' : 'list_db', listMs]);
 
 	const extra = fetched.length > PAGE_SIZE;
 	let rows: ListRow[] = fetched.slice(0, PAGE_SIZE);
@@ -111,33 +134,18 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 	const from = (page - 1) * PAGE_SIZE + (rows.length ? 1 : 0);
 	const to = (page - 1) * PAGE_SIZE + rows.length;
 
-	const det = await loadDetailTimed(sel);
+	const det = await detailP;
+	if (det.ms != null) marks.push(['detail', det.ms]);
+	emitTiming();
 	return {
 		devices: rows, total, q, mode, isAdmin, page, from, to,
 		hasPrev, hasNext,
 		prevCursor: rows.length ? rows[0].id : null,
 		nextCursor: rows.length ? rows[rows.length - 1].id : null,
 		sel, isNew, detail: det.detail,
-		canRecordings: await recordingsAllowed(locals.userId, sel),
 		listMs, listCached, detailMs: det.ms,
 	};
 };
-
-/**
- * Two-grant gate for the device Recordings tab (see api/devices/recordings):
- * service:connect over 'screen_recording' AND device:view over this device.
- * Both are re-enforced in the API on every fetch; this only drives tab visibility.
- */
-async function recordingsAllowed(userId: string | undefined, deviceId: string | null): Promise<boolean> {
-	if (!userId || !deviceId) return false;
-	const groupIds = await resolveGroupIds(userId);
-	if (!groupIds.length) return false;
-	const [entitled, reachable] = await Promise.all([
-		canService(groupIds, 'view', 'screen_recording'),
-		can(groupIds, 'view', deviceId),
-	]);
-	return entitled && reachable;
-}
 
 // Load the device detail and time it (the detail pane is fetched once per page
 // load; tab switches are client-side, so this figure is final for the pane).

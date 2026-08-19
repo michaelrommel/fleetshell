@@ -95,7 +95,7 @@
 	let recDays = $state<string[]>([]);
 	let recDay = $state<string | null>(null);
 	let recSessions = $state<RecSession[]>([]);
-	let recState = $state<'idle' | 'loading-days' | 'loading-sessions' | 'ready' | 'error'>('idle');
+	let recState = $state<'idle' | 'loading-days' | 'loading-sessions' | 'ready' | 'error' | 'forbidden'>('idle');
 	let recError = $state('');
 	let recBusy = $state('');           // session base being downloaded
 	let recLoadedFor = '';              // device id whose days are loaded
@@ -114,6 +114,8 @@
 		recError = ''; recDay = null; recSessions = [];
 		try {
 			const r = await fetch(`${base}/api/devices/recordings?device=${encodeURIComponent(d.id)}`);
+			// The two-grant gate lives in the API; a click-time 403 -> the access notice.
+			if (r.status === 403) { recState = 'forbidden'; recLoadedFor = d.id; return; }
 			if (!r.ok) throw new Error((await r.json().catch(() => ({}))).message || `HTTP ${r.status}`);
 			recDays = (await r.json()).days ?? [];
 			recLoadedFor = d.id;
@@ -153,9 +155,10 @@
 		}
 	}
 
-	// Auto-load the day list when the tab opens or the device changes.
+	// Auto-load the day list when the tab opens or the device changes. The
+	// two-grant authz check now happens here (click-time), not in the page load.
 	$effect(() => {
-		if (tab === 'recordings' && data.canRecordings && d?.id && recLoadedFor !== d.id) {
+		if (tab === 'recordings' && d?.id && recLoadedFor !== d.id) {
 			void loadRecDays();
 		}
 	});
@@ -587,9 +590,7 @@
 				<div class="tabs" role="tablist">
 					<a role="tab" aria-selected={tab === 'connect'} class:active={tab === 'connect'} href={tabHref('connect')}>Connect</a>
 					<a role="tab" aria-selected={tab === 'files'} class:active={tab === 'files'} href={tabHref('files')}>Files</a>
-					{#if data.canRecordings}
-						<a role="tab" aria-selected={tab === 'recordings'} class:active={tab === 'recordings'} href={tabHref('recordings')}>Recordings</a>
-					{/if}
+					<a role="tab" aria-selected={tab === 'recordings'} class:active={tab === 'recordings'} href={tabHref('recordings')}>Recordings</a>
 					<a role="tab" aria-selected={tab === 'manage'} class:active={tab === 'manage'} href={tabHref('manage')}>Manage</a>
 				</div>
 
@@ -661,21 +662,20 @@
 				{:else if tab === 'files'}
 					<p class="muted files-stub">File browser (S3 <span class="mono">/clean/&lt;modality&gt;/&lt;product&gt;/&lt;partno&gt;/&lt;serial&gt;/</span>) is not wired yet.</p>
 				{:else if tab === 'recordings'}
-					{#if !data.canRecordings}
-						<p class="muted">You are not authorized to view recordings for this device.</p>
+					{#if recState === 'forbidden'}
+						<div class="rec-denied">You do not have the grants to view this information.</div>
+					{:else if recState === 'loading-days'}
+						<div class="rec-checking"><span class="search-spin" aria-label="Checking access" role="status"></span> Checking access…</div>
 					{:else}
 						<div class="rec">
 							<div class="rec-head">
 								<p class="muted">Session recordings (PHI-bearing). Access is logged.</p>
-								<button type="button" class="rec-refresh" onclick={loadRecDays} disabled={recState === 'loading-days'}>Refresh</button>
+								<button type="button" class="rec-refresh" onclick={loadRecDays}>Refresh</button>
 							</div>
 							{#if recState === 'error'}
 								<p class="error">{recError}</p>
 							{/if}
-							{#if recState === 'loading-days'}
-								<p class="muted">Loading recording days…</p>
-							{:else}
-								<div class="rec-cols">
+							<div class="rec-cols">
 									<div class="rec-days">
 										{#each recDays as day (day)}
 											<button type="button" class="rec-day" class:sel={day === recDay} onclick={() => openRecDay(day)}>{day}</button>
@@ -703,7 +703,6 @@
 										{/if}
 									</div>
 								</div>
-							{/if}
 						</div>
 					{/if}
 				{:else}
@@ -881,6 +880,11 @@
 	/* Recordings tab */
 	.rec { display: flex; flex-direction: column; gap: 0.7rem; }
 	.rec-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+	.rec-denied { max-width: 32rem; margin: 1.5rem auto 0; padding: 1rem 1.25rem; text-align: center;
+		background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; color: var(--text); }
+	.rec-checking { display: flex; align-items: center; justify-content: center; gap: 0.6rem;
+		margin: 1.5rem auto 0; padding: 1rem; color: var(--text-muted); }
+	.rec-checking .search-spin { position: static; margin: 0; }
 	.rec-head .muted { margin: 0; }
 	.rec-refresh { background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
 		border-radius: var(--radius); padding: 0.3rem 0.7rem; font: inherit; font-size: 0.82rem; cursor: pointer; }

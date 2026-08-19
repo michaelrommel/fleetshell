@@ -250,7 +250,74 @@ authorization (no per-member execute/delegate re-check; the only surviving
 
 ### Session recap (latest work, all in `fleetshell-portal` unless noted)
 
-- **Services catalog + Screen-Recording browser (BUILT)** -- the first cut of the
+- **Rotating DB credentials -- runtime Secrets Manager fetch (no restart on rotation).**
+  ECS injects `secrets`/`valueFrom` ONLY at task start, so a rotated master
+  password (the LOCAL RDS-managed secret rotates on a multi-day schedule; the
+  GLOBAL self-managed `fleetshell/global/master` on manual change) silently broke
+  the running portal with `password authentication failed for user "fsadmin"`
+  until the task was replaced. Fix:
+  - New `src/lib/server/secrets.ts` -- fetches the DB credential secret via the
+    task role and caches it for the PROCESS LIFETIME (no TTL: a per-connection
+    Secrets Manager round-trip was a hot-path regression, ~10s vs ~1s). Only an
+    actual auth fault re-fetches.
+  - `src/lib/server/db.ts` -- when `${prefix}_DB_SECRET_ARN` is set, postgres.js
+    gets a dynamic `password` callback returning the cached secret (applied per
+    physical connection at auth time; see `Pass()` in `postgres/src/connection.js`).
+    A ONE-SHOT retry (`retryableQuery`) fires only on `28P01`: it
+    `invalidateDbSecret()`s and transparently replays the query on a fresh
+    connection, which re-fetches the rotated password. Scope: plain `await` +
+    chainable builders (`.values()` etc.); streaming (`.cursor()`) and
+    transactions (`.begin`) pass through un-retried. Falls back to the static
+    `${prefix}_DB_PASSWORD` env when no ARN is set (local dev via SSH/SSM tunnel).
+  - `infrastructure/deploy_portal_taskdef.json` -- DB user/password are no longer
+    `valueFrom` secrets; instead `GLOBAL_DB_SECRET_ARN` / `LOCAL_DB_SECRET_ARN`
+    are plain env vars the portal reads at runtime. `package.json` adds
+    `@aws-sdk/client-secrets-manager`.
+  - **IAM (required before deploy):** the runtime fetch uses the TASK role
+    (`ecsTaskExecutionRoleWithSSM`), NOT the execution role -- it must hold
+    `secretsmanager:GetSecretValue` on BOTH DB secret ARNs (+ `kms:Decrypt` if a
+    CMK is used). Policy example in `infrastructure/deploy_portal.sh` header.
+  - Manual password reset (when a DB drifts from its secret): LOCAL uses
+    `aws rds modify-db-cluster --rotate-master-user-password` (RDS re-syncs DB +
+    managed secret in one step); GLOBAL is self-managed, so set
+    `--master-user-password` on `fleetshell-global-euw2` AND `put-secret-value`
+    into `fleetshell/global/master` yourself (Global clusters cannot use RDS-
+    managed passwords). RDS Proxy (global) reads the same secret, so it re-syncs
+    automatically.
+
+- **Devices detail page latency (was ~1.1s server, DB only ~71ms).** A
+  `Server-Timing` header on the devices `load` (visible in DevTools > Network >
+  Timing) attributed the request per segment: `persona`, `groups`, `sig`, `list`,
+  `detail`, `rec`. It showed `rec;dur=613` (the Recordings two-grant gate) as 55%
+  of the request and that all segments ran SERIALLY. Two fixes (the header stays
+  in place for ongoing measurement):
+  - **#1 Recordings tab checked on click, not on load.** `recordingsAllowed()`
+    (the `resolveGroupIds` + `canService('screen_recording')` + `can(device)`
+    gate) is REMOVED from the page loader; `canRecordings` no longer exists in the
+    page data. The **Recordings tab is always shown** for a selected device; the
+    two-grant check happens client-side when the tab is opened, via the existing
+    `/api/devices/recordings` fetch (which already re-enforces both grants). New
+    client states: a centered spinner (`Checking access...`) during the check and,
+    on HTTP 403, a centered box **"You do not have the grants to view this
+    information."** (`.rec-denied` / `.rec-checking` in `devices/+page.svelte`).
+    No security change -- the API was always the real enforcement point.
+  - **#2 Detail load parallelized.** `loadDetail` depends only on `sel` (GLOBAL
+    plane) and is independent of the persona/authz/list chain, so it is kicked off
+    as `detailP` at the top of the loader and awaited at the end -- it now overlaps
+    the list path instead of running after it. (Server-Timing segments will now
+    SUM to more than wall-time, which is the parallelization showing up.)
+  - Net: the ~613ms `rec` gate leaves the hot path and `detail` hides under the
+    list chain -> remaining serial cost ~`persona+groups+sig+list` (~320ms).
+  - NOT done (analyzed, deferred by owner): #3 the list/detail layout+page split
+    to stop resending the 50-row list on `sel`-only clicks (SvelteKit re-runs the
+    whole page `load` because it reads `sel`; a `+layout.server.ts` keyed on
+    `q/mode/page/cursor` only would let a `sel` change skip the list load). Left
+    out for its fragile "layout must never read `sel`" invariant; navigation
+    semantics are unaffected either way. The ~50ms-per-call Valkey latency and the
+    point-check `authz_can*` cost (~300ms each) are also still open.
+
+### Session recap (services + recordings)
+
   **service resource type** (feature entitlement) + the device **Recordings** tab.
   - Schema `migrate_services_authz.sql` (folded into `schema_global.sql`; in
     `reload.sh` after `migrate_authz_catalog.sql`). Fully ADDITIVE and idempotent
@@ -272,10 +339,12 @@ authorization (no per-member execute/delegate re-check; the only surviving
   - **Grants builder** gained a third `Applies to` mode **Services** (subtree
     `ScopePicker` over new `/api/administration/services`; constraint dimension
     `service_path`, op `subtree`), and decodes service scopes in the grant list.
-  - **Device detail** gained a **Recordings** tab (next to Files), shown only
-    when the TWO-grant gate passes: `service:view` over `screen_recording`
-    AND `device:view` over that device (`recordingsAllowed()` in the loader;
-    re-enforced on every fetch in `api/devices/recordings`). The tab is a lazy S3
+  - **Device detail** gained a **Recordings** tab (next to Files). The TWO-grant
+    gate is `service:view` over `screen_recording` AND `device:view` over that
+    device, enforced on every fetch in `api/devices/recordings`. (Superseded by
+    the latest-work recap: the gate was REMOVED from the page loader and is now
+    checked client-side when the tab is opened; the tab is always shown. The API
+    remains the real enforcement point.) The tab is a lazy S3
     browser (device IP resolved server-side -> day -> session -> presigned ZIP).
     Ported `s3.ts` from the old portal (+ `@aws-sdk/client-s3` /
     `s3-request-presigner` pinned in `package.json`; needs `GUACD_S3_BUCKET`).
