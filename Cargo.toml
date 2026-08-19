@@ -4,6 +4,5 @@ resolver = "2"
 members = [
 	"fleetshell-client/src-tauri",
 	"fleetshell-gateway",
-	"squid-infoproxy",
 	"test-guac",
 ]

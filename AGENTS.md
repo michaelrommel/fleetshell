@@ -29,7 +29,9 @@ and have enough context to proceed.
 fleetshell/
 ├── Cargo.toml                  # Cargo workspace (resolver = "2")
 │                               # members: fleetshell-client/src-tauri, fleetshell-gateway,
-│                               #          squid-infoproxy, test-guac
+│                               #          test-guac
+│                               # NOTE: squid-infoproxy moved to ../fleetsuite (the proxy is an
+│                               #       AMI-baked EC2 service: fleetsuite/aerobake/fleetproxy)
 ├── Cargo.lock
 ├── AGENTS.md                   # ← this file
 ├── TODO.md                     # Detailed task tracking
@@ -136,13 +138,11 @@ fleetshell/
     ├── Cargo.toml              # rustls dependency for optional TLS in gateway mode
     └── src/main.rs             # Direct guacd mode + gateway mode (GATEWAY_TLS=true)
 
-└── squid-infoproxy/            # Rust Squid external_acl_type helper (Info Proxy authz)
-    ├── Cargo.toml              # rustls/ring + ipnet; no async runtime (blocking helper)
-    ├── README.md               # deployment + Squid config
-    └── src/
-        ├── main.rs             # CLI + stdin OK/ERR loop (fail-closed)
-        ├── valkey.rs           # minimal blocking RESP client (AUTH/SELECT/SMEMBERS), rediss
-        └── matcher.rs          # destination-rule matching (CIDR/DNS-suffix/port/proto)
+# squid-infoproxy MOVED -> ../fleetsuite/squid-infoproxy (fleetsuite workspace member).
+# The helper is baked into the fleetsuite AMI fleetsuite/aerobake/fleetproxy (the
+# dual-homed Squid proxy EC2 service). Its ONLY coupling to fleetshell is the
+# Valkey key schema `infoproxy:<proxy_type>:<source_ip>`, which the portal Info
+# Proxy spool (fleetshell-portal) writes. See fleetsuite/aerobake/fleetproxy/README.md.
 ```
 
 ---
