@@ -9,11 +9,12 @@
 // password as a plain option avoids all URL-escaping pitfalls.
 //
 // Rotating credentials: when `${prefix}_DB_SECRET_ARN` is set, the password is
-// fetched from Secrets Manager at RUNTIME (via the task role) through a dynamic
-// `password` callback that postgres.js invokes for every new physical
-// connection. This survives secret rotation with no container restart -- on an
-// auth failure we invalidate the cache so the next reconnect pulls the fresh
-// password. When the ARN is absent we fall back to the static
+// fetched from Secrets Manager ONCE and cached for the process lifetime (no TTL,
+// no per-connection Secrets Manager call -- that was a hot-path regression). The
+// cached value feeds postgres.js via a dynamic `password` callback. On an actual
+// auth fault (28P01) after a rotation, `retryableQuery` invalidates the cache and
+// transparently replays the query once on a fresh connection, which re-fetches
+// the rotated password. When the ARN is absent we fall back to the static
 // `${prefix}_DB_PASSWORD` env (local dev via an SSH/SSM port-forward).
 
 import postgres from 'postgres';
@@ -72,6 +73,58 @@ function isAuthError(err: unknown): boolean {
 	return e?.code === '28P01' || /password authentication failed/i.test(e?.message ?? '');
 }
 
+// postgres.js builder methods that mutate the query and return `this` (the same
+// Query instance). Safe to record and replay on a fresh query during a retry.
+// Streaming methods (cursor/forEach/stream) are deliberately NOT here -- they
+// yield rows incrementally, so retry disables itself and forwards verbatim.
+const CHAINABLE = new Set(['values', 'raw', 'simple', 'describe', 'execute']);
+
+// Wrap a postgres.js query with a ONE-SHOT retry that fires only on a password
+// auth failure (28P01). The password is applied per physical connection at auth
+// time (see Pass() in postgres/src/connection.js), so after invalidateDbSecret()
+// a rebuilt query opens a fresh connection whose auth pulls the rotated password.
+//   - `run()` recreates the query from the original tagged-template args.
+//   - Plain `await` and chainable builders (.values() etc.) are covered.
+//   - Streaming (.cursor()) and anything unrecognised disable retry and forward.
+function retryableQuery(run: () => unknown, secretArn: string): unknown {
+	const first = run() as PromiseLike<unknown> & Record<PropertyKey, unknown>;
+	const replay: Array<[PropertyKey, unknown[]]> = [];
+	let disabled = false;
+
+	const execute = (): Promise<unknown> =>
+		Promise.resolve(first).catch((err) => {
+			if (disabled || !isAuthError(err)) throw err;
+			invalidateDbSecret(secretArn);
+			// Rebuild on a fresh connection; its auth handshake re-fetches the secret.
+			let q = run() as Record<PropertyKey, unknown>;
+			for (const [prop, args] of replay) {
+				q = (q[prop] as (...a: unknown[]) => unknown)(...args) as Record<PropertyKey, unknown>;
+			}
+			return q;
+		});
+
+	const proxy: unknown = new Proxy(first, {
+		get(target, prop) {
+			if (prop === 'then') return (f: unknown, r: unknown) => execute().then(f as never, r as never);
+			if (prop === 'catch') return (r: unknown) => execute().catch(r as never);
+			if (prop === 'finally') return (f: unknown) => execute().finally(f as never);
+			const v = (target as Record<PropertyKey, unknown>)[prop];
+			if (typeof v !== 'function') return v;
+			if (CHAINABLE.has(prop as string)) {
+				return (...args: unknown[]) => {
+					replay.push([prop, args]);
+					(v as (...a: unknown[]) => unknown).apply(target, args); // mutates `first` in place
+					return proxy; // keep the retry wrapper for chaining + await
+				};
+			}
+			// Streaming / unknown method: retry is unsafe -- forward to the real query.
+			disabled = true;
+			return (v as (...a: unknown[]) => unknown).bind(target);
+		},
+	});
+	return proxy;
+}
+
 export const globalDb = lazyPool('GLOBAL');
 export const localDb = lazyPool('LOCAL');
 
@@ -89,17 +142,9 @@ function lazyPool(prefix: 'GLOBAL' | 'LOCAL'): postgres.Sql<{}> {
 	return new Proxy(target, {
 		apply: (_t, _this, args: unknown[]) => {
 			const { sql, secretArn } = get();
-			const result = (sql as unknown as (...a: unknown[]) => unknown)(...args);
-			// Observe-only: postgres.Query extends Promise, so attaching a rejection
-			// handler does not re-execute the query. On an auth failure we drop the
-			// cached secret so the NEXT connection re-fetches the rotated password.
-			// The original PendingQuery (with .values()/.cursor()) is returned intact.
-			if (secretArn && result && typeof (result as { then?: unknown }).then === 'function') {
-				Promise.resolve(result).catch((err) => {
-					if (isAuthError(err)) invalidateDbSecret(secretArn);
-				});
-			}
-			return result;
+			const run = () => (sql as unknown as (...a: unknown[]) => unknown)(...args);
+			// Static-password pools (no ARN) get the raw query -- no wrapper, no cost.
+			return secretArn ? retryableQuery(run, secretArn) : run();
 		},
 		get: (_t, prop) => {
 			const sql = get().sql as unknown as Record<PropertyKey, unknown>;

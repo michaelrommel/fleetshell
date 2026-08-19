@@ -32,26 +32,25 @@ function client(): SecretsManagerClient {
 
 interface CacheEntry {
 	value: DbSecret;
-	fetchedAt: number;
 	inflight?: Promise<DbSecret>;
 }
 
-// A short TTL bounds how long a just-rotated secret keeps failing NEW
-// connections before the cache refreshes on its own. `invalidateDbSecret()`
-// (called on an auth failure) makes recovery immediate rather than waiting it
-// out. Override with DB_SECRET_TTL_MS.
-const TTL_MS = Number(env.DB_SECRET_TTL_MS ?? 30_000);
-
+// The secret is cached for the LIFE OF THE PROCESS -- NOT re-fetched on a timer.
+// Password rotation happens on a multi-day interval, so paying a Secrets Manager
+// round-trip on every new connection (a TTL) is a hot-path regression. Instead we
+// fetch once and only re-fetch when an ACTUAL auth fault calls
+// `invalidateDbSecret()` (see db.ts). Recovery cost is paid on the fault, never
+// on the steady-state path.
 const cache = new Map<string, CacheEntry>();
 
 /**
  * Fetch and cache a DB credential secret (JSON with username/password[/host/
- * port/dbname]). Concurrent callers share one in-flight request.
+ * port/dbname]). Returns the cached value on every subsequent call until
+ * `invalidateDbSecret()` clears it. Concurrent first-callers share one request.
  */
-export async function getDbSecret(secretId: string, opts?: { force?: boolean }): Promise<DbSecret> {
-	const now = Date.now();
+export async function getDbSecret(secretId: string): Promise<DbSecret> {
 	const hit = cache.get(secretId);
-	if (!opts?.force && hit && now - hit.fetchedAt < TTL_MS) return hit.value;
+	if (hit?.value) return hit.value;
 	if (hit?.inflight) return hit.inflight;
 
 	const inflight = (async () => {
@@ -68,24 +67,20 @@ export async function getDbSecret(secretId: string, opts?: { force?: boolean }):
 			port: parsed.port,
 			dbname: parsed.dbname,
 		};
-		cache.set(secretId, { value, fetchedAt: Date.now() });
+		cache.set(secretId, { value });
 		return value;
 	})();
 
-	// Preserve any stale value while the refresh is in flight so other callers
-	// that hit the TTL can still fall back if they choose to.
-	cache.set(secretId, { value: hit?.value ?? ({} as DbSecret), fetchedAt: hit?.fetchedAt ?? 0, inflight });
+	cache.set(secretId, { inflight } as CacheEntry);
 	try {
 		return await inflight;
 	} catch (err) {
-		// Drop the failed in-flight marker; keep any previously good value.
-		if (hit?.value) cache.set(secretId, { value: hit.value, fetchedAt: hit.fetchedAt });
-		else cache.delete(secretId);
+		cache.delete(secretId); // let the next attempt retry the fetch
 		throw err;
 	}
 }
 
-/** Force the next getDbSecret() to re-fetch (call after an auth failure). */
+/** Force the next getDbSecret() to re-fetch (call ONLY on an auth failure). */
 export function invalidateDbSecret(secretId: string): void {
 	cache.delete(secretId);
 }
