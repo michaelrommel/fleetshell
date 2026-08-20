@@ -67,6 +67,31 @@ pub struct AppConfig {
     /// Default: `false`.
     #[serde(default)]
     pub gateway_disable_tls: bool,
+
+    /// Offer the local SSH authentication agent for public-key login to the
+    /// target during direct-SSH (xterm.js) sessions.
+    ///
+    /// When `true`, the client opens a second connection to the gateway that
+    /// relays the ssh-agent protocol between the gateway's russh client and
+    /// the local agent, so the target can be authenticated with keys the agent
+    /// holds.  Private keys never leave this machine — only sign requests are
+    /// relayed.  The gateway still falls back to password auth if the agent
+    /// holds no accepted key.
+    ///
+    /// Default: `false`.
+    #[serde(default)]
+    pub ssh_agent_enable: bool,
+
+    /// Path to the local SSH agent endpoint.
+    ///
+    /// Empty = use the OS default:
+    ///   Windows: `\\.\pipe\openssh-ssh-agent` (OpenSSH Agent Service)
+    ///   Unix:    the `SSH_AUTH_SOCK` environment variable
+    ///
+    /// Override to point at a different agent (e.g. a non-standard socket path
+    /// on macOS/Linux, or a Pageant-compatible pipe on Windows).
+    #[serde(default)]
+    pub ssh_agent_socket: String,
 }
 
 fn default_portal_base_url() -> String {
@@ -88,7 +113,30 @@ impl Default for AppConfig {
             client_id:               None,
             gateway_skip_tls_verify: false,
             gateway_disable_tls:     false,
+            ssh_agent_enable:        false,
+            ssh_agent_socket:        String::new(),
         }
+    }
+}
+
+/// Resolve the effective SSH agent endpoint from a configured value.
+///
+/// An explicit non-empty `configured` path is used verbatim.  Otherwise the
+/// OS default is returned: the OpenSSH Agent Service named pipe on Windows, or
+/// the `SSH_AUTH_SOCK` socket on Unix (macOS/Linux).  Returns `None` when no
+/// agent endpoint can be determined (e.g. `SSH_AUTH_SOCK` unset on Unix).
+pub fn resolve_agent_socket(configured: &str) -> Option<String> {
+    let trimmed = configured.trim();
+    if !trimmed.is_empty() {
+        return Some(trimmed.to_string());
+    }
+    #[cfg(windows)]
+    {
+        Some(r"\\.\pipe\openssh-ssh-agent".to_string())
+    }
+    #[cfg(not(windows))]
+    {
+        std::env::var("SSH_AUTH_SOCK").ok().filter(|s| !s.is_empty())
     }
 }
 

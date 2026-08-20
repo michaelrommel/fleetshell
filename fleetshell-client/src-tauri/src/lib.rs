@@ -1,4 +1,5 @@
 mod config;
+mod agent_proxy;
 mod guac_proxy;
 mod portal;
 mod server;

@@ -503,6 +503,8 @@ async fn tunnel_handler(
             last_active:     last_active.clone(),
             skip_tls_verify: cfg.gateway_skip_tls_verify,
             disable_tls:     cfg.gateway_disable_tls,
+            agent_enable:    cfg.ssh_agent_enable,
+            agent_socket:    cfg.ssh_agent_socket.clone(),
         });
 
         let handle = tokio::spawn(

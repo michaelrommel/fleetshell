@@ -11,6 +11,8 @@
 		client_id:               string | null;
 		gateway_skip_tls_verify: boolean;
 		gateway_disable_tls:     boolean;
+		ssh_agent_enable:        boolean;
+		ssh_agent_socket:        string;
 	}
 
 	const FONT_MIN     = 10;
@@ -32,6 +34,8 @@
 		client_id:               null,
 		gateway_skip_tls_verify: false,
 		gateway_disable_tls:     false,
+		ssh_agent_enable:        false,
+		ssh_agent_socket:        '',
 	});
 
 	// Per-field save-state indicators so they don't interfere with each other.
@@ -42,6 +46,8 @@
 	let idleTimeoutSaveState:    'idle' | 'saving' | 'saved' | 'error' = $state('idle');
 	let skipTlsVerifySaveState:  'idle' | 'saving' | 'saved' | 'error' = $state('idle');
 	let disableTlsSaveState:     'idle' | 'saving' | 'saved' | 'error' = $state('idle');
+	let sshAgentSaveState:       'idle' | 'saving' | 'saved' | 'error' = $state('idle');
+	let sshAgentSocketSaveState: 'idle' | 'saving' | 'saved' | 'error' = $state('idle');
 
 	let fontSaveTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -106,17 +112,31 @@
 		saveConfig('disable-tls');
 	}
 
+	// ── SSH agent ─────────────────────────────────────────────────────
+
+	function applySshAgent(value: boolean) {
+		cfg = { ...cfg, ssh_agent_enable: value };
+		saveConfig('ssh-agent');
+	}
+
+	function applySshAgentSocket(value: string) {
+		cfg = { ...cfg, ssh_agent_socket: value.trim() };
+		saveConfig('ssh-agent-socket');
+	}
+
 	// ── Shared save ──────────────────────────────────────────────────────────
 
-	async function saveConfig(indicator: 'font' | 'theme' | 'vnc' | 'portal' | 'idle-timeout' | 'skip-tls-verify' | 'disable-tls') {
+	async function saveConfig(indicator: 'font' | 'theme' | 'vnc' | 'portal' | 'idle-timeout' | 'skip-tls-verify' | 'disable-tls' | 'ssh-agent' | 'ssh-agent-socket') {
 		const setState =
-			indicator === 'font'            ? (s: typeof fontSaveState)          => { fontSaveState          = s; } :
-			indicator === 'theme'           ? (s: typeof themeSaveState)         => { themeSaveState         = s; } :
-			indicator === 'vnc'             ? (s: typeof vncSaveState)           => { vncSaveState           = s; } :
-			indicator === 'idle-timeout'    ? (s: typeof idleTimeoutSaveState)   => { idleTimeoutSaveState   = s; } :
-			indicator === 'skip-tls-verify' ? (s: typeof skipTlsVerifySaveState) => { skipTlsVerifySaveState = s; } :
-			indicator === 'disable-tls'     ? (s: typeof disableTlsSaveState)    => { disableTlsSaveState    = s; } :
-			                                  (s: typeof portalUrlSaveState)     => { portalUrlSaveState     = s; };
+			indicator === 'font'             ? (s: typeof fontSaveState)           => { fontSaveState           = s; } :
+			indicator === 'theme'            ? (s: typeof themeSaveState)          => { themeSaveState          = s; } :
+			indicator === 'vnc'              ? (s: typeof vncSaveState)            => { vncSaveState            = s; } :
+			indicator === 'idle-timeout'     ? (s: typeof idleTimeoutSaveState)    => { idleTimeoutSaveState    = s; } :
+			indicator === 'skip-tls-verify'  ? (s: typeof skipTlsVerifySaveState)  => { skipTlsVerifySaveState  = s; } :
+			indicator === 'disable-tls'      ? (s: typeof disableTlsSaveState)     => { disableTlsSaveState     = s; } :
+			indicator === 'ssh-agent'        ? (s: typeof sshAgentSaveState)       => { sshAgentSaveState       = s; } :
+			indicator === 'ssh-agent-socket' ? (s: typeof sshAgentSocketSaveState) => { sshAgentSocketSaveState = s; } :
+			                                   (s: typeof portalUrlSaveState)      => { portalUrlSaveState      = s; };
 
 		setState('saving');
 		try {
@@ -346,6 +366,56 @@
 				aria-label="Disable gateway TLS entirely (plain TCP)"
 			/>
 			{@render SaveIndicator({ state: disableTlsSaveState })}
+		</div>
+	</div>
+
+	<!-- ── SSH Agent ────────────────────────────────────── -->
+	<h2 class="section-title">SSH Agent</h2>
+
+	<div class="setting-row">
+		<label for="ssh-agent-enable" class="setting-label">
+			Use SSH Agent
+			<span class="setting-hint">
+				Offer keys from your local SSH agent<br>
+				when logging in to SSH targets.<br>
+				Private keys never leave this device.
+			</span>
+		</label>
+
+		<div class="size-control">
+			<input
+				type="checkbox"
+				id="ssh-agent-enable"
+				checked={cfg.ssh_agent_enable}
+				onchange={(e) => applySshAgent(e.currentTarget.checked)}
+				class="tls-checkbox"
+				aria-label="Use the local SSH agent for public-key authentication"
+			/>
+			{@render SaveIndicator({ state: sshAgentSaveState })}
+		</div>
+	</div>
+
+	<div class="setting-row">
+		<label for="ssh-agent-socket" class="setting-label">
+			Agent Endpoint
+			<span class="setting-hint">
+				Named pipe (Windows) or socket path.<br>
+				Leave empty for the OS default.
+			</span>
+		</label>
+
+		<div class="path-control">
+			<input
+				type="text"
+				id="ssh-agent-socket"
+				class="path-input"
+				value={cfg.ssh_agent_socket}
+				placeholder={'\\\\.\\pipe\\openssh-ssh-agent'}
+				onchange={(e) => applySshAgentSocket(e.currentTarget.value)}
+				disabled={!cfg.ssh_agent_enable}
+				spellcheck={false}
+			/>
+			{@render SaveIndicator({ state: sshAgentSocketSaveState })}
 		</div>
 	</div>
 

@@ -96,6 +96,10 @@ pub struct SshProxyParams {
 	pub skip_tls_verify: bool,
 	/// Disable TLS entirely for the outbound gateway connection (plain TCP).
 	pub disable_tls:     bool,
+	/// Offer the local SSH agent for public-key auth to the target.
+	pub agent_enable:    bool,
+	/// Configured agent endpoint (empty = OS default; resolved at connect time).
+	pub agent_socket:    String,
 }
 
 // ── Router state ──────────────────────────────────────────────────────────────
@@ -186,6 +190,28 @@ async fn handle_ssh_ws(
 	params:    Arc<SshProxyParams>,
 	api_state: ApiState,
 ) {
+	// ── Optional: open the local SSH agent before the handshake ─────────────────
+	// We only advertise `agent:true` to the gateway when the agent is actually
+	// reachable, so the gateway never waits for agent traffic that won't come.
+	let mut agent: Option<crate::agent_proxy::AgentTransport> = None;
+	if params.agent_enable {
+		match crate::config::resolve_agent_socket(&params.agent_socket) {
+			Some(sock) => match crate::agent_proxy::open_agent(&sock).await {
+				Ok(a) => {
+					log::info!("ssh slot {} SSH agent ready ({})", params.slot_idx, sock);
+					agent = Some(a);
+				}
+				Err(e) => log::warn!(
+					"ssh slot {} cannot open SSH agent ({}): {} — continuing without agent",
+					params.slot_idx, sock, e),
+			},
+			None => log::warn!(
+				"ssh slot {} SSH agent enabled but no endpoint resolved — continuing without agent",
+				params.slot_idx),
+		}
+	}
+	let use_agent = agent.is_some();
+
 	let (gw_host, gw_port) = crate::tunnel::parse_gateway(&params.gateway);
 	let gw_addr = format!("{}:{}", gw_host, gw_port);
 
@@ -204,23 +230,36 @@ async fn handle_ssh_ws(
 	};
 
 	// ── JSON handshake ────────────────────────────────────────────────────────
-	let payload = build_handshake(&params, &api_state.gateway_path);
+	let payload = build_handshake(&params, &api_state.gateway_path, use_agent);
 	if gw.write_all(&payload).await.is_err() || gw.flush().await.is_err() {
 		log::error!("ssh slot {} handshake write failed", params.slot_idx);
 		return;
 	}
 
-	// ── Read gateway status line ──────────────────────────────────────────────
-	// Expected: "200 CONNECTED\n"  (no connection_id for SSH)
-	let status = match crate::tunnel::read_line(&mut gw, 256).await {
-		Ok(s)  => s,
-		Err(e) => {
-			log::error!("ssh slot {} failed to read gateway status: {}", params.slot_idx, e);
-			return;
+	// ── Authentication phase / status line ────────────────────────────────────
+	// In agent mode the gateway multiplexes the ssh-agent protocol in-band and
+	// sends the status line only once authentication resolves; otherwise the
+	// status line arrives immediately.
+	let status = if let Some(mut a) = agent {
+		match crate::agent_proxy::run_agent_auth_phase(&mut gw, &mut a, params.slot_idx).await {
+			Ok(s)  => s,
+			Err(e) => {
+				log::error!("ssh slot {} agent auth phase failed: {}", params.slot_idx, e);
+				return;
+			}
+		}
+	} else {
+		match crate::tunnel::read_line(&mut gw, 256).await {
+			Ok(s)  => s,
+			Err(e) => {
+				log::error!("ssh slot {} failed to read gateway status: {}", params.slot_idx, e);
+				return;
+			}
 		}
 	};
+
 	let upper = status.trim().to_uppercase();
-	log::info!("ssh slot {} gateway: '{}'", params.slot_idx, status.trim());
+	log::info!("ssh slot {} gateway: '{}' (agent={})", params.slot_idx, status.trim(), use_agent);
 
 	if upper.starts_with("401") || upper.starts_with("403") {
 		log::error!("ssh slot {} gateway auth rejected: {}", params.slot_idx, status.trim());
@@ -322,7 +361,7 @@ where
 ///
 /// `guac: false` routes the gateway to the direct SSH handler (`ssh.rs`)
 /// rather than the guacd path.
-fn build_handshake(params: &SshProxyParams, gateway_path: &str) -> Vec<u8> {
+fn build_handshake(params: &SshProxyParams, gateway_path: &str, agent: bool) -> Vec<u8> {
 	let json = serde_json::json!({
 		"target":      params.target,
 		"application": "ssh",
@@ -336,6 +375,7 @@ fn build_handshake(params: &SshProxyParams, gateway_path: &str) -> Vec<u8> {
 		"gateway":     params.gateway,
 		"path":        gateway_path,
 		"e2ecrypt":    false,
+		"agent":       agent,
 	});
 	let mut bytes = json.to_string().into_bytes();
 	bytes.push(b'\n');
