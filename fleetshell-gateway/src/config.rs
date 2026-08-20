@@ -5,6 +5,7 @@
 
 use std::sync::Arc;
 use crate::recording::RecordingMeta;
+
 #[derive(Debug, Clone)]
 pub struct Config {
     /// TCP address to listen on. Default: `0.0.0.0:8443`.

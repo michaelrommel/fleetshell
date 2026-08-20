@@ -38,11 +38,18 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use russh::client;
+use russh::keys::agent::client::AgentClient;
+use russh::keys::agent::AgentIdentity;
 use russh::keys::{Algorithm, HashAlg, PublicKey};
 use russh::{cipher, kex, mac, ChannelMsg, Preferred};
 use std::borrow::Cow;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tracing::{debug, info, warn};
+
+/// Maximum length of one ssh-agent protocol message we will relay (matches
+/// russh's `MAX_AGENT_FRAME_LEN`).  Guards against a corrupt length prefix
+/// forcing a huge allocation.
+const MAX_AGENT_FRAME: usize = 256 * 1024;
 
 // ── Parameters ────────────────────────────────────────────────────────────────
 
@@ -163,17 +170,211 @@ impl client::Handler for AcceptAllKeys {
 	}
 }
 
+// ── Agent authentication (in-band multiplex) ───────────────────────────────
+//
+// The ssh-agent protocol is carried in-band on the client<->gateway SSH
+// connection during the authentication phase (no PTY bytes flow yet).  Each
+// direction frames a complete agent message as:
+//
+//     0x00  [u32 BE len]  [len bytes]     (len-prefixed body = one agent message)
+//
+// The leading `0x00` lets the client tell an agent record apart from the final
+// `200 CONNECTED\n` status line (which starts with the ASCII digit '2').
+//
+// The gateway runs russh's `AgentClient` against an in-memory duplex; two small
+// relay loops translate between that duplex and the framed client connection,
+// running concurrently with the authentication future.
+
+/// Read one complete ssh-agent message (`[u32 BE len][payload]`) and return it
+/// with the length prefix intact, ready to hand to an `AgentClient` / agent.
+///
+/// Returns `Ok(None)` on a clean EOF at a message boundary.
+async fn read_agent_message<R: AsyncRead + Unpin>(
+	r: &mut R,
+) -> std::io::Result<Option<Vec<u8>>> {
+	let mut len_buf = [0u8; 4];
+	// Read the first length byte on its own so a clean EOF is not an error.
+	match r.read(&mut len_buf[..1]).await? {
+		0 => return Ok(None),
+		_ => {}
+	}
+	r.read_exact(&mut len_buf[1..]).await?;
+	let len = u32::from_be_bytes(len_buf) as usize;
+	if len > MAX_AGENT_FRAME {
+		return Err(std::io::Error::new(
+			std::io::ErrorKind::InvalidData,
+			"ssh-agent frame exceeds maximum length",
+		));
+	}
+	let mut full = vec![0u8; 4 + len];
+	full[..4].copy_from_slice(&len_buf);
+	r.read_exact(&mut full[4..]).await?;
+	Ok(Some(full))
+}
+
+/// Relay agent *requests*: read complete agent messages the `AgentClient`
+/// produced (from the duplex) and write each to the client, tagged `0x00`.
+async fn relay_agent_requests<Rd, Wr>(pr: &mut Rd, cw: &mut Wr) -> std::io::Result<()>
+where
+	Rd: AsyncRead + Unpin,
+	Wr: AsyncWrite + Unpin,
+{
+	loop {
+		match read_agent_message(pr).await? {
+			Some(msg) => {
+				cw.write_all(&[0x00]).await?;
+				cw.write_all(&msg).await?;
+				cw.flush().await?;
+			}
+			None => return Ok(()), // AgentClient dropped its end
+		}
+	}
+}
+
+/// Relay agent *replies*: read `0x00`-tagged records from the client and write
+/// the embedded agent message to the duplex for the `AgentClient` to consume.
+async fn relay_agent_replies<Rd, Wr>(cr: &mut Rd, pw: &mut Wr) -> std::io::Result<()>
+where
+	Rd: AsyncRead + Unpin,
+	Wr: AsyncWrite + Unpin,
+{
+	loop {
+		let mut tag = [0u8; 1];
+		match cr.read(&mut tag).await? {
+			0 => return Ok(()), // client closed
+			_ => {}
+		}
+		if tag[0] != 0x00 {
+			return Err(std::io::Error::new(
+				std::io::ErrorKind::InvalidData,
+				"unexpected frame tag during ssh-agent phase",
+			));
+		}
+		match read_agent_message(cr).await? {
+			Some(msg) => {
+				pw.write_all(&msg).await?;
+				pw.flush().await?;
+			}
+			None => return Err(std::io::Error::new(
+				std::io::ErrorKind::UnexpectedEof,
+				"truncated ssh-agent record",
+			)),
+		}
+	}
+}
+
+/// Drive agent-based authentication with the ssh-agent protocol multiplexed
+/// over the client connection halves (`cr`/`cw`).
+///
+/// Returns `Ok(true)` when the target accepts an agent key, `Ok(false)` if the
+/// agent holds no accepted key (or the connection closed), and `Err` on a
+/// russh-level failure.  The caller falls back to password auth on anything
+/// other than `Ok(true)`.
+async fn agent_auth_phase<R, W>(
+	session:  &mut client::Handle<AcceptAllKeys>,
+	username: &str,
+	compat:   bool,
+	cr:       &mut R,
+	cw:       &mut W,
+	peer:     SocketAddr,
+) -> Result<bool, Box<dyn std::error::Error + Send + Sync>>
+where
+	R: AsyncRead + Unpin + Send,
+	W: AsyncWrite + Unpin + Send,
+{
+	// In-memory duplex: `AgentClient` speaks raw agent protocol on `agent_io`;
+	// the two relay loops translate between `pump_io` and the framed client
+	// connection.
+	let (agent_io, pump_io) = tokio::io::duplex(MAX_AGENT_FRAME + 16);
+	let (mut pr, mut pw)    = tokio::io::split(pump_io);
+	let mut agent           = AgentClient::connect(agent_io);
+
+	let auth = try_agent_auth(session, username, &mut agent, compat, peer);
+	let req  = relay_agent_requests(&mut pr, cw);
+	let rep  = relay_agent_replies(cr, &mut pw);
+	tokio::pin!(auth, req, rep);
+
+	loop {
+		tokio::select! {
+			r = &mut auth => return r,
+			// A relay loop finishing means the client connection closed before
+			// authentication completed — treat as "no agent key".
+			r = &mut req  => { r?; return Ok(false); }
+			r = &mut rep  => { r?; return Ok(false); }
+		}
+	}
+}
+
+/// Offer every key held by the agent for public-key authentication.
+///
+/// Returns `Ok(true)` as soon as the target accepts one identity, `Ok(false)`
+/// if the agent holds no key the target accepts, or `Err` on an agent/transport
+/// failure (the caller then falls back to password auth).
+async fn try_agent_auth(
+	session:  &mut client::Handle<AcceptAllKeys>,
+	username: &str,
+	agent:    &mut AgentClient<tokio::io::DuplexStream>,
+	compat:   bool,
+	peer:     SocketAddr,
+) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+	let identities = agent.request_identities().await?;
+	info!(%peer, count = identities.len(), "SSH: agent advertised identities");
+
+	for id in identities {
+		// v1: public-key identities only; OpenSSH certificate identities skipped.
+		let pubkey = match id {
+			AgentIdentity::PublicKey { key, comment } => {
+				debug!(%peer, %comment, alg = ?key.algorithm(), "SSH: trying agent key");
+				key
+			}
+			AgentIdentity::Certificate { comment, .. } => {
+				debug!(%peer, %comment, "SSH: skipping agent certificate identity");
+				continue;
+			}
+		};
+
+		// RSA keys: legacy devices (compat) sign with ssh-rsa (SHA-1); modern
+		// servers expect rsa-sha2-256.  Non-RSA keys ignore hash_alg.
+		let hash_alg = match pubkey.algorithm() {
+			Algorithm::Rsa { .. } if compat => None,
+			Algorithm::Rsa { .. }           => Some(HashAlg::Sha256),
+			_                               => None,
+		};
+
+		match session
+			.authenticate_publickey_with(username, pubkey, hash_alg, agent)
+			.await
+		{
+			Ok(res) if res.success() => return Ok(true),
+			Ok(_)                    => continue, // key rejected, try the next
+			Err(e)                   => return Err(Box::new(e)),
+		}
+	}
+
+	Ok(false)
+}
+
 // ── Public entry point ────────────────────────────────────────────────────────
 
 /// Run a direct SSH terminal session.
 ///
-/// Called **after** `200 CONNECTED\n` has been written to `stream`.
-/// Returns when either side closes the connection.
-pub async fn run<S>(stream: S, peer: SocketAddr, params: SshParams)
+/// When `agent_mode` is `false`, `200 CONNECTED\n` has already been written to
+/// `stream` by the caller and authentication uses the password only.
+///
+/// When `agent_mode` is `true`, the caller has **not** sent the status line:
+/// the ssh-agent protocol is multiplexed in-band on `stream` during the
+/// authentication phase, and this function writes `200 CONNECTED\n` (on
+/// success) or `401 UNAUTHORIZED\n` (on failure) once authentication resolves.
+pub async fn run<S>(
+	stream:     S,
+	peer:       SocketAddr,
+	params:     SshParams,
+	agent_mode: bool,
+)
 where
 	S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
-	match run_inner(stream, peer, &params).await {
+	match run_inner(stream, peer, &params, agent_mode).await {
 		Ok(()) => info!(%peer, "SSH session ended cleanly"),
 		Err(e) => warn!(%peer, "SSH session ended with error: {e}"),
 	}
@@ -182,9 +383,10 @@ where
 // ── Inner implementation ──────────────────────────────────────────────────────
 
 async fn run_inner<S>(
-	stream: S,
-	peer: SocketAddr,
-	params: &SshParams,
+	stream:     S,
+	peer:       SocketAddr,
+	params:     &SshParams,
+	agent_mode: bool,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
 where
 	S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
@@ -204,20 +406,63 @@ where
 		.await
 		.map_err(|e| format!("SSH connect to {target} failed: {e}"))?;
 
-	// ── 2. Password authentication ────────────────────────────────────────────
-	let auth_result = session
-		.authenticate_password(&params.username, &params.password)
-		.await
-		.map_err(|e| format!("SSH auth error for '{}' at {target}: {e}", params.username))?;
+	// The client stream is split for the auth phase (agent mode multiplexes the
+	// ssh-agent protocol over the read/write halves) and reunited for the PTY
+	// relay afterwards.
+	let (mut cr, mut cw) = tokio::io::split(stream);
 
-	if !auth_result.success() {
-		return Err(format!(
-			"SSH authentication rejected for user '{}' at {target}",
-			params.username
-		)
-		.into());
+	// ── 2. Authentication ─────────────────────────────────────────────────────
+	// Order: SSH agent (public key, when forwarded) first, password fallback.
+	// The agent holds the private keys on the user's machine; the gateway only
+	// relays sign requests, so no key material ever reaches the gateway.
+	let mut authenticated = false;
+
+	if agent_mode {
+		match agent_auth_phase(&mut session, &params.username, params.compat, &mut cr, &mut cw, peer).await {
+			Ok(true)  => {
+				info!(%peer, %target, "SSH: authenticated via agent");
+				authenticated = true;
+			}
+			Ok(false) => info!(%peer, %target,
+				"SSH: agent offered no accepted key — falling back to password"),
+			Err(e)    => warn!(%peer, %target,
+				"SSH: agent auth error ({e}) — falling back to password"),
+		}
 	}
-	info!(%peer, %target, "SSH: authenticated");
+
+	if !authenticated {
+		let auth_result = session
+			.authenticate_password(&params.username, &params.password)
+			.await
+			.map_err(|e| format!("SSH auth error for '{}' at {target}: {e}", params.username))?;
+
+		if !auth_result.success() {
+			// In agent mode the client is still waiting for a status line; tell
+			// it authentication failed so it can surface a clean error.
+			if agent_mode {
+				cw.write_all(b"401 UNAUTHORIZED\n").await.ok();
+				cw.flush().await.ok();
+			}
+			return Err(format!(
+				"SSH authentication rejected for user '{}' at {target}",
+				params.username
+			)
+			.into());
+		}
+		info!(%peer, %target, "SSH: authenticated via password");
+	}
+
+	// In agent mode the status line is owed now that authentication succeeded;
+	// the non-agent path already sent it before this function was called.
+	if agent_mode {
+		cw.write_all(b"200 CONNECTED\n").await
+			.map_err(|e| format!("failed to send status line: {e}"))?;
+		cw.flush().await
+			.map_err(|e| format!("failed to flush status line: {e}"))?;
+	}
+
+	// Reunite the halves for the PTY relay.
+	let stream = cr.unsplit(cw);
 
 	// ── 3. Open session channel ───────────────────────────────────────────────
 	let channel = session

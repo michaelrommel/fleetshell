@@ -110,6 +110,12 @@ pub struct HandshakePayload {
     ///
     /// `None` on the first connect (new session); `Some` on reconnect.
     pub connection_id:  Option<String>,
+
+    /// When `true` the ssh-agent protocol is multiplexed in-band on this same
+    /// connection during the authentication phase (before the PTY relay), so
+    /// the gateway can authenticate to the target with keys from the user's
+    /// local agent.  Only meaningful for direct-SSH mode (`application:"ssh"`).
+    pub agent:          Option<bool>,
 }
 
 // ── Handler ───────────────────────────────────────────────────────────────────
@@ -261,6 +267,8 @@ where
             compat:   jwt_ssh_compat,
         };
 
+        let agent_mode = payload.agent.unwrap_or(false);
+
         info!(
             %peer,
             target   = %payload.target,
@@ -269,14 +277,21 @@ where
             cols     = params.cols,
             rows     = params.rows,
             compat   = params.compat,
+            agent    = agent_mode,
             "direct SSH mode - bypassing guacd"
         );
 
-        send_line(&mut writer_half, b"200 CONNECTED\n").await;
+        // In agent mode the ssh-agent protocol is multiplexed in-band on this
+        // connection *before* the PTY phase, so `ssh::run` owns the
+        // `200 CONNECTED` reply (sent only after authentication).  Without
+        // agent mode the reply is sent up front exactly as before.
+        if !agent_mode {
+            send_line(&mut writer_half, b"200 CONNECTED\n").await;
+        }
 
         // Reassemble the split stream so ssh::run receives a single I/O object.
         let stream = tokio::io::join(reader, writer_half);
-        crate::ssh::run(stream, peer, params).await;
+        crate::ssh::run(stream, peer, params, agent_mode).await;
         return;
     }
 
