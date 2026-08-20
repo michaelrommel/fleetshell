@@ -47,7 +47,7 @@ COPY --from=builder --chown=fleetshell:fleetshell /build/server.js /build/ws-ser
 # in ./dist -- build it with `scripts/build_windows-x64.sh --installer`. The
 # version is a LITERAL so scripts/bump.sh (minor) + scripts/bump_patch.sh bump it
 # across Cargo.toml, tauri.conf.json and this Dockerfile together.
-COPY --chown=fleetshell:fleetshell dist/fleetshell-client_0.15.0_x64-setup.exe ./
+COPY --chown=fleetshell:fleetshell dist/fleetshell-client_0.16.0_x64-setup.exe ./
 
 USER fleetshell
 
@@ -70,8 +70,8 @@ ENV PORT=3000 \
     HOST=0.0.0.0 \
     BASE_PATH="" \
     NODE_ENV=production \
-    DOWNLOAD_FLEETSHELL_CLIENT=/fleetshell-portal/fleetshell-client_0.15.0_x64-setup.exe \
-    PUBLIC_GITHUB_RELEASE_URL=https://github.com/michaelrommel/fleetshell/releases/download/v0.15.0-beta/fleetshell-client_0.15.0_x64-setup.exe
+    DOWNLOAD_FLEETSHELL_CLIENT=/fleetshell-portal/fleetshell-client_0.16.0_x64-setup.exe \
+    PUBLIC_GITHUB_RELEASE_URL=https://github.com/michaelrommel/fleetshell/releases/download/v0.16.0-beta/fleetshell-client_0.16.0_x64-setup.exe
 
 EXPOSE 3000
 
