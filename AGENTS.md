@@ -109,7 +109,10 @@ fleetshell/
 │           ├── portal.rs       # Deep-link decoder/dispatcher, enrollment orchestrator
 │           ├── config.rs       # AppConfig struct (TOML), cert/key persistence helpers
 │           ├── guac_proxy.rs   # Per-slot WebSocket server; bridges browser ↔ gateway guacd stream
-│           ├── ssh_proxy.rs    # Per-slot WS server for SSH direct mode; bridges xterm.js ↔ gateway ssh.rs
+│           ├── ssh_proxy.rs    # Per-slot WS server for SSH direct mode; bridges xterm.js ↔ gateway ssh.rs;
+│           │                   #   in-band ssh-agent multiplex during auth (Use SSH Agent setting)
+│           ├── agent_proxy.rs  # Local SSH agent opener (Win named pipe / Unix socket) + in-band
+│           │                   #   agent auth-phase relay (0x00-framed records over the same SSH conn)
 │           └── util.rs         # navigate(), show_window() helpers
 │
 ├── fleetshell-gateway/         # Standalone Rust TCP/TLS tunnel gateway
@@ -211,8 +214,58 @@ fleetshell/
 | browser → gateway | `[0x01][0x00][0x04][rows_hi][rows_lo][cols_hi][cols_lo]` | PTY resize (SIGWINCH) |
 | gateway → browser | raw bytes, no framing | PTY stdout/stderr |
 
-The client `ssh_proxy.rs` bridge is transparent to the framing — it copies bytes
-verbatim in both directions as `Message::Binary` WebSocket frames.
+The client `ssh_proxy.rs` bridge is transparent to the PTY framing — it copies
+bytes verbatim in both directions as `Message::Binary` WebSocket frames.
+
+### SSH agent authentication (in-band multiplex)
+
+When the client's **Use SSH Agent** setting is on and a local agent is reachable,
+the target is authenticated with keys held by the user's local SSH agent (Windows
+OpenSSH Agent Service, or a Unix socket via `$SSH_AUTH_SOCK` on macOS/Linux).
+Private keys never leave the client machine — only sign requests are relayed; the
+gateway's russh `AgentClient` asks the agent to sign the auth challenges.
+
+**Single connection, not two.**  The ssh-agent protocol is multiplexed **in-band**
+on the *same* client↔gateway SSH connection during the authentication phase
+(before any PTY bytes flow).  An earlier two-connection design (a separate
+`application:"ssh-agent"` side channel paired by a `nonce`) was abandoned: behind
+the NLB the two connections can land on different gateway containers — corporate
+egress / Zscaler SNATs concurrent connections to different source IPs, so even NLB
+source-IP stickiness routes them apart and the in-memory rendezvous fails.
+One connection = one container = the `AgentClient` always works.
+
+```
+  local agent      fleetshell-client (ssh_proxy)  Gateway (ssh.rs)    Target device
+     |                    |                             |                  |
+     |                    |─{application:"ssh",agent:true,…}\n────────────►|            |
+     |                    |     ── auth phase, no PTY yet ──                |
+     |◄─agent request─────|◄══0x00-framed agent record══ | AgentClient→sign |
+     |──agent reply──────►|═══0x00-framed agent record══►| ─publickey auth─►|
+     |                    |◄─────"200 CONNECTED\n"──────── | (or 401)         |
+     |                    |◄══════raw PTY bytes══════════►| ─────PTY────────►|
+```
+
+**Auth-phase framing** (both directions, until the status line):
+
+| Bytes | Meaning |
+|---|---|
+| `[0x00][u32 BE len][len bytes]` | One complete ssh-agent protocol message |
+| `200 CONNECTED\n` / `401 UNAUTHORIZED\n` | Status line — ends the auth phase |
+
+The leading `0x00` distinguishes an agent record from the status line (which
+starts with an ASCII digit).  The gateway is the initiator: it sends an agent
+*request* record, the client forwards it to the local agent, reads the *reply*,
+and sends it back as a record.  On the gateway, russh's `AgentClient` runs against
+an in-memory `tokio::io::duplex`; two small relay loops translate between that
+duplex and the framed client connection, running concurrently (`select!`) with
+the authentication future.  On the client the relay is strictly sequential
+(request→forward→reply).  When authentication resolves the gateway sends the
+status line and both sides fall through to the normal raw-PTY relay.
+
+Agent auth is tried **first**; the gateway falls back to password auth (and the
+RDP/VNC-style password already in the handshake) if the agent holds no accepted
+key.  This is agent-based **auth to the target**, not full `ssh -A` forwarding
+into the session (the channel is torn down once authenticated).
 
 ### Deep-link / probe sequence (enrollment)
 
@@ -399,9 +452,14 @@ idle_timeout             = 300      # Idle seconds before slot released (10–36
 client_id                = "..."    # Set after first enrollment; absent until then
 gateway_skip_tls_verify  = false    # Accept self-signed gateway certs — dev only
 gateway_disable_tls      = false    # Plain TCP to gateway (no encryption) — debug only
+ssh_agent_enable         = false    # Offer the local SSH agent for public-key login to SSH targets
+ssh_agent_socket         = ""       # Agent endpoint; empty = OS default
+                                    #   (Win: \\.\pipe\openssh-ssh-agent, Unix: $SSH_AUTH_SOCK)
 ```
 
 Both TLS settings are surfaced in Settings → Connections with ⚠️ dev-only warnings.
+The SSH agent toggle + endpoint live under Settings → **SSH Agent** (client-only;
+not exposed in the portal and not carried in the JWT).
 
 ### Certificate / key storage
 
@@ -443,13 +501,25 @@ Mirrors `guac_proxy.rs` structure but simpler — no Guacamole framing, no sessi
 parking.
 
 - `SshProxyParams` carries: target, port, ws_port, token, username, password,
-  width, height, gateway, slot_idx, last_active, skip_tls_verify, disable_tls.
+  width, height, gateway, slot_idx, last_active, skip_tls_verify, disable_tls,
+  `agent_enable`, `agent_socket`.
 - `run_ssh_slot()` — per-slot accept loop identical to `guac_proxy`; handles
   optional TLS for the inbound WebSocket.
 - Route: `GET /ssh-ws` → WebSocket upgrade → `handle_ssh_ws()`.
-- `handle_ssh_ws()` connects to the gateway, sends JSON handshake with
-  `{application:"ssh", guac:false, ...}`, reads `200 CONNECTED\n`, then calls
-  `bridge()` which copies bytes verbatim in both directions.
+- `handle_ssh_ws()` connects to the gateway, sends the JSON handshake
+  `{application:"ssh", guac:false, agent:<bool>, ...}`, then:
+  - **agent mode** (`agent_enable` on + local agent opened via `agent_proxy`):
+    runs `agent_proxy::run_agent_auth_phase()` — relays `0x00`-framed ssh-agent
+    records to the local agent until the gateway sends its status line — then
+    `bridge()`.
+  - **plain mode**: reads `200 CONNECTED\n` directly, then `bridge()`.
+  `bridge()` copies raw PTY bytes verbatim in both directions.
+- `agent_proxy.rs`: `open_agent()` opens the OS agent endpoint
+  (`resolve_agent_socket()` picks the Windows named pipe or `$SSH_AUTH_SOCK`);
+  `run_agent_auth_phase()` is the in-band relay.  The agent is opened *before*
+  the handshake, and `agent:true` is only advertised when it actually opened, so
+  the gateway never waits for agent traffic that will not come.  See the
+  "SSH agent authentication (in-band multiplex)" sequence in §2.
 - Port remapping: SSH port 22 is browser-blocked; remapped to 50022 by the same
   `guac_ws_port()` helper used by guac proxy.
 - `tunnel_handler` three-way partition:
@@ -504,7 +574,8 @@ regular TCP rows the local and target ports are threaded separately through
     "path": "/service/tunnel/", "e2ecrypt": false,
     "guac": false, "username": "Administrator", "password": "<pw>",
     "width": 1920, "height": 1080, "dpi": 96,
-    "enable_drive": false, "enable_record": false, "connection_id": null
+    "enable_drive": false, "enable_record": false, "connection_id": null,
+    "agent": false
 }
 ```
 
@@ -524,7 +595,7 @@ regular TCP rows the local and target ports are threaded separately through
 | Tab | Component | Purpose |
 |---|---|---|
 | `functions` | `FunctionsView` | 16-slot grid (SVG arc timers) + service key clipboard |
-| `settings` | `SettingsView` | Font, VNC viewer, portal URL, idle timeout, TLS flags |
+| `settings` | `SettingsView` | Font, VNC viewer, portal URL, idle timeout, TLS flags, SSH agent |
 | `logging` | `LogView` | Live log stream |
 | `enrollment` | inline | Portal URL, credentials, Enroll button |
 
@@ -606,6 +677,14 @@ or `gateway_disable_tls` (plain TCP).
 
 After `200 CONNECTED`: raw byte pipe.
 
+**Direct-SSH agent exception.**  When the handshake carries `agent:true`
+(direct-SSH mode), the gateway does **not** send `200 CONNECTED` up front: it
+first multiplexes the ssh-agent protocol in-band on this same connection to
+authenticate to the target (`0x00`-framed agent records, gateway-initiated),
+then sends `200 CONNECTED\n` on success or `401 UNAUTHORIZED\n` on failure, and
+only then enters the raw PTY relay.  See §2 "SSH agent authentication (in-band
+multiplex)".
+
 ### JWT claims
 
 ```json
@@ -628,7 +707,7 @@ After `200 CONNECTED`: raw byte pipe.
 | `recording.rs` | `RecordingMeta` struct; `write_job_file()`; `new_recording_name()` (ms timestamp + atomic seq); `now_ms()` |
 | `handler.rs` | Parse → auth → SSH-direct / probe / guac / transform/e2e; builds `RecordingMeta`; writes job file on session end (both Case 1: guacd-closed and Case 2: park-grace expired) |
 | `health.rs` | HTTP health-check; probes at DEBUG only |
-| `ssh.rs` | Direct SSH via `russh`: `SshParams`, `AcceptAllKeys` handler, PTY alloc, shell, framed relay loop; `preferred_algorithms(compat)` prepends legacy KEX/cipher/MAC + `ssh-rsa` host key when `ssh_compat` set |
+| `ssh.rs` | Direct SSH via `russh`: `SshParams`, `AcceptAllKeys` handler, PTY alloc, shell, framed relay loop; `preferred_algorithms(compat)` prepends legacy KEX/cipher/MAC + `ssh-rsa` host key when `ssh_compat` set; **in-band ssh-agent auth** (`agent_auth_phase` + `AgentClient` over a `tokio::io::duplex`; `try_agent_auth` offers agent keys, then password fallback) when the handshake sets `agent:true` |
 | `tls.rs` | `build_acceptor()` — PEM files or rcgen self-signed |
 | `transform.rs` | HTTP/1.1 proxy; `TransformHook` trait; `NoopHook`; `SkipServerVerification` |
 | `bin/guacrecord.rs` | Post-processor binary: inotify watch on `jobs/`; runs `guacenc`; extracts keystrokes; writes `.keys.txt`, `.srt`, `.meta.json`, `.zip`; uploads to S3 via OpenDAL |
@@ -658,11 +737,22 @@ Limits: 64 KiB headers, 16 MiB body, no HTTP/2.
 When `application = "ssh"`, `guac: false`, and `e2ecrypt: false`, the gateway
 bypasses guacd entirely and speaks SSH natively via `russh`.
 
-- `SshParams` → `ssh::run()` → TCP connect to target:22 → password auth → PTY
-  (`xterm-256color`, initial cols/rows derived from `width/8` and `height/16`) →
-  interactive shell → bidirectional framed relay.
+- `SshParams` → `ssh::run(stream, peer, params, agent_mode)` → TCP connect to
+  target:22 → authenticate → PTY (`xterm-256color`, initial cols/rows derived
+  from `width/8` and `height/16`) → interactive shell → bidirectional framed relay.
 - `AcceptAllKeys` handler accepts all SSH host keys (TOFU can be layered later).
 - Initial PTY cols/rows: `cols = (width / 8).max(40)`, `rows = (height / 16).max(10)`.
+- **Authentication order** — when `agent_mode` (handshake `agent:true`): the local
+  SSH agent is offered first (`agent_auth_phase` runs russh's `AgentClient`
+  against an in-memory `tokio::io::duplex`, with two relay loops translating the
+  `0x00`-framed agent records on the client connection, concurrent with the auth
+  future); on no accepted key it falls back to password.  Without `agent_mode`
+  it is password-only, exactly as before.  RSA agent keys pick `ssh-rsa` vs
+  `rsa-sha2-256` following the same `ssh_compat` rule as host-key negotiation.
+  See §2 "SSH agent authentication (in-band multiplex)".
+- The `200 CONNECTED` status line is sent by the caller (`handler.rs`) up front
+  in non-agent mode, but by `ssh::run` itself (after auth resolves) in agent
+  mode, so the client can stay in the agent auth phase until login completes.
 - When `e2ecrypt: true` for `application:"ssh"`, falls through to raw TCP
   passthrough so a native SSH client can connect through the tunnel unmolested.
 
@@ -870,6 +960,8 @@ JWT claim matches automatically without extra env vars.
 - [x] `GatewayConn` enum + `connect_gateway()` — plain-TCP / TLS / skip-verify
 - [x] `gateway_skip_tls_verify` and `gateway_disable_tls` in AppConfig + SettingsView
 - [x] SSH direct mode: `ssh_proxy.rs` — per-slot `/ssh-ws` WebSocket, raw byte bridge
+- [x] SSH agent auth: `agent_proxy.rs` + in-band multiplex on the SSH connection
+      (`ssh_agent_enable`/`ssh_agent_socket`; Windows named pipe / Unix socket)
 - [x] `tunnel_handler` three-way partition: guac / ssh-direct / raw-TCP
 - [ ] **BUG-1**: probe JWT TTL / key-fetch auth
 - [ ] **BUG-3**: full client-state detection + enrollment gate (see §7 Known bugs)
@@ -888,11 +980,18 @@ JWT claim matches automatically without extra env vars.
 - [x] `relay_guac()` expanded debug: per-direction byte counts, EOF/error
       distinction, explicit `flush()` after client writes, iteration counter
 - [x] Direct SSH mode: `ssh.rs` (russh 0.62) — PTY, shell, framed relay, all SSH modes
+- [x] SSH agent auth: in-band ssh-agent multiplex during the auth phase
+      (`agent:true` handshake → `agent_auth_phase` + `AgentClient`); agent keys
+      tried first, password fallback.  Single connection (no second side channel)
+      so it is robust behind the NLB when egress NATs connections apart
 - [x] SSH legacy/compat: `ssh_compat` JWT claim prepends legacy KEX/cipher/MAC +
       `ssh-rsa` host-key algorithm; russh `rsa` feature enables `ssh-rsa`/SHA-1
       host-key verification for old Cisco IOS
 - [x] Session recording: `record` JWT claim, `recording.rs`, `guacrecord` binary,
       S3 upload via OpenDAL, `.guac`/`.m4v`/`.keys.txt`/`.srt`/`.zip`/`.meta.json`
+- [ ] Full `ssh -A` agent *forwarding* into the session (currently agent is used
+      only to authenticate to the target, then the channel is torn down; forwarding
+      would keep `auth-agent@openssh.com` channels open so the target can hop onward)
 - [ ] Concrete `TransformHook`: rewrite `Host:` header, inject auth headers
 - [ ] HTTP/2 support in transform mode
 - [ ] Proper upstream trust store (`webpki-roots`) for CA-signed deployments
