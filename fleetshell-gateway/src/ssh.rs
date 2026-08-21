@@ -41,7 +41,7 @@ use russh::client;
 use russh::keys::agent::client::AgentClient;
 use russh::keys::agent::AgentIdentity;
 use russh::keys::{Algorithm, HashAlg, PublicKey};
-use russh::{cipher, kex, mac, ChannelMsg, Preferred};
+use russh::{cipher, kex, mac, ChannelMsg, Preferred, Pty};
 use std::borrow::Cow;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tracing::{debug, info, warn};
@@ -50,6 +50,48 @@ use tracing::{debug, info, warn};
 /// russh's `MAX_AGENT_FRAME_LEN`).  Guards against a corrupt length prefix
 /// forcing a huge allocation.
 const MAX_AGENT_FRAME: usize = 256 * 1024;
+
+/// Explicit PTY terminal modes (termios) requested from the target, mirroring
+/// what an OpenSSH client derived from a real terminal would send.
+///
+/// Passing an empty mode list leaves the target's line discipline undefined:
+/// many non-OpenSSH servers (Cisco IOS, Dropbear, embedded stacks) then leave
+/// the tty in a state where the remote line editor never engages, so cursor-key
+/// escape sequences (`\x1b[A` etc.) are echoed literally as `^[[A` instead of
+/// driving history / cursor movement.  Sending a sane, complete set fixes that.
+///
+/// `ICANON`/`ECHO` are enabled here as the *initial* cooked-mode defaults; an
+/// interactive shell's line editor (bash readline, etc.) flips the tty into raw
+/// mode itself as needed.  Speeds are the conventional 38400 baud placeholders.
+const TERMINAL_MODES: &[(Pty, u32)] = &[
+	(Pty::VINTR, 3),      // ^C
+	(Pty::VQUIT, 28),     // ^\
+	(Pty::VERASE, 127),   // DEL
+	(Pty::VKILL, 21),     // ^U
+	(Pty::VEOF, 4),       // ^D
+	(Pty::VSTART, 17),    // ^Q
+	(Pty::VSTOP, 19),     // ^S
+	(Pty::VSUSP, 26),     // ^Z
+	(Pty::VREPRINT, 18),  // ^R
+	(Pty::VWERASE, 23),   // ^W
+	(Pty::VLNEXT, 22),    // ^V
+	(Pty::ISIG, 1),
+	(Pty::ICANON, 1),
+	(Pty::ECHO, 1),
+	(Pty::ECHOE, 1),
+	(Pty::ECHOK, 1),
+	(Pty::ECHOCTL, 1),
+	(Pty::ECHOKE, 1),
+	(Pty::IEXTEN, 1),
+	(Pty::ICRNL, 1),      // CR -> NL on input (Enter works as expected)
+	(Pty::IXON, 1),
+	(Pty::IMAXBEL, 1),
+	(Pty::IUTF8, 1),
+	(Pty::OPOST, 1),
+	(Pty::ONLCR, 1),      // NL -> CRNL on output
+	(Pty::TTY_OP_ISPEED, 38400),
+	(Pty::TTY_OP_OSPEED, 38400),
+];
 
 // ── Parameters ────────────────────────────────────────────────────────────────
 
@@ -479,8 +521,8 @@ where
 			"xterm-256color", // sets $TERM on the remote
 			params.cols,      // character cell width
 			params.rows,      // character cell height
-			0, 0,             // pixel dimensions — not used by most servers
-			&[],              // terminal modes: empty = server defaults
+			0, 0,             // pixel dimensions - not used by most servers
+			TERMINAL_MODES,   // explicit termios so line editing / arrow keys work
 		)
 		.await
 		.map_err(|e| format!("PTY request failed: {e}"))?;
