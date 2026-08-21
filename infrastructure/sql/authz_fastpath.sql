@@ -19,25 +19,42 @@ BEGIN;
 -- groups (~62k rows, ~193k buffers). Here we start from the user's groups (+ any
 -- ancestors via the ltree path), then fetch only THEIR grants -> a few hundred
 -- rows. Same result, orders of magnitude cheaper.
+--
+-- WHY plpgsql + a materialized array (not a single SQL statement): if the group
+-- expansion is a CTE/subquery JOINED to authz_grant, the planner cannot see that
+-- it yields only a handful of groups, so it ignores ix_grant_group and instead
+-- either seq-scans authz_grant (1.28M rows, ~16k buffers) or joins it by role
+-- first, exploding to ~1.15M intermediate rows (~23k buffers). Expanding the
+-- groups into a concrete uuid[] FIRST, then probing with `group_id = ANY(array)`,
+-- lets the bitmap index fire: a broad persona's scopes resolve in ~4k buffers /
+-- ~5ms instead of ~24k buffers / ~370ms. The plpgsql body also stays opaque to
+-- the caller's planner, which is desirable here -- it keeps the cheap indexed
+-- grant lookup from being merged into a bad global plan.
 CREATE OR REPLACE FUNCTION authz_effective_scopes(
     p_group_ids uuid[], p_resource_type text, p_verb text
 ) RETURNS TABLE(scope_id uuid, kind text)
-LANGUAGE sql STABLE AS $$
-    WITH my_groups AS (
-        SELECT DISTINCT gg.group_id
-        FROM principal_group ug
-        JOIN principal_group gg
-          ON gg.path @> ug.path OR gg.group_id = ug.group_id   -- self + ancestors
-        WHERE ug.group_id = ANY(p_group_ids)
-    )
+LANGUAGE plpgsql STABLE AS $$
+DECLARE
+    -- self + ancestor groups (grant inheritance is ancestor-or-self via ltree).
+    expanded uuid[];
+BEGIN
+    SELECT array_agg(DISTINCT gg.group_id) INTO expanded
+    FROM principal_group ug
+    JOIN principal_group gg
+      ON gg.path @> ug.path OR gg.group_id = ug.group_id   -- self + ancestors
+    WHERE ug.group_id = ANY(p_group_ids);
+
+    -- expanded IS NULL when the user is in no group -> ANY(NULL) yields no rows.
+    RETURN QUERY
     SELECT DISTINCT g.scope_id, s.kind
-    FROM my_groups mg
-    JOIN authz_grant g           ON g.group_id = mg.group_id
+    FROM authz_grant g
     JOIN authz_scope s           ON s.id = g.scope_id AND s.resource_type = p_resource_type
     JOIN authz_role_privilege rp ON rp.role_id = g.role_id
     JOIN authz_privilege p       ON p.id = rp.privilege_id
                                 AND p.resource_type = p_resource_type
-                                AND p.verb = p_verb;
+                                AND p.verb = p_verb
+    WHERE g.group_id = ANY(expanded);
+END;
 $$;
 
 -- Pivot: one row per effective scope with its (nullable) dimensions.

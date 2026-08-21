@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { enhance } from '$app/forms';
 	import Logo from '$lib/components/Logo.svelte';
 
 	let { data, form } = $props();
@@ -20,7 +21,7 @@
 		<ul>
 			{#each data.personas as p (p.user_id)}
 				<li>
-					<form method="POST">
+					<form method="POST" use:enhance>
 						<input type="hidden" name="user_id" value={p.user_id} />
 						<button type="submit" class:current={p.user_id === data.currentUserId}>
 							<span class="name">{p.firstname} {p.lastname}</span>
