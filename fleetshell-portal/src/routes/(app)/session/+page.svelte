@@ -259,6 +259,12 @@
 
 				fit.fit();
 
+				// Grab keyboard focus so the user can type immediately without first
+				// clicking the terminal. window.focus() covers the new-tab/new-window
+				// case; term.focus() moves the caret into xterm's hidden textarea.
+				window.focus();
+				term.focus();
+
 				// ── WebSocket connection ──────────────────────────────────────
 				const ws = new WebSocket(wsUrl);
 				ws.binaryType = 'arraybuffer';
@@ -266,6 +272,8 @@
 				ws.onopen = () => {
 					isConnected = true;
 					statusText  = '';
+					// Re-assert focus once connected (the terminal is now interactive).
+					term.focus();
 					// Send initial size immediately after connect.
 					sshFrameResize(ws, term.rows, term.cols);
 				};

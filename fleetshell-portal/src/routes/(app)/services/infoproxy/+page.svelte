@@ -114,18 +114,85 @@
 	}
 
 	let confirmDel = $state(false);
+
+	// -- Valkey spool (streamed with live progress) ------------------------------
+	// The spool walks the master data tier by tier server-side and emits an SSE
+	// progress tick per key, so we can show "Spooling <phase> n/m" in the header
+	// instead of blocking on one giant request. See spool/+server.ts.
+	let spooling = $state(false);
+	let spoolStatus = $state('');
+	let spoolPct = $state(0);
+	let spoolDone = $state<string | null>(null);
+
+	function startSpool() {
+		if (spooling) return;
+		spooling = true;
+		spoolDone = null;
+		spoolPct = 0;
+		spoolStatus = 'Starting\u2026';
+		const es = new EventSource(`${base}/services/infoproxy/spool`);
+
+		es.addEventListener('progress', (e) => {
+			const p = JSON.parse((e as MessageEvent).data);
+			if (p.phase === 'count') {
+				spoolStatus = 'Counting keys\u2026';
+				spoolPct = 0;
+			} else if (p.phase === 'prune') {
+				spoolStatus = p.total ? `Pruning stale ${p.done}/${p.total}` : 'Pruning stale keys\u2026';
+				spoolPct = 100;
+			} else {
+				spoolStatus = `Spooling ${p.phase} ${p.done}/${p.total}`;
+				spoolPct = p.total > 0 ? Math.min(100, (p.done / p.total) * 100) : 0;
+			}
+		});
+
+		es.addEventListener('done', (e) => {
+			const r = JSON.parse((e as MessageEvent).data);
+			const parts = Object.entries(r.byType ?? {}).map(([t, n]) => `${n} ${t}`);
+			spoolDone = `Spooled ${r.written} allow-lists`
+				+ (parts.length ? ` (${parts.join(', ')})` : '')
+				+ (r.removed ? `; removed ${r.removed} stale.` : '.');
+			spoolStatus = '';
+			spooling = false;
+			es.close();
+		});
+
+		// Fires for our custom `error` event (with data) AND for transport drops
+		// (no data) -- the `done` handler closes the stream first, so a stray drop
+		// after success never reaches here.
+		es.addEventListener('error', (e) => {
+			let msg = 'Valkey spool failed';
+			try {
+				const d = (e as MessageEvent).data;
+				if (d) msg = JSON.parse(d).message ?? msg;
+			} catch { /* transport error: keep generic message */ }
+			spoolStatus = '';
+			spoolDone = msg;
+			spooling = false;
+			es.close();
+		});
+	}
 </script>
 
 <div class="ip">
 	{#if form?.error}<p class="msg error">{form.error}</p>{/if}
 	{#if form?.notice}<p class="msg info">{form.notice}</p>{/if}
+	{#if spoolDone}<p class="msg info">{spoolDone}</p>{/if}
 
 	<div class="topbar">
 		<span class="title">Info Proxy destinations</span>
 		{#if canEdit}
-			<form method="POST" action="?/spoolValkey" use:enhance>
-				<button type="submit" class="act-primary spool" title="Write the resolved proxy authorization to Valkey for the Squid helper">Save to Valkey</button>
-			</form>
+			<span class="spool-wrap">
+				{#if spooling || spoolStatus}
+					<div class="spool-bar" class:indet={spoolPct === 0} role="progressbar"
+						aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.round(spoolPct)} aria-live="polite">
+						<span class="lbl">{spoolStatus}</span>
+						<div class="fill" style:width="{spoolPct}%"><span class="lbl on">{spoolStatus}</span></div>
+					</div>
+				{/if}
+				<button type="button" class="act-primary spool" disabled={spooling} onclick={startSpool}
+					title="Write the resolved proxy authorization to Valkey for the Squid helper">{spooling ? 'Spooling\u2026' : 'Save to Valkey'}</button>
+			</span>
 		{/if}
 	</div>
 
@@ -306,6 +373,33 @@
 	.msg.info { background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); }
 	.topbar { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
 	.topbar .title { font-size: 0.9rem; color: var(--text-muted); }
+	.spool-wrap { display: flex; align-items: center; gap: 0.6rem; }
+	/* Pill-shaped determinate progress bar. Two copies of the label are stacked:
+	   the base (readable on the track) and a duplicate inside the accent fill
+	   (readable on the fill). Both labels are the FULL bar width and left-anchored,
+	   so the fill's overflow:hidden clips its copy exactly at the progress edge. */
+	.spool-bar {
+		position: relative; width: 18rem; height: 1.7rem; flex: none;
+		border-radius: 999px; overflow: hidden;
+		background: var(--surface-2); border: 1px solid var(--border);
+	}
+	.spool-bar .fill {
+		position: absolute; top: 0; left: 0; height: 100%; width: 0;
+		background: var(--accent); overflow: hidden;
+		transition: width 0.18s ease;
+	}
+	.spool-bar .lbl {
+		position: absolute; top: 0; left: 0; width: 18rem; height: 100%;
+		display: flex; align-items: center; justify-content: center;
+		padding: 0 0.8rem; box-sizing: border-box;
+		white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+		font-size: 0.78rem; font-weight: 600; font-variant-numeric: tabular-nums;
+		color: var(--text); pointer-events: none;
+	}
+	.spool-bar .fill .lbl { color: var(--on-accent); }
+	/* Indeterminate (count phase, before a total is known): gentle pulse. */
+	.spool-bar.indet { animation: spool-pulse 1.1s ease-in-out infinite; }
+	@keyframes spool-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }
 	.empty { color: var(--text-subtle); font-size: 0.9rem; padding: 1rem 0; }
 	.muted { color: var(--text-subtle); font-size: 0.82rem; margin: 0.4rem 0 0; }
 	.filterbar { margin: 0; font-size: 0.85rem; color: var(--text-muted); background: color-mix(in srgb, var(--accent) 9%, transparent); padding: 0.4rem 0.7rem; border-radius: var(--radius); }
