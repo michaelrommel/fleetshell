@@ -61,6 +61,11 @@ step "Gateway authz: region_path backfill + visible/list/can functions"
 # it runs AFTER the import. Idempotent. (cwd is import/ here -> ../sql.)
 psql "$GLOBAL_WRITER_URL" -f ../sql/migrate_gateway_authz.sql
 
+step "Group authz: visible/can functions (group_path-subtree scoped)"
+# Needs principal_group populated (import loads it). Idempotent. Lets a non-admin
+# "group admin" manage their granted subtree from the top-level Groups page.
+psql "$GLOBAL_WRITER_URL" -f ../sql/migrate_group_authz.sql
+
 step "Group hierarchy"
 # Groups + their parent/path hierarchy + memberships now come straight from the
 # normalized RDUSERGROUP/RDUSER2GROUP tables inside load.py stage_grants (Slice

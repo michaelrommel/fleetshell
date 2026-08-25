@@ -4,6 +4,8 @@ import { base } from '$app/paths';
 import { localDb, globalDb } from '$lib/server/db';
 import { getPersona } from '$lib/server/identity';
 import { invalidateUserGroups } from '$lib/server/authz';
+import { grantScopeColumns, type GrantScope } from '$lib/grantScope';
+import { personaSearchFilter } from '$lib/server/personaSearch';
 
 const PAGE_SIZE = 50;
 
@@ -27,10 +29,9 @@ async function requireAdmin(locals: App.Locals): Promise<void> {
 const GRANT_LIMIT = 500;
 
 type EffectiveGrant = {
-	grant_id: string; role_name: string; scope_kind: string;
-	region: string; product: string; customer: string; site: string; single_label: string;
+	grant_id: string; role_name: string;
 	source_group: string; inherited: boolean;
-};
+} & GrantScope;
 
 type PersonaRow = {
 	user_id: string; firstname: string; lastname: string;
@@ -45,12 +46,9 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 	const page = Math.max(1, Number(url.searchParams.get('page') ?? '1') || 1);
 	const after = decodeKey(url.searchParams.get('after'));
 	const before = decodeKey(url.searchParams.get('before'));
-	const like = '%' + q + '%';
-
-	// Reusable filter fragment (search over name / id / role).
-	const search = q
-		? localDb`AND (u.firstname ILIKE ${like} OR u.lastname ILIKE ${like} OR u.user_id ILIKE ${like} OR u.role_label ILIKE ${like})`
-		: localDb``;
+	// Tokenized name/id/role search, shared with the picker endpoint so the two
+	// never drift (see $lib/server/personaSearch).
+	const search = personaSearchFilter(localDb, q);
 
 	const [{ total }] = await localDb<{ total: number }[]>`
 		SELECT count(*)::int AS total FROM app_user u WHERE true ${search}`;
@@ -116,23 +114,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 				SELECT count(*)::int AS total FROM mg JOIN authz_grant g ON g.group_id = mg.group_id`;
 			effectiveGrants = await globalDb<EffectiveGrant[]>`
 				WITH mg AS (${mg})
-				SELECT g.id::text AS grant_id, r.name AS role_name, s.kind AS scope_kind,
-				  COALESCE((SELECT string_agg(reg.name, ', ') FROM authz_scope_constraint c
-				            JOIN region reg ON reg.path = ANY(c.values::ltree[])
-				            WHERE c.scope_id = s.id AND c.dimension = 'region_path'), 'ANY') AS region,
-				  COALESCE((SELECT string_agg(
-				              COALESCE((SELECT tp.name FROM product tp WHERE tp.path = subltree(p.path, 0, LEAST(nlevel(p.path), 2))), p.name)
-				                || ' / ' || CASE WHEN nlevel(p.path) <= 2 THEN 'ANY' ELSE p.name END, ', ')
-				            FROM authz_scope_constraint c
-				            JOIN product p ON p.path = ANY(c.values::ltree[])
-				            WHERE c.scope_id = s.id AND c.dimension = 'product_path'), 'ANY') AS product,
-				  COALESCE((SELECT string_agg(cu.name, ', ') FROM authz_scope_constraint c
-				            JOIN customer cu ON cu.id = ANY(c.values::uuid[])
-				            WHERE c.scope_id = s.id AND c.dimension = 'customer_id'), 'ANY') AS customer,
-				  COALESCE((SELECT string_agg(si.name, ', ') FROM authz_scope_constraint c
-				            JOIN customer_site si ON si.id = ANY(c.values::uuid[])
-				            WHERE c.scope_id = s.id AND c.dimension = 'site_id'), 'ANY') AS site,
-				  COALESCE(s.label, '') AS single_label,
+				SELECT g.id::text AS grant_id, r.name AS role_name, ${grantScopeColumns(globalDb)},
 				  mg.label AS source_group,
 				  (mg.group_id <> ALL(${gids}::uuid[])) AS inherited
 				FROM mg

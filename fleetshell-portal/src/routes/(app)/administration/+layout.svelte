@@ -9,7 +9,6 @@
 		{ href: '/administration/accounts', label: 'Accounts' },
 		{ href: '/administration/personas', label: 'Personas' },
 		{ href: '/administration/roles',    label: 'Roles' },
-		{ href: '/administration/groups',   label: 'Groups' },
 		{ href: '/administration/grants',   label: 'Grants' },
 	];
 

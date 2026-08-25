@@ -146,6 +146,32 @@ export async function canService(
 	return row?.ok ?? false;
 }
 
+/** Point check for one user group (group_path-subtree scoped). */
+export async function canGroup(
+	groupIds: string[],
+	verb: string,
+	targetGroupId: string,
+): Promise<boolean> {
+	if (groupIds.length === 0) return false;
+	const [row] = await globalDb<{ ok: boolean }[]>`
+		SELECT authz_can_group(${groupIds}::uuid[], ${verb}, ${targetGroupId}) AS ok
+	`;
+	return row?.ok ?? false;
+}
+
+/** The set of group ids these groups may `verb` (self + descendant subtrees). */
+export async function visibleGroupIds(
+	groupIds: string[],
+	verb: string,
+): Promise<string[]> {
+	if (groupIds.length === 0) return [];
+	const rows = await globalDb<{ group_id: string }[]>`
+		SELECT group_id::text AS group_id
+		FROM authz_visible_group_ids(${groupIds}::uuid[], ${verb})
+	`;
+	return rows.map((r) => r.group_id);
+}
+
 /** Coarse capability check: does the persona hold ANY grant of (type, verb)? */
 export async function authzHas(
 	groupIds: string[],

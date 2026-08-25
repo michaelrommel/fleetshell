@@ -3,74 +3,102 @@ import { fail, error, redirect } from '@sveltejs/kit';
 import { base } from '$app/paths';
 import { globalDb, localDb } from '$lib/server/db';
 import { getPersona } from '$lib/server/identity';
-import { invalidateUserGroups } from '$lib/server/authz';
+import { invalidateUserGroups, resolveGroupIds, canGroup, visibleGroupIds } from '$lib/server/authz';
 import { bumpAuthzGen } from '$lib/server/cache';
+import { grantScopeColumns, type GrantScope } from '$lib/grantScope';
 
 const MEMBER_LIMIT = 50;
 
-async function requireAdmin(locals: App.Locals): Promise<void> {
+// Access model for the (relocated) top-level Groups page. Unlike the
+// Administration section (is_admin-gated), this page is reachable by an
+// appointed "group admin" -- a persona whose groups hold a group-scoped grant
+// (GroupAdmin role) over a subtree. Such a persona may FULLY manage that
+// subtree: add/remove members, rename, and create sub-groups. Deleting a group
+// stays is_admin-only (destructive, can orphan history). is_admin personas keep
+// unrestricted control over every group.
+type Access = { isAdmin: boolean; groupIds: string[] };
+
+async function getAccess(locals: App.Locals): Promise<Access> {
 	if (!locals.userId) throw redirect(303, `${base}/login`);
 	const persona = await getPersona(locals.userId);
-	if (!persona?.is_admin) throw error(403, 'forbidden');
+	const isAdmin = !!persona?.is_admin;
+	const groupIds = isAdmin ? [] : await resolveGroupIds(locals.userId);
+	return { isAdmin, groupIds };
+}
+
+/** Guard a manage action (add/remove member, rename, create sub-group) on one
+ *  target group: admin always passes; otherwise the persona needs group:edit on
+ *  that group's subtree. Throws 403 on denial. */
+async function requireGroupEdit(locals: App.Locals, targetGroupId: string): Promise<void> {
+	const { isAdmin, groupIds } = await getAccess(locals);
+	if (isAdmin) return;
+	if (!targetGroupId || !(await canGroup(groupIds, 'edit', targetGroupId))) {
+		throw error(403, 'You do not manage this group.');
+	}
 }
 
 type TreeNode = { group_id: string; label: string; parent_id: string | null; grant_count: number; member_count: number };
 type GroupRow = { group_id: string; label: string; home_region: string };
-type GrantRow = {
-	grant_id: string; role_name: string; scope_kind: string;
-	region: string; product: string; customer: string; site: string; single_label: string;
-};
+type GrantRow = { grant_id: string; role_name: string } & GrantScope;
 
 export const load: PageServerLoad = async ({ locals, url }) => {
-	if (!locals.userId) throw redirect(303, `${base}/login`);
+	const { isAdmin, groupIds } = await getAccess(locals);
 	const sel = url.searchParams.get('sel');
 	const isNew = url.searchParams.get('new') === '1';
 	const mq = (url.searchParams.get('mq') ?? '').trim(); // member filter within a group
 
-	// The full org-group tree (excludes legacy per-person 'user:' groups).
+	// Non-admins only see the group ids they may VIEW (their granted subtrees).
+	// An empty set means they hold no group grant at all -> no access.
+	let visibleIds: string[] | null = null;
+	if (!isAdmin) {
+		visibleIds = await visibleGroupIds(groupIds, 'view');
+		if (visibleIds.length === 0) throw error(403, 'You do not manage any groups.');
+	}
+
+	// The org-group tree (excludes legacy per-person 'user:' groups). Admins get
+	// the whole tree; group admins get only their visible ids, re-rooted so a
+	// granted subtree's top node renders as a root (its real parent is hidden).
+	const scope = visibleIds ? globalDb`AND pg.group_id = ANY(${visibleIds}::uuid[])` : globalDb``;
 	const raw = await globalDb<{ group_id: string; label: string; parent_id: string | null; grant_count: number }[]>`
 		SELECT pg.group_id::text AS group_id, pg.label, pg.parent_id::text AS parent_id,
 		       (SELECT count(*) FROM authz_grant g WHERE g.group_id = pg.group_id)::int AS grant_count
 		FROM principal_group pg
-		WHERE pg.label NOT LIKE 'user:%'
+		WHERE pg.label NOT LIKE 'user:%' ${scope}
 		ORDER BY pg.label`;
+	const idSet = new Set(raw.map((n) => n.group_id));
 	const mcounts = await localDb<{ group_id: string; n: number }[]>`
 		SELECT group_id::text AS group_id, count(*)::int AS n FROM group_membership GROUP BY group_id`;
 	const mById = new Map(mcounts.map((c) => [c.group_id, c.n]));
-	const nodes: TreeNode[] = raw.map((n) => ({ ...n, member_count: mById.get(n.group_id) ?? 0 }));
+	const nodes: TreeNode[] = raw.map((n) => ({
+		...n,
+		// Re-root: if a node's parent is not in the visible set, treat it as a root.
+		parent_id: n.parent_id && idSet.has(n.parent_id) ? n.parent_id : null,
+		member_count: mById.get(n.group_id) ?? 0,
+	}));
 
 	let detail: GroupRow | null = null;
 	let grants: GrantRow[] = [];
 	let members: { user_id: string; firstname: string; lastname: string; role_label: string | null }[] = [];
 	let memberTotal = 0;
+	// Capabilities for the selected group, resolved server-side (the UI mirrors
+	// these; every action re-checks authoritatively).
+	let caps = { canEdit: false, canCreateChild: false, canDelete: false };
 	if (sel) {
+		// A group admin may only open a group inside their visible set.
+		if (visibleIds && !idSet.has(sel)) throw error(403, 'You do not manage this group.');
 		[detail] = await globalDb<GroupRow[]>`
 			SELECT pg.group_id::text AS group_id, pg.label, pg.home_region
 			FROM principal_group pg WHERE pg.group_id = ${sel}`;
 		if (detail) {
+			const canEdit = isAdmin || (await canGroup(groupIds, 'edit', sel));
+			caps = { canEdit, canCreateChild: canEdit, canDelete: isAdmin };
 			grants = await globalDb<GrantRow[]>`
-				SELECT g.id::text AS grant_id, r.name AS role_name, s.kind AS scope_kind,
-				  COALESCE((SELECT string_agg(reg.name, ', ') FROM authz_scope_constraint c
-				            JOIN region reg ON reg.path = ANY(c.values::ltree[])
-				            WHERE c.scope_id = s.id AND c.dimension = 'region_path'), 'ANY') AS region,
-				  COALESCE((SELECT string_agg(
-				              COALESCE((SELECT tp.name FROM product tp WHERE tp.path = subltree(p.path, 0, LEAST(nlevel(p.path), 2))), p.name)
-				                || ' / ' || CASE WHEN nlevel(p.path) <= 2 THEN 'ANY' ELSE p.name END, ', ')
-				            FROM authz_scope_constraint c
-				            JOIN product p ON p.path = ANY(c.values::ltree[])
-				            WHERE c.scope_id = s.id AND c.dimension = 'product_path'), 'ANY') AS product,
-				  COALESCE((SELECT string_agg(cu.name, ', ') FROM authz_scope_constraint c
-				            JOIN customer cu ON cu.id = ANY(c.values::uuid[])
-				            WHERE c.scope_id = s.id AND c.dimension = 'customer_id'), 'ANY') AS customer,
-				  COALESCE((SELECT string_agg(si.name, ', ') FROM authz_scope_constraint c
-				            JOIN customer_site si ON si.id = ANY(c.values::uuid[])
-				            WHERE c.scope_id = s.id AND c.dimension = 'site_id'), 'ANY') AS site,
-				  COALESCE(s.label, '') AS single_label
+				SELECT g.id::text AS grant_id, r.name AS role_name, ${grantScopeColumns(globalDb)}
 				FROM authz_grant g
 				JOIN authz_role r  ON r.id = g.role_id
 				JOIN authz_scope s ON s.id = g.scope_id
 				WHERE g.group_id = ${sel}
-				ORDER BY r.name, s.kind, region, product`;
+				ORDER BY r.name, s.resource_type, s.kind, region, product`;
 			[{ n: memberTotal }] = await localDb<{ n: number }[]>`
 				SELECT count(*)::int AS n FROM group_membership WHERE group_id = ${sel}::uuid`;
 			const mfilter = mq ? localDb`AND (u.firstname ILIKE ${'%' + mq + '%'} OR u.lastname ILIKE ${'%' + mq + '%'})` : localDb``;
@@ -82,12 +110,11 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 		}
 	}
 
-	return { nodes, sel, isNew, detail, grants, members, memberTotal, mq };
+	return { nodes, sel, isNew, detail, grants, members, memberTotal, mq, isAdmin, caps };
 };
 
 export const actions: Actions = {
 	createGroup: async ({ request, locals }) => {
-		await requireAdmin(locals);
 		const d = await request.formData();
 		const label = String(d.get('label') ?? '').trim();
 		const parentId = String(d.get('parent_id') ?? '').trim();
@@ -97,6 +124,8 @@ export const actions: Actions = {
 		// ltree path is what grant inheritance keys off (ancestor @> descendant), so
 		// appending under the parent makes the child inherit the parent's grants.
 		if (parentId) {
+			// Creating a child = editing the parent subtree (group admins allowed).
+			await requireGroupEdit(locals, parentId);
 			const [parent] = await globalDb<{ path: string; home_region: string }[]>`
 				SELECT path::text AS path, home_region FROM principal_group WHERE group_id = ${parentId}`;
 			if (!parent) return fail(404, { error: 'Parent group not found.' });
@@ -106,34 +135,35 @@ export const actions: Actions = {
 					(${parent.path + '.'} || 'g' || replace(gen_random_uuid()::text, '-', ''))::ltree,
 					${parentId}::uuid)
 				RETURNING group_id::text AS group_id`;
-			throw redirect(303, `${base}/administration/groups?sel=${encodeURIComponent(row.group_id)}`);
+			throw redirect(303, `${base}/groups?sel=${encodeURIComponent(row.group_id)}`);
 		}
 
+		// Flat (root) group: is_admin only (a new root is outside any granted subtree).
+		await requireAdmin(locals);
 		const home_region = String(d.get('home_region') ?? 'eu-west-2').trim() || 'eu-west-2';
-		// Flat (root) group: single-segment ltree path from a fresh uuid (matches import).
 		const [row] = await globalDb<{ group_id: string }[]>`
 			INSERT INTO principal_group (home_region, label, path)
 			VALUES (${home_region}, ${label}, ('g' || replace(gen_random_uuid()::text, '-', ''))::ltree)
 			RETURNING group_id::text AS group_id`;
-		throw redirect(303, `${base}/administration/groups?sel=${encodeURIComponent(row.group_id)}`);
+		throw redirect(303, `${base}/groups?sel=${encodeURIComponent(row.group_id)}`);
 	},
 
 	renameGroup: async ({ request, locals }) => {
-		await requireAdmin(locals);
 		const d = await request.formData();
 		const group_id = String(d.get('group_id') ?? '');
 		const label = String(d.get('label') ?? '').trim();
 		if (!group_id || !label) return fail(400, { error: 'Label required.' });
+		await requireGroupEdit(locals, group_id);
 		await globalDb`UPDATE principal_group SET label = ${label} WHERE group_id = ${group_id}`;
-		throw redirect(303, `${base}/administration/groups?sel=${encodeURIComponent(group_id)}`);
+		throw redirect(303, `${base}/groups?sel=${encodeURIComponent(group_id)}`);
 	},
 
 	addMember: async ({ request, locals }) => {
-		await requireAdmin(locals);
 		const d = await request.formData();
 		const group_id = String(d.get('group_id') ?? '');
 		const user_id = String(d.get('user_id') ?? '').trim();
 		if (!group_id || !user_id) return fail(400, { error: 'Group and persona required.' });
+		await requireGroupEdit(locals, group_id);
 		const [ok] = await localDb<{ ok: boolean }[]>`SELECT true AS ok FROM app_user WHERE user_id = ${user_id}`;
 		if (!ok) return fail(404, { error: 'No such persona user_id.' });
 		await localDb`
@@ -141,20 +171,21 @@ export const actions: Actions = {
 			VALUES (${group_id}::uuid, ${user_id}, ${locals.userId ?? null})
 			ON CONFLICT (group_id, user_id) DO NOTHING`;
 		await invalidateUserGroups(user_id);
-		throw redirect(303, `${base}/administration/groups?sel=${encodeURIComponent(group_id)}`);
+		throw redirect(303, `${base}/groups?sel=${encodeURIComponent(group_id)}`);
 	},
 
 	removeMember: async ({ request, locals }) => {
-		await requireAdmin(locals);
 		const d = await request.formData();
 		const group_id = String(d.get('group_id') ?? '');
 		const user_id = String(d.get('user_id') ?? '');
+		await requireGroupEdit(locals, group_id);
 		await localDb`DELETE FROM group_membership WHERE group_id = ${group_id}::uuid AND user_id = ${user_id}`;
 		await invalidateUserGroups(user_id);
-		throw redirect(303, `${base}/administration/groups?sel=${encodeURIComponent(group_id)}`);
+		throw redirect(303, `${base}/groups?sel=${encodeURIComponent(group_id)}`);
 	},
 
 	deleteGroup: async ({ request, locals }) => {
+		// Destructive: is_admin only.
 		await requireAdmin(locals);
 		const d = await request.formData();
 		const group_id = String(d.get('group_id') ?? '');
@@ -176,6 +207,14 @@ export const actions: Actions = {
 		await localDb`DELETE FROM group_membership WHERE group_id = ${group_id}::uuid`;
 		for (const m of members) await invalidateUserGroups(m.user_id);
 		await bumpAuthzGen(); // grants on the group were deleted -> flush sig/page caches
-		throw redirect(303, `${base}/administration/groups`);
+		throw redirect(303, `${base}/groups`);
 	},
 };
+
+// is_admin gate for the root-create + delete actions (kept local to avoid
+// leaking the getAccess redirect semantics into the action error path).
+async function requireAdmin(locals: App.Locals): Promise<void> {
+	if (!locals.userId) throw redirect(303, `${base}/login`);
+	const persona = await getPersona(locals.userId);
+	if (!persona?.is_admin) throw error(403, 'forbidden');
+}

@@ -5,6 +5,7 @@
 	import SplitPane from '$lib/components/SplitPane.svelte';
 	import GroupTree from '$lib/components/GroupTree.svelte';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
+	import GrantScope from '$lib/components/GrantScope.svelte';
 
 	let { data, form } = $props();
 	let confirmDelete = $state(false);
@@ -12,7 +13,7 @@
 	function withParams(changes: Record<string, string | null>): string {
 		const u = new URLSearchParams(pageState.url.searchParams);
 		for (const [k, v] of Object.entries(changes)) v === null ? u.delete(k) : u.set(k, v);
-		return `${base}/administration/groups?${u}`;
+		return `${base}/groups?${u}`;
 	}
 	const newHref = $derived(withParams({ new: '1', sel: null, mq: null }));
 	const cancelHref = $derived(withParams({ new: null, sel: null, mq: null }));
@@ -30,11 +31,19 @@
 	}
 </script>
 
+<div class="page-head">
+	<h1>Groups</h1>
+	<p class="sub">
+		{#if data.isAdmin}Manage every group, its members and sub-groups.
+		{:else}Manage the groups you administer -- members and sub-groups.{/if}
+	</p>
+</div>
+
 <SplitPane storageKey="groups" defaultLeft={30}>
 	{#snippet left()}
 		<div class="col-head">
 			<h2>Groups <span class="count">{data.nodes.length}</span></h2>
-			<a class="new-btn" href={newHref}>+ New group</a>
+			{#if data.isAdmin}<a class="new-btn" href={newHref}>+ New group</a>{/if}
 		</div>
 		<GroupTree nodes={data.nodes} selectedId={data.sel} hrefFor={selHref} />
 	{/snippet}
@@ -47,22 +56,26 @@
 				{#if data.detail.label.startsWith('user:')}
 					<p class="region">Legacy personal grant holder. Home region: <code>{data.detail.home_region}</code></p>
 				{:else}
-					<form method="POST" action="?/renameGroup" use:enhance class="rename">
-						<input type="hidden" name="group_id" value={data.detail.group_id} />
-						<label>Group label<input name="label" value={data.detail.label} required /></label>
-						<button type="submit">Save label</button>
-					</form>
+					{#if data.caps.canEdit}
+						<form method="POST" action="?/renameGroup" use:enhance class="rename">
+							<input type="hidden" name="group_id" value={data.detail.group_id} />
+							<label>Group label<input name="label" value={data.detail.label} required /></label>
+							<button type="submit">Save label</button>
+						</form>
+					{/if}
 					<p class="region">Home region: <code>{data.detail.home_region}</code></p>
 
-					<details class="addchild">
-						<summary>Add sub-group</summary>
-						<form method="POST" action="?/createGroup" use:enhance class="rename">
-							<input type="hidden" name="parent_id" value={data.detail.group_id} />
-							<label>Sub-group label<input name="label" required /></label>
-							<button type="submit">Add sub-group</button>
-						</form>
-						<p class="hint">Created under this group; it inherits this group's grants.</p>
-					</details>
+					{#if data.caps.canCreateChild}
+						<details class="addchild">
+							<summary>Add sub-group</summary>
+							<form method="POST" action="?/createGroup" use:enhance class="rename">
+								<input type="hidden" name="parent_id" value={data.detail.group_id} />
+								<label>Sub-group label<input name="label" required /></label>
+								<button type="submit">Add sub-group</button>
+							</form>
+							<p class="hint">Created under this group; it inherits this group's grants.</p>
+						</details>
+					{/if}
 				{/if}
 
 				<details class="grants-box">
@@ -71,14 +84,10 @@
 						{#each data.grants as g (g.grant_id)}
 							<li>
 								<span class="role">{g.role_name}</span>
-								{#if g.scope_kind === 'single_system'}
-									<span class="scope"><span class="kind">system</span> {g.single_label}</span>
-								{:else}
-									<span class="scope">{g.region} <span class="sep">|</span> {g.product} <span class="sep">|</span> {g.site === 'ANY' ? g.customer : `${g.customer} / ${g.site}`}</span>
-								{/if}
+								<span class="scope"><GrantScope {g} /></span>
 							</li>
 						{:else}
-							<li class="muted">No grants. Add them in the Grants tab.</li>
+							<li class="muted">No grants.{#if data.isAdmin} Add them in Admin &rsaquo; Grants.{/if}</li>
 						{/each}
 					</ul>
 				</details>
@@ -92,11 +101,13 @@
 					{#each data.members as p (p.user_id)}
 						<li>
 							<span>{p.firstname} {p.lastname}{#if p.role_label} &middot; {p.role_label}{/if}</span>
-							<form method="POST" action="?/removeMember" use:enhance>
-								<input type="hidden" name="group_id" value={data.detail.group_id} />
-								<input type="hidden" name="user_id" value={p.user_id} />
-								<button type="submit" class="link-btn">Remove</button>
-							</form>
+							{#if data.caps.canEdit}
+								<form method="POST" action="?/removeMember" use:enhance>
+									<input type="hidden" name="group_id" value={data.detail.group_id} />
+									<input type="hidden" name="user_id" value={p.user_id} />
+									<button type="submit" class="link-btn">Remove</button>
+								</form>
+							{/if}
 						</li>
 					{:else}
 						<li class="muted">{data.mq ? 'No members match.' : 'No members.'}</li>
@@ -106,28 +117,32 @@
 					<p class="hint">Showing first {data.members.length} of {data.memberTotal}. Use the filter to find a member.</p>
 				{/if}
 
-				<h4>Add a member</h4>
-				<input class="wide" placeholder="Search persona" bind:value={memberQuery} oninput={searchPersonas} />
-				{#if memberResults.length}
-					<ul class="results">
-						{#each memberResults as p (p.user_id)}
-							<li>
-								<span>{p.firstname} {p.lastname}{#if p.role_label} &middot; {p.role_label}{/if} <span class="muted">{p.user_id}</span></span>
-								<form method="POST" action="?/addMember" use:enhance>
-									<input type="hidden" name="group_id" value={data.detail.group_id} />
-									<input type="hidden" name="user_id" value={p.user_id} />
-									<button type="submit" class="link-btn">Add</button>
-								</form>
-							</li>
-						{/each}
-					</ul>
+				{#if data.caps.canEdit}
+					<h4>Add a member</h4>
+					<input class="wide" placeholder="Search persona" bind:value={memberQuery} oninput={searchPersonas} />
+					{#if memberResults.length}
+						<ul class="results">
+							{#each memberResults as p (p.user_id)}
+								<li>
+									<span>{p.firstname} {p.lastname}{#if p.role_label} &middot; {p.role_label}{/if} <span class="muted">{p.user_id}</span></span>
+									<form method="POST" action="?/addMember" use:enhance>
+										<input type="hidden" name="group_id" value={data.detail.group_id} />
+										<input type="hidden" name="user_id" value={p.user_id} />
+										<button type="submit" class="link-btn">Add</button>
+									</form>
+								</li>
+							{/each}
+						</ul>
+					{/if}
 				{/if}
 
-				<div class="actions-bar">
-					<button type="button" class="act-delete" onclick={() => (confirmDelete = true)}>Delete group</button>
-				</div>
+				{#if data.caps.canDelete}
+					<div class="actions-bar">
+						<button type="button" class="act-delete" onclick={() => (confirmDelete = true)}>Delete group</button>
+					</div>
+				{/if}
 			</div>
-		{:else if data.isNew}
+		{:else if data.isNew && data.isAdmin}
 			<div class="card detail">
 				<h3>New group</h3>
 				<form method="POST" action="?/createGroup" use:enhance>
@@ -141,13 +156,13 @@
 				<p class="hint">Add members and grants after creating.</p>
 			</div>
 		{:else}
-			<div class="card placeholder">Select a group in the tree, or click <strong>+ New group</strong>.</div>
+			<div class="card placeholder">Select a group in the tree{#if data.isAdmin}, or click <strong>+ New group</strong>{/if}.</div>
 		{/if}
 		{#if form?.error}<p class="error">{form.error}</p>{/if}
 	{/snippet}
 </SplitPane>
 
-{#if data.detail}
+{#if data.detail && data.caps.canDelete}
 	<ConfirmDialog bind:open={confirmDelete} title="Delete group?" message={`Delete "${displayLabel(data.detail.label)}"? Its grants and memberships are removed.`}>
 		<form method="POST" action="?/deleteGroup" use:enhance={() => async ({ update }) => { confirmDelete = false; await update(); }}>
 			<input type="hidden" name="group_id" value={data.detail.group_id} />
@@ -157,6 +172,9 @@
 {/if}
 
 <style>
+	.page-head { margin-bottom: 1rem; flex: none; }
+	h1 { font-size: 1.3rem; margin: 0 0 0.2rem; }
+	.sub { margin: 0; color: var(--text-muted); font-size: 0.9rem; }
 	.col-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.6rem; gap: 0.6rem; flex: none; }
 	h2 { font-size: 1rem; margin: 0; }
 	.count { color: var(--text-subtle); font-weight: 400; font-size: 0.85rem; }
@@ -206,8 +224,6 @@
 	.grants li { display: flex; align-items: baseline; gap: 0.6rem; font-size: 0.84rem; }
 	.grants .role { flex: none; min-width: 3.5rem; font-weight: 600; color: var(--text-muted); font-size: 0.78rem; }
 	.grants .scope { color: var(--text); font-variant-numeric: tabular-nums; }
-	.grants .sep { color: var(--text-subtle); margin: 0 0.15rem; }
-	.grants .kind { color: var(--accent); font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.03em; margin-right: 0.2rem; }
 
 	.members { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.3rem; }
 	.members li { display: flex; align-items: center; justify-content: space-between; gap: 0.6rem; font-size: 0.85rem; }
@@ -219,6 +235,4 @@
 	.hint { color: var(--text-subtle); font-size: 0.78rem; margin: 0.4rem 0 0; }
 	.error { color: var(--danger); font-size: 0.85rem; margin: 0.4rem 0 0; }
 	code { background: var(--surface-2); padding: 0 0.3rem; border-radius: 3px; font-size: 0.76rem; color: var(--text-muted); }
-
-
 </style>

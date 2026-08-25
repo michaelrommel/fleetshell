@@ -6,6 +6,7 @@
 	import GroupTree from '$lib/components/GroupTree.svelte';
 	import ScopePicker from '$lib/components/ScopePicker.svelte';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
+	import GrantScope from '$lib/components/GrantScope.svelte';
 
 	let { data, form } = $props();
 
@@ -55,17 +56,7 @@
 						<li>
 							<span class="role">{g.role_name}</span>
 							<span class="scope">
-								{#if g.scope_kind === 'single_system'}
-									<span class="kind">system</span> {g.single_label}
-								{:else if g.resource_type === 'group'}
-									<span class="kind">group</span> {g.group_scope}
-								{:else if g.resource_type === 'gateway'}
-									<span class="kind">gateway</span> {g.region}
-								{:else if g.resource_type === 'service'}
-									<span class="kind">service</span> {g.service_scope}
-								{:else}
-									{g.region} <span class="sep">|</span> {g.product} <span class="sep">|</span> {g.site === 'ANY' ? g.customer : `${g.customer} / ${g.site}`}
-								{/if}
+								<GrantScope {g} />
 							</span>
 							<button type="button" class="del"
 							        onclick={() => { pendingGrant = { grant_id: g.grant_id, group_id: data.detail?.group_id ?? '' }; confirmOpen = true; }}>Delete</button>
@@ -162,8 +153,6 @@
 	.grants li { display: flex; align-items: baseline; gap: 0.6rem; font-size: 0.84rem; }
 	.grants .role { flex: none; min-width: 3.5rem; font-weight: 600; color: var(--text-muted); font-size: 0.78rem; }
 	.grants .scope { flex: 1; color: var(--text); }
-	.grants .sep { color: var(--text-subtle); margin: 0 0.15rem; }
-	.grants .kind { color: var(--accent); font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.03em; margin-right: 0.2rem; }
 	.del { flex: none; background: none; border: none; color: var(--danger); cursor: pointer; font: inherit; font-size: 0.78rem; padding: 0; }
 	.del:hover { color: color-mix(in srgb, var(--danger) 78%, #fff); }
 	.modal-form { display: contents; }

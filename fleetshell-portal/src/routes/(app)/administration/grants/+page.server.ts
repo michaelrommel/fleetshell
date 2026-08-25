@@ -4,6 +4,7 @@ import { base } from '$app/paths';
 import { globalDb, localDb } from '$lib/server/db';
 import { getPersona } from '$lib/server/identity';
 import { bumpAuthzGen } from '$lib/server/cache';
+import { grantScopeColumns, type GrantScope } from '$lib/grantScope';
 
 async function requireAdmin(locals: App.Locals): Promise<void> {
 	if (!locals.userId) throw redirect(303, `${base}/login`);
@@ -12,10 +13,7 @@ async function requireAdmin(locals: App.Locals): Promise<void> {
 }
 
 type TreeNode = { group_id: string; label: string; parent_id: string | null; grant_count: number; member_count: number };
-type GrantRow = {
-	grant_id: string; role_name: string; resource_type: string; scope_kind: string;
-	region: string; product: string; customer: string; site: string; group_scope: string; service_scope: string; single_label: string;
-};
+type GrantRow = { grant_id: string; role_name: string } & GrantScope;
 
 export const load: PageServerLoad = async ({ locals, url }) => {
 	if (!locals.userId) throw redirect(303, `${base}/login`);
@@ -40,29 +38,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 			SELECT group_id::text AS group_id, label FROM principal_group WHERE group_id = ${sel}`;
 		if (detail) {
 			grants = await globalDb<GrantRow[]>`
-				SELECT g.id::text AS grant_id, r.name AS role_name, s.resource_type, s.kind AS scope_kind,
-				  COALESCE((SELECT string_agg(reg.name, ', ') FROM authz_scope_constraint c
-				            JOIN region reg ON reg.path = ANY(c.values::ltree[])
-				            WHERE c.scope_id = s.id AND c.dimension = 'region_path'), 'ANY') AS region,
-				  COALESCE((SELECT string_agg(
-				              COALESCE((SELECT tp.name FROM product tp WHERE tp.path = subltree(p.path, 0, LEAST(nlevel(p.path), 2))), p.name)
-				                || ' / ' || CASE WHEN nlevel(p.path) <= 2 THEN 'ANY' ELSE p.name END, ', ')
-				            FROM authz_scope_constraint c
-				            JOIN product p ON p.path = ANY(c.values::ltree[])
-				            WHERE c.scope_id = s.id AND c.dimension = 'product_path'), 'ANY') AS product,
-				  COALESCE((SELECT string_agg(cu.name, ', ') FROM authz_scope_constraint c
-				            JOIN customer cu ON cu.id = ANY(c.values::uuid[])
-				            WHERE c.scope_id = s.id AND c.dimension = 'customer_id'), 'ANY') AS customer,
-				  COALESCE((SELECT string_agg(si.name, ', ') FROM authz_scope_constraint c
-				            JOIN customer_site si ON si.id = ANY(c.values::uuid[])
-				            WHERE c.scope_id = s.id AND c.dimension = 'site_id'), 'ANY') AS site,
-				  COALESCE((SELECT string_agg(gp.label, ', ') FROM authz_scope_constraint c
-				            JOIN principal_group gp ON gp.path = ANY(c.values::ltree[])
-				            WHERE c.scope_id = s.id AND c.dimension = 'group_path'), 'ANY') AS group_scope,
-				  COALESCE((SELECT string_agg(sv.name, ', ') FROM authz_scope_constraint c
-				            JOIN service sv ON sv.path = ANY(c.values::ltree[])
-				            WHERE c.scope_id = s.id AND c.dimension = 'service_path'), 'ANY') AS service_scope,
-				  COALESCE(s.label, '') AS single_label
+				SELECT g.id::text AS grant_id, r.name AS role_name, ${grantScopeColumns(globalDb)}
 				FROM authz_grant g
 				JOIN authz_role r  ON r.id = g.role_id
 				JOIN authz_scope s ON s.id = g.scope_id

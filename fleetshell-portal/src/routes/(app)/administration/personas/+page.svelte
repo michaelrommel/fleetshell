@@ -6,6 +6,7 @@
 	import SplitPane from '$lib/components/SplitPane.svelte';
 	import ScopePicker from '$lib/components/ScopePicker.svelte';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
+	import GrantScope from '$lib/components/GrantScope.svelte';
 
 	let { data, form } = $props();
 	let confirmDelete = $state(false);
@@ -124,11 +125,7 @@
 								<li>
 									<span class="role">{g.role_name}</span>
 									<span class="scope">
-										{#if g.scope_kind === 'single_system'}
-											<span class="kind">device</span>{g.single_label || 'single system'}
-										{:else}
-											{g.region}<span class="sep">·</span>{g.product}<span class="sep">·</span>{g.customer}{#if g.site !== 'ANY'}/{g.site}{/if}
-										{/if}
+										<GrantScope {g} sep="·" />
 									</span>
 									<span class="src" class:inh={g.inherited} title={g.inherited ? 'Inherited from an ancestor group' : 'Direct on a joined group'}>{g.source_group}{#if g.inherited} ↑{/if}</span>
 								</li>
@@ -252,8 +249,6 @@
 	.egrants li { display: flex; align-items: baseline; gap: 0.6rem; font-size: 0.83rem; }
 	.egrants .role { flex: none; min-width: 3.5rem; font-weight: 600; color: var(--text-muted); font-size: 0.76rem; }
 	.egrants .scope { flex: 1; min-width: 0; color: var(--text); font-variant-numeric: tabular-nums; }
-	.egrants .kind { color: var(--accent); font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.03em; margin-right: 0.3rem; }
-	.egrants .sep { color: var(--text-subtle); margin: 0 0.3rem; }
 	.egrants .src { flex: none; color: var(--text-subtle); font-size: 0.74rem; white-space: nowrap; }
 	.egrants .src.inh { color: var(--text-muted); font-style: italic; }
 </style>
