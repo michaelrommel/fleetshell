@@ -992,6 +992,19 @@ JWT claim matches automatically without extra env vars.
 - [ ] Full `ssh -A` agent *forwarding* into the session (currently agent is used
       only to authenticate to the target, then the channel is torn down; forwarding
       would keep `auth-agent@openssh.com` channels open so the target can hop onward)
+- [ ] **Reserve the passive-FTP data-port range as ephemeral source ports**
+      (2026-08-21). aeroftp reserves 20000-49999 for passive FTP data
+      (`net.ipv4.ip_local_reserved_ports = 20000-49999`). When the gateway
+      INITIATES connections TO devices, its ephemeral source port must AVOID that
+      range so it never collides with a passive-FTP data port. Apply
+      `net.ipv4.ip_local_reserved_ports = 20000-49999` (or narrow
+      `ip_local_port_range` below 20000) to the container. NOTE: a Dockerfile
+      cannot set this at BUILD time (per-net-namespace runtime sysctl); apply at
+      RUNTIME -- entrypoint sysctl (needs the cap) or ECS task `systemControls` /
+      K8s `securityContext.sysctls`. Paired with the ipsecnode svcroute change
+      that routes dport 20000-49999 to the FTP VIP; see
+      fleetsuite/AGENTS.md "Passive-FTP data-port range routing + gateway
+      reserved ports".
 - [ ] Concrete `TransformHook`: rewrite `Host:` header, inject auth headers
 - [ ] HTTP/2 support in transform mode
 - [ ] Proper upstream trust store (`webpki-roots`) for CA-signed deployments
