@@ -51,7 +51,7 @@ tracing-subscriber  = { version = "0.3", features = ["env-filter", "fmt"] }
 # `sha1`; russh already enables ssh-key/sha1, so adding `rsa` completes it.
 # Without this (default-features=false drops russh's default `rsa`), RSA host
 # keys fail with "unsupported algorithm: ssh-rsa".
-russh       = { version = "0.62", default-features = false, features = ["ring", "des", "rsa"] }
+russh       = { version = "0.64", default-features = false, features = ["ring", "des", "rsa"] }
 
 # ── Error handling ───────────────────────────────────────────────────────────
 thiserror   = "1"
